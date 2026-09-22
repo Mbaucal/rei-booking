@@ -14,7 +14,7 @@
     "owner:prepare": "node scripts/prepare-owner.mjs",
     "setup:test": "node scripts/setup-test.mjs",
     "deploy:test": "node scripts/check-config.mjs && wrangler deploy --env test",
-    "build": "wrangler deploy --env test --dry-run --outdir dist",
+    "build": "node scripts/check-config.mjs && wrangler deploy --env test --dry-run --outdir dist",
     "format": "prettier --write src public scripts tests docs README.md package.json wrangler.json .github/workflows/ci.yml"
   },
   "devDependencies": {

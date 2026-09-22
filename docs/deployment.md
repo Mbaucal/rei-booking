@@ -8,6 +8,12 @@ On 22 September 2026, the owner supplied a Cloudflare screenshot confirming the 
 
 The deployment log showed an outdated `APP_ORIGIN` containing `rei-booking-test`. The repository now uses the actual Worker name `rei-booking` and origin `https://rei-booking.mbaucal.workers.dev`. Redeploy this configuration before signing in: requests from a mismatched origin are rejected. The test environment explicitly enables `workers_dev` and disables `preview_urls`; the database remains the dedicated test database. The result of this corrective redeployment has not yet been independently verified.
 
+A later sign-in screenshot shows `Application address is not configured.` The server returns this before checking credentials when `APP_ORIGIN` is missing or differs from the request URL. The repository previously defined runtime variables and D1 only under `env.test`, so a default `wrangler deploy` could also publish the same Worker without them. Both the default and named test configuration now explicitly target the same test Worker, origin and database. The build guard checks that they match, and CI bundles both deployment commands. The screenshot alone does not establish which deployment command ran or whether the owner has been provisioned.
+
+For the already deployed Worker, open **Workers & Pages → rei-booking → Settings → Variables and Secrets**. Set the runtime text variable `APP_ORIGIN` to `https://rei-booking.mbaucal.workers.dev` (no trailing slash) and `APP_ENV` to `test`, then deploy the changes. Confirm the `DB` binding points to the existing `rei-booking-test` database. Open the canonical application URL, not a version or preview URL. These are Worker runtime settings, not build environment variables. Keep them in the repository configuration as well so subsequent deployments preserve them.
+
+Reference: [Cloudflare runtime environment variables](https://developers.cloudflare.com/workers/configuration/environment-variables/).
+
 ## Cloudflare dashboard connection
 
 In Workers & Pages, open the existing `rei-booking` Worker and confirm these build settings. Do not create another Worker:

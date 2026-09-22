@@ -27,5 +27,19 @@ if (
   throw new Error(
     "Only the named TEST environment is configured for this release.",
   );
-console.log("Test deployment configuration is ready.");
+// Cloudflare's default deploy command omits --env. Both commands target the
+// same test Worker and must include its runtime variables and database binding.
+for (const target of [config, test]) {
+  if (
+    target.name !== test.name ||
+    target.workers_dev !== true ||
+    target.preview_urls !== false ||
+    JSON.stringify(target.vars) !== JSON.stringify(test.vars) ||
+    JSON.stringify(target.d1_databases) !== JSON.stringify(test.d1_databases)
+  )
+    throw new Error(
+      "Default and named TEST deployments must use the same test Worker, origin and database.",
+    );
+}
+console.log("Default and named TEST deployment configurations are ready.");
 export { test as testConfig };
