@@ -16,6 +16,7 @@ The authoritative approved visual reference is `docs/reference/Rei-Booking-v11-P
 | Treatment prices and appointment financial fields | Yes   | No        | No        |
 | Team/private HR and treatment configuration       | Yes   | No        | No        |
 | Account management and audit API                  | Yes   | No        | No        |
+| Voucher sales, values, previews and delivery      | Yes   | No        | No        |
 
 Profile creation does not grant access. A therapist account requires a linked active therapist profile. The reception price/payment permission remains a product decision for the Sales stage; this first version conservatively excludes all financial fields for that role.
 
@@ -37,9 +38,11 @@ Password hashes use scrypt N=32768, r=8, p=3, a per-password random salt and 32-
 - Requested therapist ID records the original request separately from the assigned therapist. A move does not silently relabel who was requested; its confirmation and reporting treatment need user acceptance.
 - Weekly availability changes are rejected if they strand booked/confirmed appointments from UTC yesterday onward. This conservative one-day buffer avoids missing local-date bookings around midnight; a dedicated effective-dated availability model is future work.
 
-## Reporting preparation, not completed reporting
+## Reports and Sales
 
-Appointments store creation date, service date, duration, status, cancellation timestamp, price snapshots and original requested therapist. The schema includes regular/requested bonus-rate fields defaulted to 100/500 RSD per hour as a future reporting foundation. There is no configurable bonus editor, bonus payout calculation, adjustment history or reporting API yet. Percentage mode, versioned rule changes and true earned-revenue rules must be implemented before these figures can be used for payroll/reports.
+Version 0.2 implements the Dashboard, report API/CSV, Team bonus editor and saved booking rules. See [report definitions](reports.md) for completed-only treatment revenue, requested hours, percentage bonuses and rounding. Payout/adjustment history is not yet implemented.
+
+Version 0.3 adds immutable Sales/voucher snapshots, transactional issuance with request idempotency and catalogue-change guards, and a separate persisted email delivery lifecycle. Sale totals do not alter treatment-performance reports. See [Sales invariants](sales.md). All financial routes remain owner-only; the signed email webhook is the sole sessionless write route and verifies raw-body HMAC before storing events.
 
 There is no delete endpoint for appointments or client history. Audit access is owner-only. Before production, define retention, corrections and export rules alongside reporting requirements.
 

@@ -5,7 +5,8 @@
   "preview_urls": false,
   "vars": {
     "APP_ENV": "test",
-    "APP_ORIGIN": "https://rei-booking.mbaucal.workers.dev"
+    "APP_ORIGIN": "https://rei-booking.mbaucal.workers.dev",
+    "EMAIL_ENABLED": "false"
   },
   "d1_databases": [
     {
@@ -17,9 +18,7 @@
   ],
   "main": "src/worker.mjs",
   "compatibility_date": "2026-09-22",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
@@ -32,7 +31,8 @@
       "preview_urls": false,
       "vars": {
         "APP_ENV": "test",
-        "APP_ORIGIN": "https://rei-booking.mbaucal.workers.dev"
+        "APP_ORIGIN": "https://rei-booking.mbaucal.workers.dev",
+        "EMAIL_ENABLED": "false"
       },
       "d1_databases": [
         {

@@ -41,6 +41,10 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
       "domain.mjs",
       "reports.mjs",
       "report-schema.mjs",
+      "sales.mjs",
+      "sales-schema.mjs",
+      "voucher-render.mjs",
+      "voucher-email.mjs",
     ].map((f) => ({
       type: "ESModule",
       path: resolve("src", f),

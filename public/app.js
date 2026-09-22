@@ -1,4 +1,5 @@
 import { renderReports } from "./reports.js";
+import { renderSales } from "./sales.js";
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
   String(value ?? "").replace(
@@ -228,12 +229,14 @@ async function setPage(page) {
   if (page !== "calendar" && (!operator() || (page !== "clients" && !owner())))
     return;
   state.page = page;
+  closeDrawer();
   state.version++;
   $("app-error").hidden = true;
   $("page-title").textContent = {
     calendar: "Calendar",
     dashboard: "Dashboard",
     reports: "Reports",
+    sales: "Sales",
     clients: "Clients",
     team: "Team",
     services: "Treatments",
@@ -264,6 +267,21 @@ async function setPage(page) {
         },
         page === "dashboard",
       );
+    } else if (page === "sales") {
+      const version = state.version;
+      await renderSales({
+        root: $("page-content"),
+        api,
+        esc,
+        money,
+        stamp,
+        today,
+        isCurrent: () => state.version === version && owner(),
+        showDrawer,
+        closeDrawer,
+        toast,
+        download: (query) => downloadReport(query, "/api/sales/vouchers.csv?"),
+      });
     } else if (page === "clients") await renderClients();
     else if (page === "team") await renderTeam();
     else if (page === "services") await renderServices();
@@ -272,9 +290,12 @@ async function setPage(page) {
     showAppError(error);
   }
 }
-async function downloadReport(query) {
+async function downloadReport(
+  query,
+  endpoint = "/api/reports/appointments.csv?",
+) {
   const epoch = sessionEpoch;
-  const response = await fetch("/api/reports/appointments.csv?" + query, {
+  const response = await fetch(endpoint + query, {
     credentials: "same-origin",
   });
   if (epoch !== sessionEpoch || !owner())

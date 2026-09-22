@@ -2,6 +2,14 @@
 
 Validated locally with Node.js 24.19.0, Wrangler 4.136.3 and its Miniflare/Workerd D1 runtime. Only fictional test records were used.
 
+## Sales release 0.3
+
+Added actual Worker/D1 checks for automatic additive schema, template version/audit consistency, explicit validity/payment confirmation, unique voucher codes, optional buyer and no automatic sending, concurrent checkout retries with one atomic new client, rejection of changed retry contents, immutable snapshots across menu edits, issued-record guards, filtered CSV/formula escaping, print content, unchanged treatment-report revenue and owner-only API/CSV/print/email access.
+
+Email checks use an injected mock transport and the real D1 outbox: explicit recipient and no buyer CC/BCC, immutable reviewed payload, disabled unconfigured sending, atomic send claim, identical payload/idempotency key on network retry, 23-hour retry cutoff, accepted-versus-delivered status, signed callback before API response, duplicated/late callbacks and bounce suppression. Signature verification also matches the independent published Svix test vector and rejects modified/old requests. No real messages were sent.
+
+Connected-account inspection found the Resend sender domain present but `not_started`. No domain/DNS/API-key changes were made. Live sending, visual/keyboard/device acceptance and the deployed v0.3 UI remain unverified.
+
 ## Reports release 0.2
 
 The user confirmed successful hosted owner sign-in. Local report checks cover completed-only revenue/hours, fulfilled requested vs replacement rates, full-price percentages, exact bonus-cent allocation across every grouping, filter application, partial-month denominators, leap-year/DST/date boundaries, zero-baseline comparison, CSV formula escaping, missing inputs, and duplicate IDs. The additive runtime schema matches the Wrangler migration and can be reapplied without modifying existing records.
@@ -40,6 +48,6 @@ GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91
 - Browser visual checks, keyboard/screen-reader review and touch interaction on real devices. Automated browser review of local files was unavailable in this session; no substitute browser route was used.
 - Hosted acceptance of the new Reports/Dashboard/Team bonus screens. Initial schema, origin and successful owner sign-in have been confirmed by the user.
 - Hosted login performance/CPU budget, backup export/restore drill and operational monitoring.
-- Scheduled report archive/email, scoped Sheets integration, voucher sales/redemption/email delivery, private photo uploads, imports and loyalty calculations.
+- Scheduled report archive/email, scoped Sheets integration, voucher redemption/refunds/packages, live email setup, private photo uploads, imports and loyalty calculations.
 
 The first slice is suitable for code review and deployment to a dedicated fictional-data test environment once access is configured. It is not a sign-off for live salon use.

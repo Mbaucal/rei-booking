@@ -28,6 +28,8 @@ Owner-selected monthly report with an email notification when the previous month
 
 ## Sales and gift vouchers: MBA-76
 
+Implemented in v0.3: owner-only persistent sold register/CSV, current-menu and custom-amount vouchers, cart, optional atomic new/existing buyer, separate recipient, immutable codes and snapshots, personalised/default designs, preview and browser print/PDF. Email previews, provider sending and signed delivery events are implemented; live sending remains disabled pending DNS verification and server secrets. Redemption/refunds, package rules and reception financial permissions remain pending. See [Sales implementation](sales.md) and [email setup](email-setup.md).
+
 - Visible Sales navigation, sold voucher list, search, dates/statuses and details.
 - Sell a predefined treatment type + duration + fixed price, or a custom monetary amount. Prepare for the new menu; do not hardcode illustrative prices as the final menu.
 - Cart and optional existing/new buyer client. Buyer is separate from the recipient; recipient email must not default silently to buyer email.

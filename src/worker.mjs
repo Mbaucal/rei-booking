@@ -26,6 +26,8 @@ import {
   projectTherapist,
 } from "./domain.mjs";
 import { ensureReportSchema } from "./report-schema.mjs";
+import { salesRoutes } from "./sales.mjs";
+import { emailWebhook } from "./voucher-email.mjs";
 import {
   bonusInput,
   reportOptions,
@@ -409,9 +411,10 @@ async function routes(request, env) {
     method = request.method,
     db = env.DB;
   if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
+  if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.2.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.3.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -458,6 +461,7 @@ async function routes(request, env) {
   if (user.must_change_password)
     fail(403, "Change your temporary password before continuing.");
   await ensureReportSchema(db);
+  if (path.startsWith("/api/sales/")) return salesRoutes(request, env, user);
   if (path === "/api/catalogue" && method === "GET") {
     const [therapists, rooms, services] = await Promise.all([
       all(
