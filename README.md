@@ -51,7 +51,7 @@ npm run build
 
 ## Test deployment
 
-No remote database, Cloudflare subscription, domain or deployment is created by this package. Configure the dedicated **test** environment first; see [the deployment guide](docs/deployment.md). Do not repurpose the CMS or Staff Planner database.
+The owner has created the dedicated D1 database `rei-booking-test`; its ID is configured. The supplied dashboard screenshot shows zero tables, and the remote migration, first owner, Worker and HTTPS origin are still pending. Complete the dedicated **test** setup using [the deployment guide](docs/deployment.md). Do not repurpose the CMS or Staff Planner database. The deployment guard blocks publication until the exact HTTPS origin is configured.
 
 ## Next implementation stages
 

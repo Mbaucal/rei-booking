@@ -2,7 +2,30 @@
 
 ## Current state
 
-The local Worker, migration and integration tests are ready. The test deployment is not online. The private repository is https://github.com/Mbaucal/rei-booking; GitHub sign-in and repository creation are complete. Cloudflare test resources and the exact test hostname still need to be configured.
+The local Worker, migration and integration tests are ready. The test deployment is not online. The private repository is https://github.com/Mbaucal/rei-booking; GitHub sign-in and repository creation are complete.
+
+On 22 September 2026, the owner supplied a Cloudflare screenshot confirming the dedicated D1 database `rei-booking-test`, ID `7078aa06-6963-4e34-bdee-90e32e2764ae`. This ID is now configured as the test `DB` binding. The screenshot shows zero tables: the remote schema and first owner have not yet been provisioned. Do not create a second database. The Worker, repository connection and exact HTTPS origin are still pending. `APP_ORIGIN` remains the local development value, so the deployment guard intentionally blocks publication until the hosted address is configured.
+
+## Cloudflare dashboard connection
+
+Open Workers & Pages, create an application and choose the existing GitHub repository. Prepare these settings for the dedicated test Worker:
+
+| Setting | Value |
+| --- | --- |
+| Repository | `Mbaucal/rei-booking` |
+| Worker name | `rei-booking-test` |
+| Branch | `main` |
+| Root directory | Repository root (`/`) |
+| Build command | `npm run check && npm test && npm run build` |
+| Deploy command | `npm run deploy:test` |
+| Build variable | `NODE_VERSION=24` |
+| Preview builds for other branches | Disabled for this initial setup |
+
+Cloudflare may label `main` as the production branch of this Worker; this Worker still uses the isolated **test** environment through the explicit `--env test` in the deploy script. Confirm the generated Worker HTTPS address and update `env.test.vars.APP_ORIGIN` before deploying. Build variables are separate from application runtime variables, which remain in `wrangler.json`.
+
+Apply the migration and provision the first owner using the authorized local Wrangler flow below before application acceptance. `npm run deploy:test` only deploys the Worker; it does not migrate the database or create an owner. Cloudflare's default Builds token does not list D1 edit permission, so do not assume it can execute migrations. Do not paste tokens or passwords into chat. If GitHub asks which repositories Cloudflare can access, select only `rei-booking` where that option is available.
+
+References: [Cloudflare build configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/) and [Wrangler environments in Builds](https://developers.cloudflare.com/workers/ci-cd/builds/advanced-setups/).
 
 ## Configure the dedicated test environment
 
@@ -10,7 +33,7 @@ Use the owner's existing Cloudflare account through its normal sign-in flow. Do 
 
 1. Use the private `Mbaucal/rei-booking` repository. Commit the package contents, including the lockfile and workflow. Exclude `node_modules`, `.wrangler`, `private`, `dist` and credentials.
 2. Authenticate Wrangler locally with `npx wrangler login` and confirm the intended Cloudflare account.
-3. Create a dedicated database with `npx wrangler d1 create rei-booking-test`. Copy its returned `database_id` into `env.test.d1_databases[0]` in `wrangler.json`.
+3. Use the existing dedicated database `rei-booking-test` (`7078aa06-6963-4e34-bdee-90e32e2764ae`); its ID is already in `env.test.d1_databases[0]` in `wrangler.json`. Confirm Wrangler is using the same Cloudflare account that owns this database.
 4. Set `env.test.vars.APP_ORIGIN` to the exact HTTPS origin that the `rei-booking-test` Worker will use, without a trailing slash. Local development requires `http://localhost:8787`; use that local value again when running locally.
 5. Run `npm run check`, `npm test` and `npm run build`.
 6. Apply the migration with `npx wrangler d1 migrations apply rei-booking-test --env test --remote`.

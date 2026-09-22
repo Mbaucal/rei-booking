@@ -22,7 +22,7 @@
         {
           "binding": "DB",
           "database_name": "rei-booking-test",
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "7078aa06-6963-4e34-bdee-90e32e2764ae",
           "migrations_dir": "migrations"
         }
       ]
