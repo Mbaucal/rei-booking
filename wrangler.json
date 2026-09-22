@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rei-booking",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-09-22",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "env": {
+    "test": {
+      "name": "rei-booking-test",
+      "vars": {
+        "APP_ENV": "test",
+        "APP_ORIGIN": "http://localhost:8787"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "rei-booking-test",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#1f3d33" />
+    <title>Rei Booking</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div id="login-screen" class="login-screen" hidden>
+      <section class="login-card">
+        <img src="/logo.png" alt="Rei Thailand Massage" />
+        <p class="eyebrow">Your salon, thoughtfully organised</p>
+        <h1>Welcome back</h1>
+        <p>Sign in to Rei Booking.</p>
+        <form id="login-form">
+          <label
+            >Email<input
+              name="email"
+              type="email"
+              autocomplete="username"
+              required /></label
+          ><label
+            >Password<input
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              maxlength="128"
+              required
+          /></label>
+          <p class="error" id="login-error" role="alert" hidden></p>
+          <button class="btn primary" type="submit">Sign in</button>
+        </form>
+      </section>
+    </div>
+    <div id="app" class="shell" hidden>
+      <aside class="rail">
+        <div>
+          <div class="brand">
+            <img src="/logo.png" alt="Rei Thailand Massage" />
+          </div>
+          <p class="brand-label">BOOKING</p>
+        </div>
+        <nav aria-label="Main navigation">
+          <button data-page="calendar">▦ <span>Calendar</span></button
+          ><button data-page="clients">♧ <span>Clients</span></button
+          ><button data-page="team">♙ <span>Team</span></button
+          ><button data-page="services">◇ <span>Treatments</span></button
+          ><button data-page="users">⚙ <span>Accounts</span></button>
+        </nav>
+        <div class="rail-bottom">
+          <strong id="signed-name"></strong><span id="signed-role"></span
+          ><button id="change-password">Change password</button
+          ><button id="sign-out">Sign out</button>
+        </div>
+      </aside>
+      <main>
+        <header class="page-top">
+          <div>
+            <p class="eyebrow">Rei Thailand Massage</p>
+            <h1 id="page-title">Calendar</h1>
+          </div>
+          <div class="top-meta">
+            <span id="clock"></span
+            ><span class="badge">Development · test</span>
+          </div>
+        </header>
+        <p id="app-error" class="error" role="alert" hidden></p>
+        <section id="page-content"></section>
+      </main>
+    </div>
+    <dialog id="drawer" class="drawer">
+      <header>
+        <div>
+          <p class="eyebrow" id="drawer-kicker"></p>
+          <h2 id="drawer-title"></h2>
+        </div>
+        <button class="btn icon" id="drawer-close" aria-label="Close details">
+          ×
+        </button>
+      </header>
+      <div id="drawer-content" class="drawer-content"></div>
+      <footer id="drawer-footer"></footer>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

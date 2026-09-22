@@ -1,0 +1,51 @@
+# Approved scope and implementation queue
+
+All application UI is English. Conversations and planning can remain Serbian. Preserve the Rei green/ivory/gold identity and supplied logo. The v11 reference is the approved prototype; do not treat demonstration functionality as a finished backend feature.
+
+## Active first slice
+
+| Linear | Scope                                   | Status in code                                                                                                                                   |
+| ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| MBA-71 | Private repository and test environment | Private GitHub repository created; source, migrations, setup guide, tests and CI prepared; remote test hosting pending                                                               |
+| MBA-72 | Calendar                                | Persistent day/calendar/API, therapist/room views, optional client, 5-minute edits, pointer drag, conflict protection; device acceptance pending |
+| MBA-73 | Clients and treatments                  | Persistent CRUD/search/history and treatment variants; imports and photo storage pending                                                         |
+| MBA-74 | Permissions                             | Owner/reception/therapist server projections and protected actions; hosted acceptance pending                                                    |
+| MBA-79 | Team                                    | Profiles, weekly hours, dated time off and account separation; photos and bonus configuration pending                                            |
+
+## Reports and bonuses: MBA-80
+
+Detailed rows: therapist, massage date/time, duration, full and discounted price, when booked, cancellation/status and requested flag. Filter/group by therapist, date/month and treatment. Summary: treatment count, completed hours, requested hours, earned treatment revenue, average earned revenue per massage, average hours per day and total hours for the chosen period. Agree whether average hours/day divides by worked days or all selected days and label it explicitly.
+
+Bonus is proportional to **completed minutes**, not appointment count. Current rule: normal 100 RSD/hour; requested 500 RSD/hour replacing the normal rate. For example, a completed 90-minute massage earns 150 RSD normal or 750 RSD requested. Cancelled appointments do not earn worked-hour bonuses. Bonus configuration belongs in Team; results belong in reports. Keep percentage mode as optional future support on the full treatment price, without applying it twice or to discounted value. Preserve effective-dated rate snapshots and define rounding. Do not reuse older EUR or per-appointment rules from unrelated projects.
+
+Main Dashboard: Last 7 days / Last 30 days, total earnings and change versus the immediately preceding equal-length period. These are revenue comparisons, not net business profit. Avoid adding a separate bonus tab.
+
+## Scheduled exports and integration: MBA-81 / MBA-82
+
+Owner-selected monthly report with an email notification when the previous month's report is ready, plus CSV export/archive inside the app. Salon timezone and month boundary must be explicit. Optional owner-only scoped API for automatic Google Sheets Apps Script retrieval, with revoked credentials and clear report definitions. This is an application feature, not a ChatGPT reminder automation.
+
+## Sales and gift vouchers: MBA-76
+
+- Visible Sales navigation, sold voucher list, search, dates/statuses and details.
+- Sell a predefined treatment type + duration + fixed price, or a custom monetary amount. Prepare for the new menu; do not hardcode illustrative prices as the final menu.
+- Cart and optional existing/new buyer client. Buyer is separate from the recipient; recipient email must not default silently to buyer email.
+- Unique immutable code per voucher, sale linkage, status, balance/entitlement and redemption history. Clarify expiry and treatment substitutions before activation.
+- Custom Rei voucher appearance, original logo, recipient name/message and preview.
+- Send the voucher directly from **info@reithailandmassage.com** after explicit sale/delivery action, with preview, reliable retry/idempotency and delivery status. No messages are sent during development tests.
+- Package sales and redemptions alongside vouchers. Do not double-count voucher purchase and treatment redemption as the same earnings metric.
+
+## Profile photos: MBA-73 / MBA-79
+
+Optional upload/change/remove for clients and team, supported file validation, size limits, image processing and persistent private storage. Team photos can appear in calendar headers. Therapist view must not receive client photos, initials, names or other identifying information. Browser-only demonstration uploads in v11 are not the storage implementation.
+
+## Import: MBA-75
+
+Import clients and past appointments from exports, with preview, normalization, duplicate resolution and rollback/reconciliation. Retain original booking dates, treatment duration, therapist and request history where present. Work on copies; import real records only after access and recovery checks.
+
+## Loyalty: MBA-77
+
+Planned, but earning/redemption rules are undecided. Do not invent points, discounts, visit thresholds or payouts. Keep it out of active monetary calculations until approved.
+
+## Scope boundaries
+
+CMS and Staff Planner are design/repository references, not automatically integrated services. Financial setup, voucher delivery configuration, hosted backups and device checks remain explicit unfinished work.
