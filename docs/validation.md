@@ -10,7 +10,9 @@ GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91
 - The actual D1 migration via `npm run db:local` (21 SQL commands).
 - Worker deployment dry-run compilation with the assets and D1 bindings.
 - First-owner SQL generation, apostrophe escaping, mandatory first password change flag and prevention of a second bootstrap owner.
-- Deployment guard rejects the placeholder database configuration before publishing.
+- Two additional SQLite tests verify first-owner provisioning with the real migration and password hash, preservation of an existing owner, and rejection of an attempt to promote an existing reception email through setup.
+- Interactive hidden-password input checked with a fictional value in a terminal; the entered value was not echoed.
+- Deployment guard checks the exact test database, Worker name and HTTPS origin before publishing. The dry run bundles `rei-booking` with origin `https://rei-booking.mbaucal.workers.dev` and database `rei-booking-test`.
 - 11 Worker/D1 integration scenarios (Node reports 12 passing tests including the parent test):
 
   1. Sign-in, origin and CSRF checks.
@@ -28,7 +30,7 @@ GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91
 ## Not yet verified or delivered
 
 - Browser visual checks, keyboard/screen-reader review and touch interaction on real devices. Automated browser review of local files was unavailable in this session; no substitute browser route was used.
-- Remote D1 instance or hosted test URL. The private repository has now been created at https://github.com/Mbaucal/rei-booking.
+- Remote migrations, owner provisioning and hosted sign-in. The owner's screenshots confirm creation of the dedicated D1 database and successful Worker deployment at https://rei-booking.mbaucal.workers.dev. The repository is now public. The deployment log exposed an origin mismatch, which is corrected in source; corrective redeployment and runtime acceptance remain pending.
 - Hosted login performance/CPU budget, backup export/restore drill and operational monitoring.
 - Complete reporting/bonuses, voucher sales/redemption/email delivery, private photo uploads, imports or loyalty calculations.
 

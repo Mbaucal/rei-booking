@@ -2,7 +2,7 @@
 
 First implementation release, **0.1.0** — 22 September 2026.
 
-An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. It is **not the complete approved product and has not been deployed**. The approved v11 prototype remains the reference for the remaining screens and workflows.
+An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The first Worker deployment succeeded; database initialization and hosted sign-in acceptance are still pending. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
 ## Included
 
@@ -51,11 +51,24 @@ npm run build
 
 ## Test deployment
 
-The owner has created the dedicated D1 database `rei-booking-test`; its ID and the expected test origin `https://rei-booking-test.mbaucal.workers.dev` are configured. The supplied database screenshot shows zero tables. The Worker deployment, remote migration and first owner are still pending. Follow [the deployment guide](docs/deployment.md) and confirm Cloudflare's actual deployment address matches the configured origin. `npm run dev` uses the localhost origin separately. Do not repurpose the CMS or Staff Planner database.
+The owner's Cloudflare log confirms deployment at **https://rei-booking.mbaucal.workers.dev** with the dedicated D1 database `rei-booking-test`. The configuration now matches that actual Worker name and address. Database initialization, the first owner and hosted sign-in still need to be completed from the owner's authenticated terminal.
+
+With Node.js 24 installed, run these commands from this repository, replacing the example email with the owner's email:
+
+```sh
+npm ci
+npx wrangler login
+npm run setup:test -- owner@example.com
+npm run deploy:test
+```
+
+The setup command checks the test database ID, asks before applying pending migrations and creates the first owner only if none exists. It asks for the display name and a temporary password through hidden terminal input. Passwords are never shell arguments. The temporary SQL and associated setup log are removed when the command finishes. Existing accounts and passwords are preserved. Change the temporary password at first sign-in.
+
+See [the deployment guide](docs/deployment.md) for details and the manual alternative. `npm run dev` uses the localhost origin separately. Do not repurpose the CMS or Staff Planner database.
 
 ## Next implementation stages
 
-1. Deploy the test environment from the existing `Mbaucal/rei-booking` repository, apply the database migration, provision the first owner and complete device acceptance checks.
+1. Redeploy the corrected origin, apply the test database migration, provision the first owner and complete hosted sign-in and device acceptance checks.
 2. Add reports and bonus configuration/calculation, dashboard comparisons, CSV exports and scheduled reporting.
 3. Implement Sales, treatment/custom-value gift vouchers, separate buyer and recipient, custom voucher design and email delivery.
 4. Add private profile-photo storage for clients and team, import/history migration and approved loyalty rules.

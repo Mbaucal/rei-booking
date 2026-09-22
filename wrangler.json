@@ -13,10 +13,12 @@
   },
   "env": {
     "test": {
-      "name": "rei-booking-test",
+      "name": "rei-booking",
+      "workers_dev": true,
+      "preview_urls": false,
       "vars": {
         "APP_ENV": "test",
-        "APP_ORIGIN": "https://rei-booking-test.mbaucal.workers.dev"
+        "APP_ORIGIN": "https://rei-booking.mbaucal.workers.dev"
       },
       "d1_databases": [
         {
