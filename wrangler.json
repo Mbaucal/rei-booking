@@ -16,7 +16,7 @@
       "name": "rei-booking-test",
       "vars": {
         "APP_ENV": "test",
-        "APP_ORIGIN": "http://localhost:8787"
+        "APP_ORIGIN": "https://rei-booking-test.mbaucal.workers.dev"
       },
       "d1_databases": [
         {

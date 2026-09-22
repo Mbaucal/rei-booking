@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "wrangler dev --env test",
+    "dev": "wrangler dev --env test --var APP_ORIGIN:http://localhost:8787",
     "test": "node --test tests/*.test.mjs",
     "check": "node scripts/check.mjs",
     "db:local": "wrangler d1 migrations apply rei-booking-test --env test --local",

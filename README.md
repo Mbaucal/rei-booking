@@ -51,11 +51,11 @@ npm run build
 
 ## Test deployment
 
-The owner has created the dedicated D1 database `rei-booking-test`; its ID is configured. The supplied dashboard screenshot shows zero tables, and the remote migration, first owner, Worker and HTTPS origin are still pending. Complete the dedicated **test** setup using [the deployment guide](docs/deployment.md). Do not repurpose the CMS or Staff Planner database. The deployment guard blocks publication until the exact HTTPS origin is configured.
+The owner has created the dedicated D1 database `rei-booking-test`; its ID and the expected test origin `https://rei-booking-test.mbaucal.workers.dev` are configured. The supplied database screenshot shows zero tables. The Worker deployment, remote migration and first owner are still pending. Follow [the deployment guide](docs/deployment.md) and confirm Cloudflare's actual deployment address matches the configured origin. `npm run dev` uses the localhost origin separately. Do not repurpose the CMS or Staff Planner database.
 
 ## Next implementation stages
 
-1. Create the test environment from the private `Mbaucal/rei-booking` repository and complete device acceptance checks.
+1. Deploy the test environment from the existing `Mbaucal/rei-booking` repository, apply the database migration, provision the first owner and complete device acceptance checks.
 2. Add reports and bonus configuration/calculation, dashboard comparisons, CSV exports and scheduled reporting.
 3. Implement Sales, treatment/custom-value gift vouchers, separate buyer and recipient, custom voucher design and email delivery.
 4. Add private profile-photo storage for clients and team, import/history migration and approved loyalty rules.
