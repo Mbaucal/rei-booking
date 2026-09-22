@@ -28,7 +28,9 @@ function run(args, { capture = false, sensitive = false } = {}) {
       env: {
         ...process.env,
         WRANGLER_SEND_METRICS: "false",
-        WRANGLER_LOG: "error",
+        // D1 emits its --json result at the normal log level. Setting "error"
+        // suppresses the result too, leaving the setup parser with no data.
+        WRANGLER_LOG: "log",
         WRANGLER_LOG_SANITIZE: "true",
         ...(sensitive
           ? { WRANGLER_LOG_PATH: join(privateDir, "wrangler.log") }

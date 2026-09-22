@@ -39,6 +39,8 @@ References: [Cloudflare build configuration](https://developers.cloudflare.com/w
 
 ## Initialize the test database and first owner
 
+The owner's latest D1 Console table-list query returns only `_cf_KV`. This confirms that the application migration has not been applied to `rei-booking-test` and no application owner exists there yet. Correct runtime settings alone do not initialize the database. Run the setup command below to apply the tracked migration and create the first owner together.
+
 Use Node.js 24 and a terminal on the owner's machine, in an up-to-date checkout of this repository. The assistant's environment has no authenticated Cloudflare CLI session. Replace the example email with the owner's email; keep real credentials out of the public repository.
 
 ```sh
