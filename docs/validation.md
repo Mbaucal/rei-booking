@@ -11,6 +11,7 @@ GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91
 - Worker deployment dry-run compilation with the assets and D1 bindings.
 - First-owner SQL generation, apostrophe escaping, mandatory first password change flag and prevention of a second bootstrap owner.
 - Two additional SQLite tests verify first-owner provisioning with the real migration and password hash, preservation of an existing owner, and rejection of an attempt to promote an existing reception email through setup.
+- Owner recovery tests verify new-password acceptance and old-password rejection, scoped session and email-limit cleanup, preservation of other accounts and salon records, an audit entry without credentials, and refusal to overwrite changed identity, role, status or password.
 - Interactive hidden-password input checked with a fictional value in a terminal; the entered value was not echoed.
 - Actual Wrangler D1 JSON output checked against an isolated temporary local database. Reproduced that `WRANGLER_LOG=error` suppresses the JSON result required by setup; verified that `WRANGLER_LOG=log` returns valid results. Setup now retains that normal log level, while sensitive output remains captured and its log stays in the private temporary directory. No remote database was used for this check.
 - Deployment guard checks the exact test database, Worker name and HTTPS origin before publishing. The dry run bundles `rei-booking` with origin `https://rei-booking.mbaucal.workers.dev` and database `rei-booking-test`.

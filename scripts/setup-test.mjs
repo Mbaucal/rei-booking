@@ -7,12 +7,14 @@ import { fileURLToPath } from "node:url";
 import { hashPassword } from "../src/security.mjs";
 import { email, text } from "../src/domain.mjs";
 import { testConfig } from "./check-config.mjs";
-import { firstOwnerSQL } from "./owner-sql.mjs";
+import { firstOwnerSQL, resetOwnerSQL, quote } from "./owner-sql.mjs";
 import { ask } from "./terminal-input.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const wrangler = join(root, "node_modules/wrangler/bin/wrangler.js");
 const db = testConfig.d1_databases[0];
+const resetMode = process.argv[2] === "--reset-password";
+const argumentsForMode = process.argv.slice(resetMode ? 3 : 2);
 let privateDir;
 
 function run(args, { capture = false, sensitive = false } = {}) {
@@ -40,7 +42,7 @@ function run(args, { capture = false, sensitive = false } = {}) {
   );
   if (result.error || result.status !== 0)
     throw new Error(
-      "Cloudflare command failed. Check your Cloudflare login and access to the displayed TEST database, then rerun setup. Existing owner accounts are never replaced.",
+      "Cloudflare command failed. Check your Cloudflare login and access to the displayed TEST database, then rerun this command.",
     );
   if (!capture) return;
   try {
@@ -72,13 +74,16 @@ function rows(result) {
 try {
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error("Run npm run setup:test in your own interactive terminal.");
-  if (process.argv.length > 3)
+  if (argumentsForMode.length > 1)
     throw new Error(
       "Pass only the owner email. Enter the password when prompted, never as an argument.",
     );
-  const mail = email(process.argv[2] || (await ask("Owner email: ")), false);
+  const mail = email(
+    argumentsForMode[0] || (await ask("Owner email: ")),
+    false,
+  );
   console.log(
-    `\nRei Booking TEST setup\nWorker: ${testConfig.name}\nDatabase: ${db.database_name}\nDatabase ID: ${db.database_id}\nOwner email: ${mail}\n`,
+    `\nRei Booking TEST ${resetMode ? "owner password recovery" : "setup"}\nWorker: ${testConfig.name}\nDatabase: ${db.database_name}\nDatabase ID: ${db.database_id}\nOwner email: ${mail}\n`,
   );
   const info = run(["d1", "info", db.database_name, "--json"], {
     capture: true,
@@ -90,7 +95,9 @@ try {
   if (
     (
       await ask(
-        "Apply pending migrations and create the first owner in this TEST database? [y/N] ",
+        resetMode
+          ? "Set a new temporary password for this owner (or create the first owner if none exists)? [y/N] "
+          : "Apply pending migrations and create the first owner in this TEST database? [y/N] ",
       )
     )
       .trim()
@@ -98,16 +105,38 @@ try {
   ) {
     console.log("Setup cancelled.");
   } else {
-    run(["d1", "migrations", "apply", db.database_name, "--remote"]);
+    if (!resetMode)
+      run(["d1", "migrations", "apply", db.database_name, "--remote"]);
     const existing = rows(
       query("SELECT id FROM users WHERE role='owner' LIMIT 1;"),
     );
-    if (existing.length) {
+    if (existing.length && !resetMode) {
       console.log(
         "An owner already exists. Its account and password were kept. Sign in using the existing account.",
       );
     } else {
-      const name = text(await ask("Owner display name: "), 100, "owner name");
+      privateDir = await mkdtemp(join(tmpdir(), "rei-owner-"));
+      let owner;
+      if (existing.length) {
+        [owner] = rows(
+          query(
+            `SELECT id,email,name,role,active,password_hash FROM users WHERE email=${quote(mail)};`,
+            { sensitive: true },
+          ),
+        );
+        if (!owner || owner.role !== "owner" || owner.active !== 1)
+          throw new Error(
+            "This email is not an active owner. No account was changed. Check the owner email and account status.",
+          );
+        console.log(
+          `Resetting the password for ${mail}. Existing sessions for this owner will be signed out.`,
+        );
+      } else if (resetMode) {
+        console.log("No owner exists yet. Creating the first owner account.");
+      }
+      const name = owner
+        ? owner.name
+        : text(await ask("Owner display name: "), 100, "owner name");
       let password = await ask(
         "Temporary password (12–128 characters, input hidden): ",
         { secret: true },
@@ -117,18 +146,20 @@ try {
         throw new Error("Passwords do not match. Rerun setup to try again.");
       const hash = await hashPassword(password);
       password = repeat = "";
-      const id = randomUUID();
-      privateDir = await mkdtemp(join(tmpdir(), "rei-owner-"));
+      const id = owner ? owner.id : randomUUID();
       const file = join(privateDir, "first-owner.sql");
+      const values = {
+        id,
+        mail,
+        name,
+        hash,
+        createdAt: new Date().toISOString(),
+      };
       await writeFile(
         file,
-        firstOwnerSQL({
-          id,
-          mail,
-          name,
-          hash,
-          createdAt: new Date().toISOString(),
-        }),
+        owner
+          ? resetOwnerSQL({ ...values, previousHash: owner.password_hash })
+          : firstOwnerSQL(values),
         { mode: 0o600, flag: "wx" },
       );
       run(
@@ -146,7 +177,7 @@ try {
       );
       const saved = rows(
         query(
-          `SELECT id,role,active,must_change_password FROM users WHERE id='${id}';`,
+          `SELECT id,role,active,must_change_password,password_hash FROM users WHERE id=${quote(id)};`,
           { sensitive: true },
         ),
       );
@@ -154,13 +185,16 @@ try {
         saved.length !== 1 ||
         saved[0].role !== "owner" ||
         saved[0].active !== 1 ||
-        saved[0].must_change_password !== 1
+        saved[0].must_change_password !== 1 ||
+        saved[0].password_hash !== hash
       )
         throw new Error(
-          "Owner creation was not confirmed. Another owner may already exist. No account was replaced.",
+          "The owner password could not be verified. The account may have changed concurrently. Rerun this command to check it.",
         );
       console.log(
-        "Owner account created and verified. Sign in with the temporary password and replace it at first sign-in.",
+        owner
+          ? "Owner password reset and verified. Sign in with the new temporary password and replace it at first sign-in."
+          : "Owner account created and verified. Sign in with the temporary password and replace it at first sign-in.",
       );
     }
     console.log(

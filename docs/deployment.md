@@ -39,7 +39,7 @@ References: [Cloudflare build configuration](https://developers.cloudflare.com/w
 
 ## Initialize the test database and first owner
 
-The owner's latest D1 Console table-list query returns only `_cf_KV`. This confirms that the application migration has not been applied to `rei-booking-test` and no application owner exists there yet. Correct runtime settings alone do not initialize the database. Run the setup command below to apply the tracked migration and create the first owner together.
+An earlier D1 Console table-list query returned only `_cf_KV`. The owner's latest screenshot now shows the application tables and `d1_migrations`. Login has progressed to `Email or password is incorrect.` This does not distinguish an absent owner from a password mismatch or disabled account. The setup flow below is for initial provisioning; use the recovery flow if provisioning was interrupted or the initial password is unavailable.
 
 Use Node.js 24 and a terminal on the owner's machine, in an up-to-date checkout of this repository. The assistant's environment has no authenticated Cloudflare CLI session. Replace the example email with the owner's email; keep real credentials out of the public repository.
 
@@ -59,6 +59,21 @@ Sign in to the Cloudflare account that owns the displayed database. The setup co
 5. Uses the application's password hash, creates the owner once, and verifies the account. It removes its temporary SQL and associated log on completion.
 
 Never pass a password as a command argument. First sign-in requires replacing the temporary password. Open https://rei-booking.mbaucal.workers.dev after setup and deployment complete.
+
+## Recover the owner password
+
+In the existing local checkout, with the Cloudflare login still active:
+
+```sh
+git pull --ff-only
+npm run owner:reset -- owner@example.com
+```
+
+Replace the example email with the owner's email. The command verifies the exact test database and asks for confirmation, then takes the new temporary password twice through hidden input. It applies no migrations. If no owner exists, it prompts for a display name and creates the first owner. If an owner already exists, the supplied email must identify an active owner; reception accounts and disabled accounts are never promoted or reactivated.
+
+For an existing owner, the guarded update requires the previously read password hash to still match, avoiding overwrite of a concurrent password change. It clears that owner's existing sessions and email-specific login attempt limit, leaves IP limits and other accounts intact, and writes an `owner_password_reset` audit entry attributed to the Cloudflare CLI with no password/hash in the audit record. The command verifies the stored hash privately after saving. Temporary SQL and private logs are removed on completion. Open the application and use the new temporary password; replace it when prompted at first sign-in.
+
+This is an authenticated Cloudflare administrator recovery operation. The assistant has not executed a remote reset or received the owner's password. A hosted login rejection alone is not evidence that a reset has succeeded.
 
 ## Manual alternative
 

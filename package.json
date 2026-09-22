@@ -12,6 +12,7 @@
     "check": "node scripts/check.mjs",
     "db:local": "wrangler d1 migrations apply rei-booking-test --env test --local",
     "owner:prepare": "node scripts/prepare-owner.mjs",
+    "owner:reset": "node scripts/setup-test.mjs --reset-password",
     "setup:test": "node scripts/setup-test.mjs",
     "deploy:test": "node scripts/check-config.mjs && wrangler deploy --env test",
     "build": "node scripts/check-config.mjs && wrangler deploy --env test --dry-run --outdir dist",

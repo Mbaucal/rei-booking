@@ -2,7 +2,7 @@
 
 First implementation release, **0.1.0** — 22 September 2026.
 
-An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The first Worker deployment succeeded; database initialization and hosted sign-in acceptance are still pending. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
+An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The first Worker deployment succeeded and the owner has confirmed the application tables exist; owner-account provisioning and hosted sign-in acceptance are still being verified. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
 ## Included
 
@@ -51,7 +51,7 @@ npm run build
 
 ## Test deployment
 
-The owner's Cloudflare log confirms deployment at **https://rei-booking.mbaucal.workers.dev** with the dedicated D1 database `rei-booking-test`. The configuration now matches that actual Worker name and address. Database initialization, the first owner and hosted sign-in still need to be completed from the owner's authenticated terminal.
+The owner's Cloudflare log confirms deployment at **https://rei-booking.mbaucal.workers.dev** with the dedicated D1 database `rei-booking-test`. The configuration matches that actual Worker name and address. A later screenshot confirms the application tables and migration-tracking table; first-owner and hosted sign-in verification remain open.
 
 With Node.js 24 installed, run these commands from this repository, replacing the example email with the owner's email:
 
@@ -65,6 +65,8 @@ npm run deploy:test
 The setup command checks the test database ID, asks before applying pending migrations and creates the first owner only if none exists. It asks for the display name and a temporary password through hidden terminal input. Passwords are never shell arguments. The temporary SQL and associated setup log are removed when the command finishes. Existing accounts and passwords are preserved. Change the temporary password at first sign-in.
 
 See [the deployment guide](docs/deployment.md) for details and the manual alternative. `npm run dev` uses the localhost origin separately. Do not repurpose the CMS or Staff Planner database.
+
+If the initial password is lost or was entered incorrectly, run `npm run owner:reset -- owner@example.com` from an up-to-date checkout in the same authenticated terminal. Enter the real owner email instead of the example. This checks the dedicated test database, resets only the matching active owner's password, signs out that owner's existing sessions and requires a password change at the next sign-in. If no owner exists yet, it creates the first owner after prompting for a name. It does not promote another role or reactivate a disabled account. The password is entered privately and never passed as an argument. This command requires Cloudflare database administrator access; it is not a public password-reset endpoint.
 
 ## Next implementation stages
 
