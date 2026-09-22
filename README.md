@@ -47,7 +47,7 @@ npm test
 npm run build
 ```
 
-`npm test` runs the actual Worker with D1 in Miniflare, including a runtime restart and simultaneous writes. `npm run build` bundles a deployment dry run and does not publish. The GitHub Actions workflow performs these checks with read-only repository access; it has no deployment credentials and has not yet run on GitHub.
+`npm test` runs the actual Worker with D1 in Miniflare, including a runtime restart and simultaneous writes. `npm run build` bundles a deployment dry run and does not publish. The GitHub Actions workflow performs these checks with read-only repository access; it has no deployment credentials. The initial implementation passed [GitHub Actions](https://github.com/Mbaucal/rei-booking/actions/runs/35763142350); subsequent results are under Actions.
 
 ## Test deployment
 

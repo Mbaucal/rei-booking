@@ -4,6 +4,8 @@ Validated locally with Node.js 24.19.0, Wrangler 4.136.3 and its Miniflare/Worke
 
 ## Passed
 
+GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91445990a21dc2a3`: https://github.com/Mbaucal/rei-booking/actions/runs/35763142350 (completed 22 Sep 2026, 17:50 UTC).
+
 - JavaScript syntax checks for the server, browser code, scripts and tests.
 - The actual D1 migration via `npm run db:local` (21 SQL commands).
 - Worker deployment dry-run compilation with the assets and D1 bindings.
@@ -26,7 +28,7 @@ Validated locally with Node.js 24.19.0, Wrangler 4.136.3 and its Miniflare/Worke
 ## Not yet verified or delivered
 
 - Browser visual checks, keyboard/screen-reader review and touch interaction on real devices. Automated browser review of local files was unavailable in this session; no substitute browser route was used.
-- GitHub Actions result, remote D1 instance or hosted test URL. The private repository has now been created at https://github.com/Mbaucal/rei-booking.
+- Remote D1 instance or hosted test URL. The private repository has now been created at https://github.com/Mbaucal/rei-booking.
 - Hosted login performance/CPU budget, backup export/restore drill and operational monitoring.
 - Complete reporting/bonuses, voucher sales/redemption/email delivery, private photo uploads, imports or loyalty calculations.
 
