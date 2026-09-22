@@ -2,6 +2,12 @@
 
 Validated locally with Node.js 24.19.0, Wrangler 4.136.3 and its Miniflare/Workerd D1 runtime. Only fictional test records were used.
 
+## Reports release 0.2
+
+The user confirmed successful hosted owner sign-in. Local report checks cover completed-only revenue/hours, fulfilled requested vs replacement rates, full-price percentages, exact bonus-cent allocation across every grouping, filter application, partial-month denominators, leap-year/DST/date boundaries, zero-baseline comparison, CSV formula escaping, missing inputs, and duplicate IDs. The additive runtime schema matches the Wrangler migration and can be reapplied without modifying existing records.
+
+Worker/D1 integration verifies Team rates persist, stale edits cannot replace them, existing booking rates/creation timestamps survive profile and appointment edits, newly created appointments use the new rate, report totals reconcile with CSV, and both JSON/CSV routes plus bonus configuration reject reception/therapist access. Actual hosted rendering, CSV download interaction and touch layout are still pending; no browser acceptance is claimed.
+
 ## Passed
 
 GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91445990a21dc2a3`: https://github.com/Mbaucal/rei-booking/actions/runs/35763142350 (completed 22 Sep 2026, 17:50 UTC).
@@ -32,8 +38,8 @@ GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91
 ## Not yet verified or delivered
 
 - Browser visual checks, keyboard/screen-reader review and touch interaction on real devices. Automated browser review of local files was unavailable in this session; no substitute browser route was used.
-- Remote migrations, owner provisioning and hosted sign-in. The owner's screenshots confirm creation of the dedicated D1 database and successful Worker deployment at https://rei-booking.mbaucal.workers.dev. The repository is now public. The deployment log exposed an origin mismatch, which is corrected in source; corrective redeployment and runtime acceptance remain pending.
+- Hosted acceptance of the new Reports/Dashboard/Team bonus screens. Initial schema, origin and successful owner sign-in have been confirmed by the user.
 - Hosted login performance/CPU budget, backup export/restore drill and operational monitoring.
-- Complete reporting/bonuses, voucher sales/redemption/email delivery, private photo uploads, imports or loyalty calculations.
+- Scheduled report archive/email, scoped Sheets integration, voucher sales/redemption/email delivery, private photo uploads, imports and loyalty calculations.
 
 The first slice is suitable for code review and deployment to a dedicated fictional-data test environment once access is configured. It is not a sign-off for live salon use.

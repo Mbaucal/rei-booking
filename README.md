@@ -1,11 +1,14 @@
 # Rei Booking
 
-First implementation release, **0.1.0** — 22 September 2026.
+Current implementation release, **0.2.0** — 22 September 2026.
 
-An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The first Worker deployment succeeded and the owner has confirmed the application tables exist; owner-account provisioning and hosted sign-in acceptance are still being verified. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
+An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
 ## Included
 
+- Owner Dashboard with completed treatment revenue, massage count and hours, Last 7/30 days and previous-period comparisons.
+- Owner Reports with shared filters, nine groupings, Summary/Appointment list, and CSV export without client identities.
+- Team bonus settings: 100 RSD/hour regular, 500 RSD/hour fulfilled requested by default; optional percentages on full price. Persisted booking rate snapshots and reconciled report totals.
 - Cookie-based sign-in, password change, first-login password replacement and owner-managed accounts.
 - Server-enforced owner, reception and therapist permissions.
 - Client records and name/phone/email search, contact deduplication, visit history and optional walk-ins.
@@ -55,7 +58,7 @@ For browser-based owner setup or recovery, download [owner-access.html](docs/too
 
 The form does not connect to Cloudflare or the application. Executing its command requires your existing Cloudflare database administrator access. It creates the first owner or resets the matching active owner, revokes only that owner's sessions, clears its email login limit and records an audit event. It cannot promote another role or reactivate an account. Use the command once, then clear the form. Its browser scrypt output is tested against the server verifier and the actual Worker/D1 sign-in and password-change flow. To regenerate the downloadable file from its source, run `npm run owner:form`; the browser dependency license is included alongside it.
 
-The owner's Cloudflare log confirms deployment at **https://rei-booking.mbaucal.workers.dev** with the dedicated D1 database `rei-booking-test`. The configuration matches that actual Worker name and address. A later screenshot confirms the application tables and migration-tracking table; first-owner and hosted sign-in verification remain open.
+The owner's Cloudflare log confirms deployment at **https://rei-booking.mbaucal.workers.dev** with the dedicated D1 database `rei-booking-test`. The configuration matches that actual Worker name and address. A later screenshot confirms the application tables and migration-tracking table; the owner has now confirmed successful sign-in.
 
 With Node.js 24 installed, run these commands from this repository, replacing the example email with the owner's email:
 
@@ -72,10 +75,14 @@ See [the deployment guide](docs/deployment.md) for details and the manual altern
 
 If the initial password is lost or was entered incorrectly, run `npm run owner:reset -- owner@example.com` from an up-to-date checkout in the same authenticated terminal. Enter the real owner email instead of the example. This checks the dedicated test database, resets only the matching active owner's password, signs out that owner's existing sessions and requires a password change at the next sign-in. If no owner exists yet, it creates the first owner after prompting for a name. It does not promote another role or reactivate a disabled account. The password is entered privately and never passed as an argument. This command requires Cloudflare database administrator access; it is not a public password-reset endpoint.
 
+## Reporting operations
+
+The report update automatically creates two empty bonus-rule tables after authentication. It is an additive, idempotent migration and preserves all existing records; no terminal or manual SQL is needed. The same SQL is supplied as `migrations/0002_report_bonuses.sql` for tracked Wrangler migrations. Existing appointments retain their original hourly-rate columns until a snapshot is captured. Team rate changes apply to new bookings. Reassigning an unfinished appointment uses the new therapist's rate; completed appointments retain their saved rates. Reports count only Completed appointments as earned treatment revenue, hours and bonuses. Last 7/30 days exclude today; Last month compares calendar months. See [report definitions](docs/reports.md).
+
 ## Next implementation stages
 
-1. Redeploy the corrected origin, apply the test database migration, provision the first owner and complete hosted sign-in and device acceptance checks.
-2. Add reports and bonus configuration/calculation, dashboard comparisons, CSV exports and scheduled reporting.
+1. Confirm the new Reports/Team/Dashboard screens on the test URL and complete role/device acceptance.
+2. Add scheduled monthly reporting, email notifications and an authenticated Google Sheets integration.
 3. Implement Sales, treatment/custom-value gift vouchers, separate buyer and recipient, custom voucher design and email delivery.
 4. Add private profile-photo storage for clients and team, import/history migration and approved loyalty rules.
 

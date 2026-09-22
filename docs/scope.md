@@ -6,17 +6,19 @@ All application UI is English. Conversations and planning can remain Serbian. Pr
 
 | Linear | Scope                                   | Status in code                                                                                                                                   |
 | ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| MBA-71 | Private repository and test environment | Private GitHub repository created; source, migrations, setup guide, tests and CI prepared; remote test hosting pending                                                               |
+| MBA-71 | Private repository and test environment | GitHub repository public; dedicated test Worker/D1 deployed; owner confirms hosted sign-in; device/backup acceptance pending                     |
 | MBA-72 | Calendar                                | Persistent day/calendar/API, therapist/room views, optional client, 5-minute edits, pointer drag, conflict protection; device acceptance pending |
 | MBA-73 | Clients and treatments                  | Persistent CRUD/search/history and treatment variants; imports and photo storage pending                                                         |
 | MBA-74 | Permissions                             | Owner/reception/therapist server projections and protected actions; hosted acceptance pending                                                    |
-| MBA-79 | Team                                    | Profiles, weekly hours, dated time off and account separation; photos and bonus configuration pending                                            |
+| MBA-79 | Team                                    | Profiles, weekly hours, dated time off, bonus configuration and account separation; photos pending                                               |
 
 ## Reports and bonuses: MBA-80
 
-Detailed rows: therapist, massage date/time, duration, full and discounted price, when booked, cancellation/status and requested flag. Filter/group by therapist, date/month and treatment. Summary: treatment count, completed hours, requested hours, earned treatment revenue, average earned revenue per massage, average hours per day and total hours for the chosen period. Agree whether average hours/day divides by worked days or all selected days and label it explicitly.
+Implemented in v0.2 with persistent Worker/D1-backed report and CSV endpoints, Team rate settings, booking rate snapshots, owner-only access and Dashboard comparisons. Monthly delivery/archive and Sheets credentials remain separate work.
 
-Bonus is proportional to **completed minutes**, not appointment count. Current rule: normal 100 RSD/hour; requested 500 RSD/hour replacing the normal rate. For example, a completed 90-minute massage earns 150 RSD normal or 750 RSD requested. Cancelled appointments do not earn worked-hour bonuses. Bonus configuration belongs in Team; results belong in reports. Keep percentage mode as optional future support on the full treatment price, without applying it twice or to discounted value. Preserve effective-dated rate snapshots and define rounding. Do not reuse older EUR or per-appointment rules from unrelated projects.
+Detailed rows: therapist, massage date/time, duration, full and discounted price, when booked, cancellation/status and requested flag. Filter/group by therapist, date/month and treatment. Summary: treatment count, completed hours, requested hours, earned treatment revenue, average earned revenue per massage, average hours per day and total hours for the chosen period. Implemented both denominators: default distinct dates with completed massages, or all calendar days in the selected/group period; labels and CSV identify the choice.
+
+Bonus is proportional to **completed minutes**, not appointment count. Current rule: normal 100 RSD/hour; requested 500 RSD/hour replacing the normal rate. For example, a completed 90-minute massage earns 150 RSD normal or 750 RSD requested. Cancelled appointments do not earn worked-hour bonuses. Bonus configuration belongs in Team; results belong in reports. Percentage mode is optional and implemented on the full treatment price, without applying it twice or to discounted value. Preserve effective-dated rate snapshots and define rounding. Do not reuse older EUR or per-appointment rules from unrelated projects.
 
 Main Dashboard: Last 7 days / Last 30 days, total earnings and change versus the immediately preceding equal-length period. These are revenue comparisons, not net business profit. Avoid adding a separate bonus tab.
 

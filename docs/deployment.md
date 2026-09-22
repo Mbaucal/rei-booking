@@ -2,6 +2,10 @@
 
 ## Current state
 
+**Latest checkpoint — 22 September 2026:** the user confirmed successful owner sign-in after the browser/console recovery. Initial schema, runtime origin and owner access are resolved. Release 0.2 adds Reports, Dashboard and Team bonus settings. On the first authenticated API request after deployment, the server idempotently creates `therapist_bonus_rules` and `appointment_bonus_rules`. The migration is additive and contains no UPDATE/DELETE of existing records. Its SQL matches `0002_report_bonuses.sql`, which Wrangler may later record as applied. No manual SQL, repeat owner setup or database recreation is required. Hosted verification of the new reporting screens and real-device interaction remains pending.
+
+Earlier setup history follows for reference.
+
 The repository is https://github.com/Mbaucal/rei-booking. The owner changed its visibility to public while connecting Cloudflare. A supplied deployment log now confirms successful deployment of Worker **`rei-booking`** at **https://rei-booking.mbaucal.workers.dev**, version `ebc34797-bd4d-464c-b118-6a28b95bf925`. This is evidence of deployment, not yet a hosted sign-in or database acceptance check.
 
 On 22 September 2026, the owner supplied a Cloudflare screenshot confirming the dedicated D1 database `rei-booking-test`, ID `7078aa06-6963-4e34-bdee-90e32e2764ae`. The deployment log also confirms this test `DB` binding. The earlier database screenshot shows zero tables; the assistant has not applied remote migrations or created the first owner. Do not create a second database.

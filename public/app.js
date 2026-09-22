@@ -1,3 +1,4 @@
+import { renderReports } from "./reports.js";
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
   String(value ?? "").replace(
@@ -208,7 +209,7 @@ async function enterApp(session) {
     return;
   }
   await loadCatalogue();
-  await setPage("calendar");
+  await setPage(owner() ? "dashboard" : "calendar");
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
     if (state.user && state.page === "calendar" && !document.hidden && !drag)
@@ -231,6 +232,8 @@ async function setPage(page) {
   $("app-error").hidden = true;
   $("page-title").textContent = {
     calendar: "Calendar",
+    dashboard: "Dashboard",
+    reports: "Reports",
     clients: "Clients",
     team: "Team",
     services: "Treatments",
@@ -243,6 +246,24 @@ async function setPage(page) {
     if (page === "calendar") {
       renderCalendarShell();
       await loadCalendar();
+    } else if (page === "reports" || page === "dashboard") {
+      const version = state.version;
+      await renderReports(
+        {
+          root: $("page-content"),
+          api,
+          esc,
+          money,
+          stamp,
+          clock,
+          statusName,
+          catalogue: state.catalogue,
+          isCurrent: () => state.version === version && owner(),
+          download: downloadReport,
+          openReports: () => setPage("reports"),
+        },
+        page === "dashboard",
+      );
     } else if (page === "clients") await renderClients();
     else if (page === "team") await renderTeam();
     else if (page === "services") await renderServices();
@@ -250,6 +271,34 @@ async function setPage(page) {
   } catch (error) {
     showAppError(error);
   }
+}
+async function downloadReport(query) {
+  const epoch = sessionEpoch;
+  const response = await fetch("/api/reports/appointments.csv?" + query, {
+    credentials: "same-origin",
+  });
+  if (epoch !== sessionEpoch || !owner())
+    throw new Error("The session changed.");
+  if (response.status === 401) {
+    signOutView();
+    throw new Error("Please sign in again.");
+  }
+  if (!response.ok)
+    throw new Error((await response.json()).error || "Export failed.");
+  const blob = await response.blob();
+  if (epoch !== sessionEpoch || !owner())
+    throw new Error("The session changed.");
+  const url = URL.createObjectURL(blob),
+    link = document.createElement("a");
+  link.href = url;
+  link.download =
+    response.headers
+      .get("content-disposition")
+      ?.match(/filename="([^"]+)"/)?.[1] || "rei-report.csv";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function resources() {
   return [
@@ -803,6 +852,14 @@ async function renderTeam() {
     .querySelectorAll("[data-team]")
     .forEach((b) => (b.onclick = () => teamDialog(therapist(b.dataset.team))));
 }
+function bonusFields(t) {
+  const b = t?.bonus || {
+    mode: "hourly",
+    regularRate: 10000,
+    requestedRate: 50000,
+  };
+  return `<h3 class="form-section">Bonus settings</h3><label><span>Calculation</span><select name="bonusMode" id="bonus-mode"><option value="hourly" ${b.mode === "hourly" ? "selected" : ""}>Fixed amount per hour</option><option value="percent" ${b.mode === "percent" ? "selected" : ""}>Percentage of full price</option></select></label><p class="hint" id="bonus-unit">${b.mode === "hourly" ? "RSD per hour of massage" : "Percentage of full treatment price"}</p><div class="fields">${input("bonusRegular", "Regular", (b.regularRate / 100).toFixed(2), "number", `min="0" max="${b.mode === "percent" ? 100 : 1000000}" step="0.01" required`)}${input("bonusRequested", "Requested", (b.requestedRate / 100).toFixed(2), "number", `min="0" max="${b.mode === "percent" ? 100 : 1000000}" step="0.01" required`)}</div><p class="hint">Rate changes apply to new appointments. Reassigning an unfinished appointment uses the new therapist’s rate. Completed appointments keep their saved rates. Requested replaces the regular rate when the requested therapist performs the massage. Earned bonuses appear in Reports.</p>`;
+}
 function teamDialog(t = null) {
   const week =
     t?.weekly ||
@@ -810,8 +867,29 @@ function teamDialog(t = null) {
   showDrawer(
     t ? "Edit team member" : "New team member",
     "Team",
-    `<form id="team-form"><div class="fields">${input("name", "Display name", t?.name, "text", 'required maxlength="70"')}${input("fullName", "Full name", t?.fullName)}${input("phone", "Phone", t?.phone, "tel")}${input("email", "Email", t?.email, "email")}<label class="wide"><span>Owner note</span><textarea name="note" maxlength="2000">${esc(t?.note || "")}</textarea></label></div><label class="check"><input name="active" type="checkbox" ${t?.active !== false ? "checked" : ""}>Active therapist</label><h3 class="form-section">Weekly working hours</h3>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<div class="weekly-row"><label><input type="checkbox" name="day-${d}" ${week[d].enabled ? "checked" : ""}>${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label><input name="start-${d}" type="time" value="${clock(week[d].start)}" step="300" required aria-label="Start on day ${d}"><span>–</span><input name="end-${d}" type="time" value="${clock(week[d].end)}" step="300" required aria-label="End on day ${d}"></div>`).join("")}<h3 class="form-section">Time off</h3><label><span>Dates · one YYYY-MM-DD date per line</span><textarea name="timeOff" rows="3">${esc(t?.timeOff.join("\n") || "")}</textarea></label><p class="hint">Existing bookings must be moved before changing availability that would conflict with them. Account access is managed in Accounts.</p>${errorBox()}</form>`,
+    `<form id="team-form"><div class="fields">${input("name", "Display name", t?.name, "text", 'required maxlength="70"')}${input("fullName", "Full name", t?.fullName)}${input("phone", "Phone", t?.phone, "tel")}${input("email", "Email", t?.email, "email")}<label class="wide"><span>Owner note</span><textarea name="note" maxlength="2000">${esc(t?.note || "")}</textarea></label></div><label class="check"><input name="active" type="checkbox" ${t?.active !== false ? "checked" : ""}>Active therapist</label><h3 class="form-section">Weekly working hours</h3>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<div class="weekly-row"><label><input type="checkbox" name="day-${d}" ${week[d].enabled ? "checked" : ""}>${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label><input name="start-${d}" type="time" value="${clock(week[d].start)}" step="300" required aria-label="Start on day ${d}"><span>–</span><input name="end-${d}" type="time" value="${clock(week[d].end)}" step="300" required aria-label="End on day ${d}"></div>`).join("")}${bonusFields(t)}<h3 class="form-section">Time off</h3><label><span>Dates · one YYYY-MM-DD date per line</span><textarea name="timeOff" rows="3">${esc(t?.timeOff.join("\n") || "")}</textarea></label><p class="hint">Existing bookings must be moved before changing availability that would conflict with them. Account access is managed in Accounts.</p>${errorBox()}</form>`,
   );
+  $("bonus-mode").onchange = () => {
+    const percent = $("bonus-mode").value === "percent";
+    const form = $("team-form");
+    const original = t?.bonus?.mode === $("bonus-mode").value ? t.bonus : null;
+    form.elements.bonusRegular.value = original
+      ? original.regularRate / 100
+      : percent
+        ? 0
+        : 100;
+    form.elements.bonusRequested.value = original
+      ? original.requestedRate / 100
+      : percent
+        ? 0
+        : 500;
+    form.elements.bonusRegular.max = form.elements.bonusRequested.max = percent
+      ? 100
+      : 1000000;
+    $("bonus-unit").textContent = percent
+      ? "Percentage of full treatment price"
+      : "RSD per hour of massage";
+  };
   bindForm(
     "team-form",
     async (fd) => {
@@ -822,6 +900,11 @@ function teamDialog(t = null) {
         email: fd.get("email"),
         note: fd.get("note"),
         active: fd.has("active"),
+        bonus: {
+          mode: fd.get("bonusMode"),
+          regularRate: Math.round(Number(fd.get("bonusRegular")) * 100),
+          requestedRate: Math.round(Number(fd.get("bonusRequested")) * 100),
+        },
         weekly: Array.from({ length: 7 }, (_, d) => ({
           enabled: fd.has("day-" + d),
           start: minutes(fd.get("start-" + d)),

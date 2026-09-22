@@ -145,6 +145,11 @@ export function projectTherapist(row, role) {
       email: row.email,
       phone: row.phone,
       note: row.note,
+      bonus: {
+        mode: row.bonus_mode || "hourly",
+        regularRate: row.regular_rate ?? 10000,
+        requestedRate: row.requested_rate ?? 50000,
+      },
     });
   return out;
 }

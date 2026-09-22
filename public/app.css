@@ -848,3 +848,117 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 }
+
+.report-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+.report-controls label {
+  min-width: 0;
+}
+.report-controls input,
+.report-controls select {
+  width: 100%;
+}
+.report-period {
+  margin: 14px 0;
+}
+.report-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 16px;
+  margin: 20px 0 28px;
+}
+.report-metric {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px;
+  min-width: 0;
+}
+.report-metric > span,
+.report-metric small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.report-metric strong {
+  display: block;
+  font-size: 27px;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.report-change {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.report-change.up {
+  color: #286447;
+}
+.report-change.down {
+  color: #9f403e;
+}
+.report-change.neutral {
+  color: var(--muted);
+}
+.report-view {
+  align-items: end;
+  gap: 18px;
+}
+.report-view .check {
+  margin: 0;
+  padding-bottom: 10px;
+}
+.report-table {
+  margin-top: 10px;
+  max-height: 65vh;
+}
+.report-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.report-table th:first-child,
+.report-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  max-width: 240px;
+  white-space: normal;
+  min-width: 140px;
+}
+.report-table th:first-child {
+  z-index: 2;
+  background: #f4efe4;
+}
+.report-table tfoot td {
+  font-weight: bold;
+  background: #f4efe4;
+}
+.report-note {
+  margin: 20px 0;
+  max-width: 1000px;
+}
+@media (max-width: 700px) {
+  .report-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .report-metric {
+    padding: 14px;
+  }
+  .report-metric strong {
+    font-size: 21px;
+  }
+  .report-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+  .report-view {
+    flex-wrap: wrap;
+  }
+  .rail nav button {
+    flex: 0 0 auto;
+  }
+}

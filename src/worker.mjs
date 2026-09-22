@@ -25,6 +25,14 @@ import {
   projectAppointment,
   projectTherapist,
 } from "./domain.mjs";
+import { ensureReportSchema } from "./report-schema.mjs";
+import {
+  bonusInput,
+  reportOptions,
+  buildReport,
+  comparison,
+  reportCSV,
+} from "./reports.mjs";
 
 const now = () => new Date().toISOString();
 const json = (value, status = 200, headers = {}) =>
@@ -147,9 +155,11 @@ async function auditedWrite(
   action,
   before,
   after,
+  extra = [],
 ) {
   const result = await db.batch([
     query,
+    ...extra,
     stmt(
       db,
       `INSERT INTO audit_log(actor_id,action,entity,entity_id,before_json,after_json,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1`,
@@ -182,6 +192,16 @@ async function saveEntity(db, user, entity, body, id) {
     integer(body.version, 1, 100000000, "record version");
   }
   const recordId = id || randomUUID();
+  const bonus =
+    entity === "therapists" && body.bonus !== undefined
+      ? bonusInput(body.bonus)
+      : null;
+  if (bonus && before)
+    before.bonus = await one(
+      db,
+      "SELECT mode,regular_rate,requested_rate FROM therapist_bonus_rules WHERE therapist_id=?",
+      id,
+    );
   const query = id
     ? stmt(
         db,
@@ -211,7 +231,22 @@ async function saveEntity(db, user, entity, body, id) {
     recordId,
     id ? "update" : "create",
     before,
-    values,
+    bonus ? { ...values, bonus } : values,
+    bonus
+      ? [
+          stmt(
+            db,
+            `INSERT INTO therapist_bonus_rules(therapist_id,mode,regular_rate,requested_rate,updated_at)
+SELECT ?,?,?,?,? WHERE changes()=1
+ON CONFLICT(therapist_id) DO UPDATE SET mode=excluded.mode,regular_rate=excluded.regular_rate,requested_rate=excluded.requested_rate,updated_at=excluded.updated_at`,
+            recordId,
+            bonus.mode,
+            bonus.regular_rate,
+            bonus.requested_rate,
+            time,
+          ),
+        ]
+      : [],
   );
   return json({ id: recordId }, id ? 200 : 201);
 }
@@ -279,6 +314,23 @@ async function saveAppointment(db, user, body, id) {
     };
   const recordId = id || randomUUID(),
     keys = Object.keys(values);
+  const keepRule =
+    old && (old.therapist_id === values.therapist_id || old.status === "done");
+  const rule = keepRule
+    ? (await one(
+        db,
+        "SELECT mode,regular_rate,requested_rate FROM appointment_bonus_rules WHERE appointment_id=?",
+        id,
+      )) || {
+        mode: "hourly",
+        regular_rate: old.bonus_regular_cents_hour,
+        requested_rate: old.bonus_requested_cents_hour,
+      }
+    : (await one(
+        db,
+        "SELECT mode,regular_rate,requested_rate FROM therapist_bonus_rules WHERE therapist_id=?",
+        values.therapist_id,
+      )) || { mode: "hourly", regular_rate: 10000, requested_rate: 50000 };
   const appointmentQuery = id
     ? stmt(
         db,
@@ -298,6 +350,18 @@ async function saveAppointment(db, user, body, id) {
         ...Object.values(values),
         time,
       );
+  const ruleQuery = stmt(
+    db,
+    `INSERT INTO appointment_bonus_rules(appointment_id,mode,regular_rate,requested_rate,captured_at)
+SELECT id,?,?,?,? FROM appointments WHERE id=? AND mutation_id=?
+ON CONFLICT(appointment_id) DO UPDATE SET mode=excluded.mode,regular_rate=excluded.regular_rate,requested_rate=excluded.requested_rate,captured_at=CASE WHEN appointment_bonus_rules.mode=excluded.mode AND appointment_bonus_rules.regular_rate=excluded.regular_rate AND appointment_bonus_rules.requested_rate=excluded.requested_rate THEN appointment_bonus_rules.captured_at ELSE excluded.captured_at END`,
+    rule.mode,
+    rule.regular_rate,
+    rule.requested_rate,
+    time,
+    recordId,
+    values.mutation_id,
+  );
   let saved;
   if (newClient) {
     const clientKeys = Object.keys(newClient);
@@ -314,6 +378,7 @@ async function saveAppointment(db, user, body, id) {
         time,
       ),
       appointmentQuery,
+      ruleQuery,
       stmt(
         db,
         "INSERT INTO audit_log(actor_id,action,entity,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?)",
@@ -326,7 +391,7 @@ async function saveAppointment(db, user, body, id) {
       ),
     ]);
     saved = results[1].results[0];
-  } else saved = await appointmentQuery.first();
+  } else saved = (await db.batch([appointmentQuery, ruleQuery]))[0].results[0];
   if (!saved) fail(409, CONFLICT_MESSAGE);
   return json(
     {
@@ -346,7 +411,7 @@ async function routes(request, env) {
   if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.1.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.2.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -392,9 +457,13 @@ async function routes(request, env) {
   }
   if (user.must_change_password)
     fail(403, "Change your temporary password before continuing.");
+  await ensureReportSchema(db);
   if (path === "/api/catalogue" && method === "GET") {
     const [therapists, rooms, services] = await Promise.all([
-      all(db, "SELECT * FROM therapists ORDER BY name"),
+      all(
+        db,
+        "SELECT t.*,b.mode AS bonus_mode,b.regular_rate,b.requested_rate FROM therapists t LEFT JOIN therapist_bonus_rules b ON b.therapist_id=t.id ORDER BY t.name",
+      ),
       all(db, "SELECT * FROM rooms ORDER BY id"),
       all(db, "SELECT * FROM services ORDER BY name,duration"),
     ]);
@@ -410,6 +479,59 @@ async function routes(request, env) {
         version: s.version,
         ...(user.role === "owner" ? { priceCents: s.price_cents } : {}),
       })),
+    });
+  }
+  if (
+    ["/api/reports/appointments", "/api/reports/appointments.csv"].includes(
+      path,
+    ) &&
+    method === "GET"
+  ) {
+    requireRole(user, "owner");
+    const options = reportOptions(url.searchParams);
+    const rows = await all(
+      db,
+      `SELECT a.*,t.name AS therapist_name,rt.name AS requested_name,b.mode AS bonus_mode,b.regular_rate,b.requested_rate
+FROM appointments a JOIN therapists t ON t.id=a.therapist_id LEFT JOIN therapists rt ON rt.id=a.requested_therapist_id LEFT JOIN appointment_bonus_rules b ON b.appointment_id=a.id
+WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
+      options.compare ? options.previousFrom : options.from,
+      options.to,
+    );
+    if (rows.length > 20000)
+      fail(
+        400,
+        "Choose a shorter report period (maximum 20,000 appointments).",
+      );
+    const therapists = await all(
+      db,
+      "SELECT id,name FROM therapists ORDER BY name",
+    );
+    const report = buildReport(rows, options, therapists);
+    if (path.endsWith(".csv"))
+      return new Response(
+        reportCSV(
+          report,
+          url.searchParams.get("view") || "summary",
+          url.searchParams.get("bonuses") !== "0",
+        ),
+        {
+          headers: {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": `attachment; filename="rei-appointments-${options.from}-${options.to}.csv"`,
+          },
+        },
+      );
+    const previous = options.compare
+      ? buildReport(
+          rows,
+          { ...options, from: options.previousFrom, to: options.previousTo },
+          therapists,
+        ).totals
+      : null;
+    return json({
+      ...report,
+      previous,
+      comparison: previous ? comparison(report.totals, previous) : null,
     });
   }
   if (path === "/api/clients" && method === "GET") {

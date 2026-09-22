@@ -35,7 +35,13 @@ function statements(sql) {
 test("real Worker + D1: authenticated booking workflow, privacy and persistence", async (t) => {
   const persist = await mkdtemp(join(tmpdir(), "rei-d1-"));
   const options = convertV4MiniflareOptions({
-    modules: ["worker.mjs", "security.mjs", "domain.mjs"].map((f) => ({
+    modules: [
+      "worker.mjs",
+      "security.mjs",
+      "domain.mjs",
+      "reports.mjs",
+      "report-schema.mjs",
+    ].map((f) => ({
       type: "ESModule",
       path: resolve("src", f),
     })),
@@ -559,6 +565,13 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
         403,
       );
       for (const session of [reception, therapistSession]) {
+        for (const path of [
+          "/reports/appointments?preset=last7",
+          "/reports/appointments.csv?preset=last7",
+        ])
+          assert.equal((await request(path, session)).status, 403);
+        const bonusCatalogue = (await request("/catalogue", session)).data;
+        assert.ok(bonusCatalogue.therapists.every((t) => !("bonus" in t)));
         const catalogue = (await request("/catalogue", session)).data;
         assert.equal("priceCents" in catalogue.services[0], false);
         assert.doesNotMatch(
@@ -589,6 +602,149 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
         (await request("/therapists", reception, "POST", { name: "Denied" }))
           .status,
         403,
+      );
+    },
+  );
+  await t.test(
+    "persistent report API and Team rate snapshots reconcile with CSV and survive edits",
+    async () => {
+      const bonus = {
+        mode: "hourly",
+        regularRate: 15000,
+        requestedRate: 60000,
+      };
+      const tid = (
+        await create("/therapists", { name: "Report therapist", bonus })
+      ).id;
+      const reportDate = "2030-02-01";
+      let made = (
+        await create(
+          "/appointments",
+          makeBooking({
+            therapistId: tid,
+            date: reportDate,
+            status: "done",
+            duration: 90,
+            requestedTherapistId: tid,
+          }),
+        )
+      ).appointment;
+      let catalogue = (await request("/catalogue", owner)).data;
+      const profile = catalogue.therapists.find((t) => t.id === tid);
+      assert.deepEqual(profile.bonus, bonus);
+      assert.equal(
+        (
+          await request("/therapists/" + tid, owner, "PUT", {
+            ...profile,
+            bonus: { mode: "percent", regularRate: 1000, requestedRate: 2000 },
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await request("/therapists/" + tid, owner, "PUT", {
+            ...profile,
+            bonus: { mode: "hourly", regularRate: 999, requestedRate: 999 },
+          })
+        ).status,
+        409,
+      );
+      assert.equal(
+        (
+          await db
+            .prepare(
+              "SELECT mode FROM therapist_bonus_rules WHERE therapist_id=?",
+            )
+            .bind(tid)
+            .first()
+        ).mode,
+        "percent",
+      );
+      // Completion and other edits never reprice the already captured rule.
+      const oldCreated = made.createdAt;
+      made = (
+        await request("/appointments/" + made.id, owner, "PUT", {
+          ...made,
+          start: 720,
+          note: "Edited report fixture",
+        })
+      ).data.appointment;
+      assert.equal(made.createdAt, oldCreated);
+      assert.equal(
+        (
+          await db
+            .prepare(
+              "SELECT regular_rate FROM appointment_bonus_rules WHERE appointment_id=?",
+            )
+            .bind(made.id)
+            .first()
+        ).regular_rate,
+        15000,
+      );
+      await create(
+        "/appointments",
+        makeBooking({
+          therapistId: tid,
+          date: reportDate,
+          start: 840,
+          status: "done",
+          requestedTherapistId: tid,
+          grossCents: 590000,
+          netCents: 300000,
+        }),
+      );
+      await create(
+        "/appointments",
+        makeBooking({
+          therapistId: tid,
+          date: reportDate,
+          start: 960,
+          status: "cancelled",
+          requestedTherapistId: null,
+        }),
+      );
+      const path =
+        "/reports/appointments?preset=custom&from=" +
+        reportDate +
+        "&to=" +
+        reportDate +
+        "&therapist=" +
+        tid;
+      const r = await request(path, owner);
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      assert.equal(r.data.totals.completed, 2);
+      assert.equal(r.data.totals.cancelled, 1);
+      assert.equal(r.data.totals.totalMinutes, 150);
+      assert.equal(r.data.totals.requestedMinutes, 150);
+      assert.equal(r.data.totals.totalBonusCents, 90000 + 118000);
+      assert.equal(r.data.totals.revenueCents, 590000 + 300000);
+      assert.doesNotMatch(
+        JSON.stringify(r.data),
+        /Private booking note|Test Client Private|Edited report fixture|client_id|clientName/,
+      );
+      const csv = await mf.dispatchFetch(
+        ORIGIN +
+          "/api" +
+          path.replace("appointments?", "appointments.csv?") +
+          "&view=details&bonuses=1",
+        { headers: { origin: ORIGIN, cookie: owner.cookie } },
+      );
+      assert.equal(csv.status, 200);
+      assert.match(csv.headers.get("content-type"), /text\/csv/);
+      assert.match(csv.headers.get("content-disposition"), /attachment/);
+      const content = await csv.text();
+      assert.match(content, /"900.00"/);
+      assert.match(content, /"1180.00"/);
+      assert.doesNotMatch(content, /Private booking note|Test Client Private/);
+      assert.equal(
+        (
+          await request(
+            "/reports/appointments?preset=custom&from=bad&to=bad",
+            owner,
+          )
+        ).status,
+        400,
       );
     },
   );
@@ -659,7 +815,10 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
     "D1 records survive Worker restart; session logout is permanent",
     async () => {
       const count = (
-        await db.prepare("SELECT count(*) AS n FROM appointments").first()
+        await db
+          .prepare("SELECT count(*) AS n FROM appointments WHERE date=?")
+          .bind(DATE)
+          .first()
       ).n;
       await mf.dispose();
       mf = new Miniflare(options);
