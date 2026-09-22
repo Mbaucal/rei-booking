@@ -51,6 +51,10 @@ npm run build
 
 ## Test deployment
 
+For browser-based owner setup or recovery, download [owner-access.html](docs/tools/owner-access.html) and open the downloaded file in Safari, Chrome or Firefox. It is self-contained and works offline. Enter your owner email, name and a new temporary password; use **Show passwords** to check the input. Click **Prepare Cloudflare command**, then paste the entire result into **Cloudflare → D1 Database → rei-booking-test → Console** and click **Execute**. An `OWNER_READY` result confirms the password was saved. Sign in to the application and replace it when prompted. No terminal, deployment or password sharing is needed for this method.
+
+The form does not connect to Cloudflare or the application. Executing its command requires your existing Cloudflare database administrator access. It creates the first owner or resets the matching active owner, revokes only that owner's sessions, clears its email login limit and records an audit event. It cannot promote another role or reactivate an account. Use the command once, then clear the form. Its browser scrypt output is tested against the server verifier and the actual Worker/D1 sign-in and password-change flow. To regenerate the downloadable file from its source, run `npm run owner:form`; the browser dependency license is included alongside it.
+
 The owner's Cloudflare log confirms deployment at **https://rei-booking.mbaucal.workers.dev** with the dedicated D1 database `rei-booking-test`. The configuration matches that actual Worker name and address. A later screenshot confirms the application tables and migration-tracking table; first-owner and hosted sign-in verification remain open.
 
 With Node.js 24 installed, run these commands from this repository, replacing the example email with the owner's email:

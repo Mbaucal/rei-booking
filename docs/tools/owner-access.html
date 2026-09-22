@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'sha256-ku1sfBU+yvnCzZdicW0QrOWjAOiGD1SkJGtHeez1SmE='; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'"
+    />
+    <title>Rei Booking · Owner access</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #faf6ef;
+        color: #203e34;
+        font:
+          16px/1.6 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 740px;
+        margin: 48px auto;
+        padding: 36px;
+        background: #fffdf9;
+        border: 1px solid #e8decc;
+        border-radius: 20px;
+      }
+      .brand {
+        color: #9b7834;
+        letter-spacing: 0.18em;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      h1 {
+        font:
+          40px Georgia,
+          serif;
+        margin: 16px 0;
+      }
+      h2 {
+        font-size: 22px;
+      }
+      p {
+        color: #5b6c62;
+      }
+      fieldset {
+        border: 0;
+        margin: 24px 0 0;
+        padding: 0;
+      }
+      label {
+        display: block;
+        margin: 16px 0 6px;
+        font-weight: 600;
+      }
+      input:not([type="checkbox"]),
+      textarea {
+        width: 100%;
+        border: 1px solid #b9c5be;
+        border-radius: 8px;
+        padding: 13px;
+        font: inherit;
+        color: #203e34;
+        background: white;
+      }
+      input:focus,
+      textarea:focus,
+      button:focus-visible {
+        outline: 3px solid #c4a966;
+        outline-offset: 3px;
+      }
+      .check {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-weight: 400;
+      }
+      .check input {
+        width: 18px;
+        height: 18px;
+      }
+      button,
+      .link {
+        display: inline-block;
+        border: 0;
+        border-radius: 8px;
+        background: #203e34;
+        color: white;
+        padding: 13px 20px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      button[type="submit"] {
+        width: 100%;
+        margin-top: 24px;
+      }
+      button:disabled,
+      fieldset:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .secondary {
+        background: #ede9df;
+        color: #203e34;
+      }
+      .actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin: 14px 0;
+      }
+      #status {
+        min-height: 1.6em;
+        color: #203e34;
+      }
+      #output {
+        border-top: 1px solid #e8decc;
+        margin-top: 24px;
+        padding-top: 12px;
+      }
+      li {
+        margin: 12px 0;
+      }
+      code {
+        font-size: 14px;
+        overflow-wrap: anywhere;
+      }
+      textarea {
+        font:
+          12px/1.5 ui-monospace,
+          monospace;
+      }
+      small {
+        color: #5b6c62;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 600px) {
+        main {
+          margin: 16px;
+          padding: 24px;
+        }
+        h1 {
+          font-size: 32px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">REI THAILAND MASSAGE</div>
+      <h1>Restore owner access</h1>
+      <p>
+        Choose a temporary password here, then save it through your Cloudflare
+        D1 console. This also creates your first owner account if one does not
+        exist.
+      </p>
+      <p><strong>Database:</strong> <code>rei-booking-test</code></p>
+      <form>
+        <fieldset>
+          <label for="email">Owner email</label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            autocomplete="username"
+            required
+            maxlength="254"
+          />
+          <label for="name">Owner name</label>
+          <input
+            id="name"
+            name="name"
+            autocomplete="name"
+            required
+            maxlength="100"
+          />
+          <label for="password">Temporary password</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            required
+            minlength="12"
+            maxlength="128"
+            aria-describedby="password-help"
+          />
+          <small id="password-help"
+            >12–128 characters. Save it in your password manager before
+            continuing.</small
+          >
+          <label for="repeat">Repeat temporary password</label>
+          <input
+            id="repeat"
+            name="repeat"
+            type="password"
+            autocomplete="new-password"
+            required
+            minlength="12"
+            maxlength="128"
+          />
+          <label class="check"
+            ><input id="show" type="checkbox" /> Show passwords</label
+          >
+          <button type="submit">Prepare Cloudflare command</button>
+        </fieldset>
+      </form>
+      <p id="status" role="status" aria-live="polite"></p>
+      <section id="output" hidden>
+        <h2>Save in Cloudflare</h2>
+        <ol>
+          <li>
+            Open
+            <strong
+              >Cloudflare → D1 Database → rei-booking-test → Console</strong
+            >. Confirm the database ID is
+            <code>7078aa06-6963-4e34-bdee-90e32e2764ae</code>.
+          </li>
+          <li>
+            Copy the entire command below, paste it into the console and click
+            <strong>Execute</strong> once.
+          </li>
+          <li>
+            Look for <strong>OWNER_READY</strong> in the result. Then sign in as
+            <strong id="owner-email"></strong> using the temporary password you
+            just chose.
+          </li>
+        </ol>
+        <label for="sql">Command for the D1 console</label>
+        <textarea id="sql" readonly rows="7" spellcheck="false"></textarea>
+        <div class="actions">
+          <button id="copy" type="button">Copy command</button
+          ><button id="clear" class="secondary" type="button">
+            Clear form
+          </button>
+        </div>
+        <p>
+          Your first sign-in will ask you to replace the temporary password. Use
+          this command once, then clear the form.
+        </p>
+        <a
+          class="link"
+          href="https://rei-booking.mbaucal.workers.dev"
+          target="_blank"
+          rel="noreferrer"
+          >Open Rei Booking</a
+        >
+      </section>
+      <p>
+        <small
+          >This form works offline. Your password stays in this browser; only a
+          password hash is included in the command. Applying the command
+          requires your Cloudflare administrator access. Existing sessions for
+          this owner will be signed out.</small
+        >
+      </p>
+      <noscript
+        >Open this downloaded HTML file in Safari, Chrome or Firefox with
+        JavaScript enabled.</noscript
+      >
+    </main>
+    <script>(()=>{function yt(e){return e instanceof Uint8Array||ArrayBuffer.isView(e)&&e.constructor.name==="Uint8Array"&&"BYTES_PER_ELEMENT"in e&&e.BYTES_PER_ELEMENT===1}var it=e=>e?`"${e}" `:"";function p(e,t=""){if(typeof e!="number")throw new TypeError(it(t)+"expected number, got "+typeof e);if(!Number.isSafeInteger(e)||e<0)throw new RangeError(it(t)+"expected integer >= 0, got "+e);return e}function W(e,t,n=""){if(yt(e)&&(t===void 0||e.length===t))return e;t!==void 0&&p(t,"length");let r=yt(e),o=t!==void 0?` of length ${t}`:"",s=r?`length=${e.length}`:`type=${typeof e}`,a=it(n)+"expected Uint8Array"+o+", got "+s;throw r?new RangeError(a):new TypeError(a)}function nt(e){if(typeof e!="function"||typeof e.create!="function")throw new TypeError("expected hash wrapped by utils.createHasher");if(p(e.outputLen),p(e.blockLen),e.outputLen<1||e.blockLen<1)throw new Error("hash blockLen / outputLen must be >= 1")}var Bt=(e,t)=>{if(e===null||typeof e!="object"||Array.isArray(e))throw new TypeError((t==="object"?"":`"${t}" `)+"expected object, got type="+typeof e)},wt=(e,t)=>{Bt(e,t);let n=Object.getPrototypeOf(e);if(n!==Object.prototype&&n!==null)throw new TypeError(`"${t}" expected plain object`);if(Object.hasOwn(e,"__proto__"))throw new TypeError(`"${t}.__proto__" is not allowed`)};function X(e,t=!0){if(e.destroyed)throw new Error("hash was destroyed");if(t&&e.finished)throw new Error("digest() was already called")}function ot(e,t){W(e,void 0,"output");let n=t.outputLen;if(!(e.length>=n))throw new RangeError('"output" expected length >= '+n)}function rt(e){return new Uint32Array(e.buffer,e.byteOffset,Math.floor(e.byteLength/4))}function w(...e){for(let t=0;t<e.length;t++)e[t].fill(0)}function v(e){return new DataView(e.buffer,e.byteOffset,e.byteLength)}function L(e,t){return e<<32-t|e>>>t}function l(e,t){return e<<t|e>>>32-t>>>0}var Ut=new Uint8Array(new Uint32Array([287454020]).buffer)[0]===68;function Ot(e){return e<<24&4278190080|e<<8&16711680|e>>>8&65280|e>>>24&255}function Dt(e){for(let t=0;t<e.length;t++)e[t]=Ot(e[t]);return e}var ft=Ut?e=>e:Dt,It=typeof Uint8Array.from([]).toHex=="function"&&typeof Uint8Array.fromHex=="function",Nt=Array.from({length:256},(e,t)=>t.toString(16).padStart(2,"0"));function z(e){if(W(e),It)return e.toHex();let t="";for(let n=0;n<e.length;n++)t+=Nt[e[n]];return t}function Ft(e){let t=globalThis;if(typeof t.scheduler?.yield=="function"){let n=t.scheduler.yield();return e&&n.catch(e),n}return new Promise(n=>t.setTimeout(n,0))}async function st(e,t,n,r){if(p(e,"iters"),p(t,"tick"),typeof n!="function")throw new TypeError("callback must be a function");let o=Date.now();for(let s=0;s<e;s++){n(s);let a=Date.now()-o;a>=0&&a<t||(await Ft(r),o=Date.now())}}function Rt(e){if(typeof e!="string")throw new TypeError("string expected");let t=new TextEncoder().encode(e);try{return new Uint8Array(t)}finally{w(t)}}function dt(e,t=""){return typeof e=="string"?Rt(e):W(e,void 0,t)}function Y(e,t,n="opts"){return wt(e,"defaults"),t!==void 0&&wt(t,n),Object.assign(Object.create(null),e,t)}function mt(e,t={}){if(typeof e!="function")throw new TypeError('"hashCons" expected function, got type='+typeof e);t=Y({},t,"info");let n=(o,s)=>e(s).update(o).digest(),r=e(void 0);return n.outputLen=r.outputLen,n.blockLen=r.blockLen,n.canXOF=r.canXOF,n.create=o=>e(o),Object.assign(n,t),Object.freeze(n)}var gt=e=>({oid:Uint8Array.from([6,9,96,134,72,1,101,3,4,2,e])});var ct=class{oHash;iHash;blockLen;outputLen;canXOF=!1;finished=!1;destroyed=!1;constructor(t,n){if(nt(t),W(n,void 0,"key"),this.iHash=t.create(),typeof this.iHash.update!="function")throw new Error("expected Hash instance");this.blockLen=this.iHash.blockLen,this.outputLen=this.iHash.outputLen;let r=this.blockLen,o=new Uint8Array(r);o.set(n.length>r?t.create().update(n).digest():n);for(let s=0;s<o.length;s++)o[s]^=54;this.iHash.update(o),this.oHash=t.create();for(let s=0;s<o.length;s++)o[s]^=106;this.oHash.update(o),w(o)}update(t){return X(this),this.iHash.update(t),this}digestInto(t){X(this),ot(t,this),this.finished=!0;let n=t.subarray(0,this.outputLen);this.iHash.digestInto(n),this.oHash.update(n),this.oHash.digestInto(n),this.destroy()}digest(){let t=new Uint8Array(this.oHash.outputLen);return this.digestInto(t),t}_cloneInto(t){t||=Object.create(Object.getPrototypeOf(this),{});let{oHash:n,iHash:r,finished:o,destroyed:s,blockLen:a,outputLen:c,canXOF:f}=this;return t=t,t.finished=o,t.destroyed=s,t.blockLen=a,t.outputLen=c,t.canXOF=f,t.oHash=n._cloneInto(t.oHash),t.iHash=r._cloneInto(t.iHash),t}clone(){return this._cloneInto()}destroy(){this.destroyed=!0,this.oHash.destroy(),this.iHash.destroy()}},Et=(()=>{let e=((t,n,r)=>new ct(t,n).update(r).digest());return e.create=(t,n)=>new ct(t,n),e})();function $t(e,t,n,r){nt(e);let o=Y({dkLen:32,asyncTick:10},r),{c:s,dkLen:a,asyncTick:c}=o;if(p(s,"c"),p(a,"dkLen"),p(c,"asyncTick"),s<1)throw new Error('"c" (iterations) must be >= 1');if(a<1)throw new Error('"dkLen" must be >= 1');if(a>(2**32-1)*e.outputLen)throw new Error("derived key too long");let f=dt(t,"password");try{let d=dt(n,"salt");try{let h=new Uint8Array(a),{iHash:i,oHash:u,outputLen:x}=Et.create(e,f),y=new Uint8Array(x),b=Mt(i,u,d,y);return{c:s,dkLen:a,asyncTick:c,DK:h,outputLen:x,eng:b}}finally{typeof n=="string"&&w(d)}}finally{typeof t=="string"&&w(f)}}function Mt(e,t,n,r){let o=new Uint8Array(4),s=v(o),a=e._cloneInto().update(n),c=t._cloneInto(),f=e._cloneInto,d=t._cloneInto;return{u1:(h,i)=>{s.setInt32(0,h,!1),a._cloneInto(c).update(o).digestInto(r),t._cloneInto(c).update(r).digestInto(r),i.set(r.subarray(0,i.length))},rounds:(h,i)=>{for(let u=1;u<h;u++){f.call(e,c).update(r).digestInto(r),d.call(t,c).update(r).digestInto(r);for(let x=0;x<i.length;x++)i[x]^=r[x]}},output:h=>(e.destroy(),t.destroy(),a.destroy(),c.destroy(),w(r),h)}}function ht(e,t,n,r){let{c:o,dkLen:s,DK:a,outputLen:c,eng:f}=$t(e,t,n,r);for(let d=1,h=0;h<s;d++,h+=c){let i=a.subarray(h,h+c);f.u1(d,i),f.rounds(o,i)}return f.output(a)}var jt=e=>e/2**32|0,Wt=e=>e>>>0;function Lt(e,t,n,r){let o=jt(n),s=Wt(n);e.setUint32(t,r?s:o,r),e.setUint32(t+4,r?o:s,r)}function At(e,t,n){return e&t^~e&n}function Ht(e,t,n){return e&t^e&n^t&n}var at=class{blockLen;outputLen;canXOF=!1;padOffset;isLE;buffer;view;finished=!1;length=0;pos=0;destroyed=!1;constructor(t,n,r,o){this.blockLen=t,this.outputLen=n,this.padOffset=r,this.isLE=o,this.buffer=new Uint8Array(t),this.view=v(this.buffer)}update(t){X(this),W(t);let{view:n,buffer:r,blockLen:o}=this,s=t.length,a=!1;for(let c=0;c<s;){let f=Math.min(o-this.pos,s-c);if(f===o){let d=v(t);for(;o<=s-c;c+=o)this.process(d,c);a=!0;continue}r.set(c===0&&f===s?t:t.subarray(c,c+f),this.pos),this.pos+=f,c+=f,this.pos===o&&(this.process(n,0),this.pos=0,a=!0)}return this.length+=t.length,a&&this.roundClean(),this}digestInto(t){X(this),ot(t,this),this.finished=!0;let{buffer:n,view:r,blockLen:o,isLE:s}=this,{pos:a}=this;n[a++]=128,n.fill(0,a),this.padOffset>o-a&&(this.process(r,0),n.fill(0)),Lt(r,o-8,this.length*8,s),this.process(r,0),this.roundClean();let c=t===n?r:v(t),f=this.outputLen,d=f/4,h=this.get();if(f%4||d>h.length)throw new Error("invalid outputLen");for(let i=0;i<d;i++)c.setUint32(4*i,h[i],s)}digest(){let{buffer:t,outputLen:n}=this;this.digestInto(t);let r=t.slice(0,n);return this.destroy(),r}_cloneIntoMeta(t){let{buffer:n,length:r,finished:o,destroyed:s,pos:a}=this;return t.destroyed=s,t.finished=o,t.length=r,t.pos=a,a&&t.buffer.set(n),t}clone(){return this._cloneInto()}},St=Uint32Array.from([1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225]);var Gt=Uint32Array.from([1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]),T=new Uint32Array(64),lt=class extends at{A=0;B=0;C=0;D=0;E=0;F=0;G=0;H=0;constructor(t,n){super(64,t,8,!1),this.A=n[0]|0,this.B=n[1]|0,this.C=n[2]|0,this.D=n[3]|0,this.E=n[4]|0,this.F=n[5]|0,this.G=n[6]|0,this.H=n[7]|0}get(){let{A:t,B:n,C:r,D:o,E:s,F:a,G:c,H:f}=this;return[t,n,r,o,s,a,c,f]}set(t,n,r,o,s,a,c,f){this.A=t|0,this.B=n|0,this.C=r|0,this.D=o|0,this.E=s|0,this.F=a|0,this.G=c|0,this.H=f|0}_cloneInto(t){return(t||=new this.constructor).set(...this.get()),this._cloneIntoMeta(t)}process(t,n){for(let i=0;i<16;i++,n+=4)T[i]=t.getUint32(n,!1);for(let i=16;i<64;i++){let u=T[i-15],x=T[i-2],y=L(u,7)^L(u,18)^u>>>3,b=L(x,17)^L(x,19)^x>>>10;T[i]=b+T[i-7]+y+T[i-16]|0}let{A:r,B:o,C:s,D:a,E:c,F:f,G:d,H:h}=this;for(let i=0;i<64;i++){let u=L(c,6)^L(c,11)^L(c,25),x=h+u+At(c,f,d)+Gt[i]+T[i]|0,b=(L(r,2)^L(r,13)^L(r,22))+Ht(r,o,s)|0;h=d,d=f,f=c,c=a+x|0,a=s,s=o,o=r,r=x+b|0}r=r+this.A|0,o=o+this.B|0,s=s+this.C|0,a=a+this.D|0,c=c+this.E|0,f=f+this.F|0,d=d+this.G|0,h=h+this.H|0,this.set(r,o,s,a,c,f,d,h)}roundClean(){w(T)}destroy(){this.destroyed=!0,this.set(0,0,0,0,0,0,0,0),w(this.buffer)}},xt=class extends lt{constructor(){super(32,St)}};var V=mt(()=>new xt,gt(1));function Tt(e,t,n,r,o,s){let a=e[t++]^n[r++],c=e[t++]^n[r++],f=e[t++]^n[r++],d=e[t++]^n[r++],h=e[t++]^n[r++],i=e[t++]^n[r++],u=e[t++]^n[r++],x=e[t++]^n[r++],y=e[t++]^n[r++],b=e[t++]^n[r++],A=e[t++]^n[r++],S=e[t++]^n[r++],m=e[t++]^n[r++],E=e[t++]^n[r++],P=e[t++]^n[r++],et=e[t++]^n[r++],g=a,H=c,k=f,_=d,C=h,B=i,U=u,O=x,D=y,I=b,N=A,F=S,R=m,$=E,M=P,j=et;for(let pt=0;pt<8;pt+=2)C^=l(g+R|0,7),D^=l(C+g|0,9),R^=l(D+C|0,13),g^=l(R+D|0,18),I^=l(B+H|0,7),$^=l(I+B|0,9),H^=l($+I|0,13),B^=l(H+$|0,18),M^=l(N+U|0,7),k^=l(M+N|0,9),U^=l(k+M|0,13),N^=l(U+k|0,18),_^=l(j+F|0,7),O^=l(_+j|0,9),F^=l(O+_|0,13),j^=l(F+O|0,18),H^=l(g+_|0,7),k^=l(H+g|0,9),_^=l(k+H|0,13),g^=l(_+k|0,18),U^=l(B+C|0,7),O^=l(U+B|0,9),C^=l(O+U|0,13),B^=l(C+O|0,18),F^=l(N+I|0,7),D^=l(F+N|0,9),I^=l(D+F|0,13),N^=l(I+D|0,18),R^=l(j+M|0,7),$^=l(R+j|0,9),M^=l($+R|0,13),j^=l(M+$|0,18);o[s++]=a+g|0,o[s++]=c+H|0,o[s++]=f+k|0,o[s++]=d+_|0,o[s++]=h+C|0,o[s++]=i+B|0,o[s++]=u+U|0,o[s++]=x+O|0,o[s++]=y+D|0,o[s++]=b+I|0,o[s++]=A+N|0,o[s++]=S+F|0,o[s++]=m+R|0,o[s++]=E+$|0,o[s++]=P+M|0,o[s++]=et+j|0}function ut(e,t,n,r,o){let s=r+0,a=r+16*o;for(let c=0;c<16;c++)n[a+c]=e[t+(2*o-1)*16+c];for(let c=0;c<o;c++,s+=16,t+=16)Tt(n,a,e,t,n,s),c>0&&(a+=16),Tt(n,s,e,t+=16,n,a)}var qt=1024*(2**20+1+1);function Pt(e,t,n){let r=Y({dkLen:32,asyncTick:10,maxmem:qt},n),{N:o,r:s,p:a,dkLen:c,asyncTick:f,maxmem:d,onProgress:h}=r;if(p(o,"N"),p(s,"r"),p(a,"p"),p(c,"dkLen"),p(f,"asyncTick"),p(d,"maxmem"),h!==void 0&&typeof h!="function")throw new Error('"onProgress" must be a function');if(s<1)throw new Error('"r" expected integer >= 1');let i=128*s,u=i/4,x=Math.pow(2,32);if(o<=1||(o&o-1)!==0||o>x)throw new Error('"N" expected a power of 2, and 2^1 <= N <= 2^32');if(a<1||a>(x-1)*32/i)throw new Error('"p" expected integer 1..((2^32 - 1) * 32) / (128 * r)');if(c<1||c>(x-1)*32)throw new Error('"dkLen" expected integer 1..(2^32 - 1) * 32');let y=i*(o+a+1);if(y>d)throw new Error('"maxmem" limit was hit: memUsed(128*r*(N+p+1))='+y+", maxmem="+d);let b=ht(V,e,t,{c:1,dkLen:i*a}),A=rt(b),S=rt(new Uint8Array(i*o)),m=rt(new Uint8Array(i)),E=()=>{};if(h){let P=2*o*a,et=Math.max(Math.floor(P/1e4),1),g=0;E=()=>{if(g++,h&&(!(g%et)||g===P))try{h(g/P)}catch(H){throw w(b,S,m),H}}}return{N:o,r:s,p:a,dkLen:c,blockSize32:u,V:S,B32:A,B:b,tmp:m,blockMixCb:E,asyncTick:f}}function Xt(e,t,n,r,o){let s=ht(V,e,n,{c:1,dkLen:t});return w(n,r,o),s}async function kt(e,t,n){let{N:r,r:o,p:s,dkLen:a,blockSize32:c,V:f,B32:d,B:h,tmp:i,blockMixCb:u,asyncTick:x}=Pt(e,t,n),y=()=>w(h,f,i);ft(d);for(let b=0;b<s;b++){let A=c*b;for(let m=0;m<c;m++)f[m]=d[A+m];let S=0;await st(r-1,x,()=>{ut(f,S,f,S+=c,o),u()},y),ut(f,(r-1)*c,d,A,o),u(),await st(r,x,()=>{let m=(d[A+c-16]&r-1)>>>0;for(let E=0;E<c;E++)i[E]=d[A+E]^f[m*c+E];ut(i,0,d,A,o),u()},y)}return ft(d),Xt(e,a,h,f,i)}var K=e=>"'"+String(e).replaceAll("'","''")+"'";async function _t({email:e,name:t,password:n,repeat:r}){let o=String(e||"").trim().toLowerCase(),s=String(t||"").trim();if(o.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o))throw new Error("Enter a valid owner email.");if(!s||s.length>100)throw new Error("Enter a name of 1\u2013100 characters.");if(typeof n!="string"||n.length<12||n.length>128)throw new Error("Use a temporary password of 12\u2013128 characters.");if(n!==r)throw new Error("The two passwords do not match.");let a=z(crypto.getRandomValues(new Uint8Array(16))),c=await kt(n,a,{N:32768,r:8,p:3,dkLen:32,maxmem:64*1024*1024}),f=`scrypt$32768$8$3$${a}$${z(c)}`;c.fill(0);let d=z(crypto.getRandomValues(new Uint8Array(16))),h=new Date().toISOString(),i=`email=${K(o)} AND role='owner' AND active=1`,u=`${i} AND password_hash=${K(f)} AND must_change_password=1`,x="email:"+z(V(new TextEncoder().encode(o))),y=`INSERT INTO users(id,email,name,password_hash,role,must_change_password,created_at)
+SELECT ${[d,o,s,f,"owner"].map(K).join(",")},1,${K(h)}
+WHERE NOT EXISTS(SELECT 1 FROM users WHERE role='owner')
+OR EXISTS(SELECT 1 FROM users WHERE ${i})
+ON CONFLICT(email) DO UPDATE SET password_hash=excluded.password_hash,must_change_password=1
+WHERE users.role='owner' AND users.active=1;
+DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE ${u});
+DELETE FROM login_limits WHERE key=${K(x)} AND EXISTS(SELECT 1 FROM users WHERE ${u});
+INSERT INTO audit_log(actor_id,action,entity,entity_id,after_json,created_at)
+SELECT NULL,'owner_access_recovery','user',id,'{"source":"cloudflare_console","must_change_password":true}',${K(h)}
+FROM users WHERE ${u};
+SELECT CASE WHEN EXISTS(SELECT 1 FROM users WHERE ${u}) THEN 'OWNER_READY' ELSE 'NOT_CHANGED: email is not an active owner' END AS result;`;return{email:o,sql:y}}var J=document.querySelector("form"),Ct=document.querySelector("fieldset"),G=document.querySelector("#status"),Q=document.querySelector("#output"),q=document.querySelector("#sql"),Z=document.querySelector("#password"),tt=document.querySelector("#repeat"),bt=document.querySelector("#show");bt.addEventListener("change",()=>{Z.type=tt.type=bt.checked?"text":"password"});J.addEventListener("input",()=>{Q.hidden=!0,q.value="",G.textContent=""});J.addEventListener("submit",async e=>{e.preventDefault(),Q.hidden=!0,q.value="",Ct.disabled=!0,G.textContent="Preparing your command\u2026";try{let t=await _t({email:J.elements.email.value,name:J.elements.name.value,password:Z.value,repeat:tt.value});q.value=t.sql,document.querySelector("#owner-email").textContent=t.email,Z.value=tt.value="",bt.checked=!1,Z.type=tt.type="password",Q.hidden=!1,G.textContent="Command prepared. Complete the Cloudflare step below to save your password.",Q.scrollIntoView({behavior:"smooth",block:"start"})}catch(t){G.textContent=t.message}finally{Ct.disabled=!1}});document.querySelector("#copy").addEventListener("click",async()=>{try{await navigator.clipboard.writeText(q.value),G.textContent="Copied. Paste into the Cloudflare D1 console, then click Execute."}catch{q.focus(),q.select(),G.textContent="Command selected. Press Command+C on Mac or Ctrl+C on Windows to copy."}});document.querySelector("#clear").addEventListener("click",()=>{J.reset(),Z.type=tt.type="password",q.value="",Q.hidden=!0,G.textContent="Cleared."});})();</script>
+  </body>
+</html>

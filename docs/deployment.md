@@ -18,18 +18,18 @@ Reference: [Cloudflare runtime environment variables](https://developers.cloudfl
 
 In Workers & Pages, open the existing `rei-booking` Worker and confirm these build settings. Do not create another Worker:
 
-| Setting | Value |
-| --- | --- |
-| Repository | `Mbaucal/rei-booking` |
-| Worker name | `rei-booking` |
-| Branch | `main` |
-| Root directory | Repository root (`/`) |
-| Build command | `npm run check && npm test && npm run build` |
-| Deploy command | `npm run deploy:test` |
-| Node.js | Version 24 is selected by `.node-version`; if a `NODE_VERSION` build override exists, set it to `24` |
-| Preview builds for other branches | Disabled for this initial setup |
-| Preview command | Unused while preview builds are disabled |
-| Protect with Cloudflare Access | Leave off during this initial setup; application sign-in remains required for protected data |
+| Setting                           | Value                                                                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Repository                        | `Mbaucal/rei-booking`                                                                                |
+| Worker name                       | `rei-booking`                                                                                        |
+| Branch                            | `main`                                                                                               |
+| Root directory                    | Repository root (`/`)                                                                                |
+| Build command                     | `npm run check && npm test && npm run build`                                                         |
+| Deploy command                    | `npm run deploy:test`                                                                                |
+| Node.js                           | Version 24 is selected by `.node-version`; if a `NODE_VERSION` build override exists, set it to `24` |
+| Preview builds for other branches | Disabled for this initial setup                                                                      |
+| Preview command                   | Unused while preview builds are disabled                                                             |
+| Protect with Cloudflare Access    | Leave off during this initial setup; application sign-in remains required for protected data         |
 
 Cloudflare may label `main` as the production branch of this Worker; this Worker still uses the isolated **test** environment through the explicit `--env test` in the deploy script. After deployment, verify that the returned URL matches `env.test.vars.APP_ORIGIN`. Build variables are separate from application runtime variables, which remain in `wrangler.json`. If the Git URL import flow creates a copy of the repository, confirm the connected repository before relying on automatic updates.
 
@@ -61,6 +61,20 @@ Sign in to the Cloudflare account that owns the displayed database. The setup co
 Never pass a password as a command argument. First sign-in requires replacing the temporary password. Open https://rei-booking.mbaucal.workers.dev after setup and deployment complete.
 
 ## Recover the owner password
+
+### Browser and D1 console (no terminal)
+
+Download [owner-access.html](tools/owner-access.html), then open the downloaded file in Safari, Chrome or Firefox. GitHub's source preview does not run the form. This standalone tool has no external scripts, storage or network requests; its CSP blocks connections and form submissions. Fill in the owner email, name and a temporary password twice. **Show passwords** makes typing visible. Click **Prepare Cloudflare command**.
+
+In the authenticated Cloudflare dashboard, open **D1 Database → rei-booking-test → Console**. Check database ID `7078aa06-6963-4e34-bdee-90e32e2764ae`. Paste the entire generated SQL and click **Execute**. The last result must say `OWNER_READY`. Then sign in at https://rei-booking.mbaucal.workers.dev and replace the temporary password. Clear the form after use; do not put the generated SQL into GitHub, Linear or chat.
+
+The command handles either an absent first owner or an already-existing active owner at the supplied email. It preserves the existing owner's ID, profile and related records. It revokes only that owner's sessions, clears only that email's login limit and records an audit event without credentials. It does not promote another role, reactivate a disabled account or create an additional owner when a different owner exists. If the result is `NOT_CHANGED`, check the owner email/account status. The form prepares a command; it does not itself save or verify remote data. Each command is for one explicit administrator recovery: do not replay it after replacing the temporary password.
+
+On 22 September the owner's CLI screenshot showed no owner before password entry, followed by `Cloudflare returned an unexpected result; setup stopped.` This message comes from parsing Wrangler stdout, after a command exits successfully. It can occur after a database write; it does not prove the write failed. The remote account state is unconfirmed. The browser/console route avoids that parser and covers both possible account states. Database tables and runtime origin have already been confirmed in the owner's screenshots; do not recreate the database or rerun migrations for this error.
+
+Browser scrypt is pinned to `@noble/hashes` and matches the server's existing parameters and hex-string salt. The generated file is reproducible with `npm run owner:form`. Tests cover the distributed bundle/CSP, password mismatch handling, SQL injection escaping, first-owner creation, recovery, preservation of other accounts/data, and Worker/D1 sign-in plus mandatory password replacement. Actual hosted sign-in remains pending user confirmation.
+
+### Authenticated CLI alternative
 
 In the existing local checkout, with the Cloudflare login still active:
 

@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from "miniflare";
 import { hashPassword } from "../src/security.mjs";
 import { defaultWeek } from "../src/domain.mjs";
+import { prepareOwnerConsole } from "../scripts/owner-console.mjs";
 
 const ORIGIN = "https://rei-test.example";
 const PASSWORD = "Fictional-test-password-2026";
@@ -668,6 +669,54 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
       assert.equal(result.data.appointments.length, count);
       assert.equal((await request("/logout", owner, "POST")).status, 200);
       assert.equal((await request("/session", owner)).status, 401);
+    },
+  );
+  await t.test(
+    "offline console recovery permits sign-in and mandatory password replacement",
+    async () => {
+      const temporary = "Fictional-console-temporary";
+      const prepared = await prepareOwnerConsole({
+        email: "owner@example.test",
+        name: "Test owner",
+        password: temporary,
+        repeat: temporary,
+      });
+      const applied = await db.batch(
+        statements(prepared.sql).map((sql) => db.prepare(sql)),
+      );
+      assert.equal(applied.at(-1).results[0].result, "OWNER_READY");
+      assert.equal(
+        (
+          await request("/login", null, "POST", {
+            email: prepared.email,
+            password: PASSWORD,
+          })
+        ).status,
+        401,
+      );
+      const signedIn = await request("/login", null, "POST", {
+        email: prepared.email,
+        password: temporary,
+      });
+      assert.equal(signedIn.status, 200);
+      assert.equal(signedIn.data.mustChangePassword, true);
+      const recovered = {
+        cookie: signedIn.headers.get("set-cookie").split(";")[0],
+        csrf: signedIn.data.csrf,
+      };
+      assert.equal((await request("/catalogue", recovered)).status, 403);
+      assert.equal(
+        (
+          await request("/password", recovered, "POST", {
+            currentPassword: temporary,
+            newPassword: PASSWORD,
+          })
+        ).status,
+        200,
+      );
+      assert.equal((await request("/session", recovered)).status, 401);
+      const fresh = await login(prepared.email);
+      assert.equal((await request("/catalogue", fresh)).status, 200);
     },
   );
 });
