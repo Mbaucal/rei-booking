@@ -333,21 +333,49 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
     },
   );
   await t.test("parallel collision has exactly one winner", async () => {
+    // Either therapist can win. Keep this race off the date used by move tests:
+    // their 12:05–13:05 appointment otherwise overlaps this 13:00 booking.
+    const collisionDate = "2030-01-09";
     const replies = await Promise.all([
       request(
         "/appointments",
         owner,
         "POST",
-        makeBooking({ start: 780, therapistId: therapistIds[1] }),
+        makeBooking({
+          date: collisionDate,
+          start: 780,
+          therapistId: therapistIds[1],
+        }),
       ),
       request(
         "/appointments",
         owner,
         "POST",
-        makeBooking({ start: 780, therapistId: therapistIds[2] }),
+        makeBooking({
+          date: collisionDate,
+          start: 780,
+          therapistId: therapistIds[2],
+        }),
       ),
     ]);
     assert.deepEqual(replies.map((r) => r.status).sort(), [201, 409]);
+    const winner = replies.find((r) => r.status === 201).data.appointment;
+    const persisted = (
+      await request("/appointments?from=" + collisionDate, owner)
+    ).data.appointments;
+    assert.deepEqual(
+      persisted.map((a) => a.id),
+      [winner.id],
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) AS n FROM booking_slots WHERE date=?")
+          .bind(collisionDate)
+          .first()
+      ).n,
+      12,
+    );
   });
   await t.test(
     "failed moves roll back slots; successful moves preserve creation and request",

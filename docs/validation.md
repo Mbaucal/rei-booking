@@ -1,6 +1,21 @@
-# Development validation — 22 September 2026
+# Development validation — 23 September 2026
 
 Validated locally with Node.js 24.19.0, Wrangler 4.136.3 and its Miniflare/Workerd D1 runtime. Only fictional test records were used.
+
+## Build regression fix — 23 September 2026
+
+Cloudflare build `972ae38d-e381-44ae-8dc4-89c0d0df1110` failed on the successful appointment move assertion (`409 !== 200`). The preceding parallel-booking test let either therapist reserve 13:00 on the same date as a later 12:05–13:05 move. The result therefore depended on which concurrent request succeeded. The server correctly rejected a real five-minute therapist overlap.
+
+The parallel requests now use a separate date. The test still sends both requests concurrently, requires one 201 and one 409, and additionally checks that exactly the winning appointment and its twelve five-minute slots persist. No application code, conflict constraints, credentials, database contents, deployment commands or test gates were changed.
+
+Verification used fictional local data only:
+
+- Reproduced the original Cloudflare assertion in the actual Worker/D1 suite by deterministically executing the second contender first.
+- Ran the corrected Worker/D1 suite with each contender deliberately winning in turn; both passed. These temporary order-control copies were removed; the committed test retains `Promise.all`.
+- All 38 tests passed with the original concurrent requests after the fix.
+- JavaScript syntax and the configured Worker deployment dry run passed.
+
+A successful hosted deployment is a separate check; see `docs/deployment.md`. Existing device, email and production acceptance limitations below still apply.
 
 ## Sales release 0.3
 
