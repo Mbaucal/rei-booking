@@ -1,3 +1,4 @@
+import { openVoucherRedemption } from "./voucher-redemption.js";
 import { renderReports } from "./reports.js";
 import { renderSales } from "./sales.js";
 const $ = (id) => document.getElementById(id);
@@ -692,6 +693,41 @@ async function appointmentDialog(existing = null, defaults = {}) {
           `<option value="${i}" ${i === a.bed ? "selected" : ""}>Table ${i + 1}</option>`,
       ).join("");
     };
+  if (existing && owner()) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.textContent = "Voucher payment & history";
+    form.after(button);
+    let dirty = false;
+    form.addEventListener("change", () => {
+      dirty = true;
+    });
+    form.addEventListener("input", (event) => {
+      if (event.target.name) dirty = true;
+    });
+    const version = state.version;
+    button.onclick = () => {
+      if (dirty) {
+        toast("Save your appointment changes before opening voucher payment.");
+        return;
+      }
+      openVoucherRedemption(
+        {
+          api,
+          esc,
+          money,
+          stamp,
+          today,
+          showDrawer,
+          closeDrawer,
+          toast,
+          isCurrent: () => state.version === version && owner(),
+        },
+        { appointmentId: existing.id },
+      ).catch((error) => toast(error.message));
+    };
+  }
   beds();
   $("booking-room").onchange = beds;
   $("booking-service").onchange = () => {

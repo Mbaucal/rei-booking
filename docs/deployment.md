@@ -137,3 +137,9 @@ Persistence is not a backup. The integration test proves local D1 survives a Wor
 ## Recovery limitations in 0.1.0
 
 Self-service email password resets, MFA, notification/email providers, file storage and monitoring/alerting are not configured. Lost-owner recovery needs an authorized database administrator. No credentials are embedded in the code or package.
+
+## Voucher redemption release 0.4
+
+Health now identifies version `0.4.0`. Existing Workers build/check/test/deploy settings remain unchanged. Opening an owner Sales route initializes the additive redemption ledger, views and guards; `0004_voucher_redemptions.sql` provides the equivalent tracked migration. Existing vouchers begin with their full original value, and existing accounts, passwords, appointments and sales are preserved. No manual console setup or reset is required for this feature.
+
+See [Voucher redemption](voucher-redemption.md) for owner acceptance steps. Browser acceptance and actual email sending remain separate from the automated Worker/D1 checks.

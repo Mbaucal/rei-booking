@@ -1,3 +1,8 @@
+import {
+  openVoucherRedemption,
+  redemptionHistoryHTML,
+  wireRedemptionHistory,
+} from "./voucher-redemption.js";
 // Per-visit state stays inside this view and is discarded on navigation/sign-out.
 export async function renderSales(ctx) {
   const {
@@ -62,6 +67,8 @@ export async function renderSales(ctx) {
       failed: "Failed",
       issued: "Issued",
       expired: "Expired",
+      partially_redeemed: "Partly used",
+      redeemed: "Fully used",
     })[value] || value;
   function previewFrame(html) {
     const frame = $("voucher-preview");
@@ -126,9 +133,10 @@ export async function renderSales(ctx) {
   async function list() {
     const n = ++view;
     closeDrawer();
-    root.innerHTML = `<div class="sales-heading"><div><p class="eyebrow">Sales</p><h2>Gift vouchers</h2><p class="hint">Find an issued gift, view its sale or send it to the recipient.</p></div><div class="sales-actions">${button("voucher-design", "Voucher design")}${button("new-sale", "New sale", true)}</div></div>
+    root.innerHTML = `<div class="sales-heading"><div><p class="eyebrow">Sales</p><h2>Gift vouchers</h2><p class="hint">Find an issued gift, view its sale or send it to the recipient.</p></div><div class="sales-actions">${button("redeem-voucher", "Use voucher")}${button("voucher-design", "Voucher design")}${button("new-sale", "New sale", true)}</div></div>
 <form id="voucher-filters" class="sales-filters">${field("q", "Search code, buyer or recipient", filters.q, "search", 'maxlength="100"')}${field("from", "Sold from", filters.from, "date")}${field("to", "Sold through", filters.to, "date")}<button class="btn primary" type="submit">Search</button>${button("voucher-export", "Export CSV")}</form>
 ${errorHTML}<p class="hint" id="voucher-count" role="status">Loading vouchers…</p><div class="table-wrap" id="voucher-register"></div><div class="sales-actions" id="voucher-pages"></div>`;
+    $("redeem-voucher").onclick = () => useVoucher();
     $("new-sale").onclick = () => startSale().catch(err);
     $("voucher-design").onclick = () => editDesign().catch(err);
     $("voucher-filters").onsubmit = (event) => {
@@ -146,7 +154,7 @@ ${errorHTML}<p class="hint" id="voucher-count" role="status">Loading vouchers…
     $("voucher-count").textContent =
       `${result.count} vouchers · ${money(result.totalCents)} sold in this selection`;
     $("voucher-register").innerHTML = result.vouchers.length
-      ? `<table class="data-table"><thead><tr><th>Voucher</th><th>Gift</th><th>Buyer / recipient</th><th>Sold</th><th>Value</th><th>Status</th></tr></thead><tbody>${result.vouchers.map((v) => `<tr><td><button type="button" class="btn link" data-voucher="${e(v.id)}">${e(v.code)}</button><small>${e(v.reference)}</small></td><td>${e(v.serviceName)}<small>${v.duration ? `${v.duration} min` : "Custom amount"}</small></td><td>${e(v.buyerName || "Walk-in buyer")}<small>For ${e(v.recipientName || "Gift recipient")}</small></td><td>${e(stamp(v.issuedAt))}</td><td>${money(v.priceCents)}</td><td><span class="status">${labelStatus(v.status)}</span></td></tr>`).join("")}</tbody></table>`
+      ? `<table class="data-table"><thead><tr><th>Voucher</th><th>Gift</th><th>Buyer / recipient</th><th>Sold</th><th>Original value</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${result.vouchers.map((v) => `<tr><td><button type="button" class="btn link" data-voucher="${e(v.id)}">${e(v.code)}</button><small>${e(v.reference)}</small></td><td>${e(v.serviceName)}<small>${v.duration ? `${v.duration} min` : "Custom amount"}</small></td><td>${e(v.buyerName || "Walk-in buyer")}<small>For ${e(v.recipientName || "Gift recipient")}</small></td><td>${e(stamp(v.issuedAt))}</td><td>${money(v.priceCents)}</td><td>${v.kind === "treatment" ? (v.remainingCents > 0 ? "1 treatment" : "Used") : money(v.remainingCents)}</td><td><span class="status">${labelStatus(v.status)}</span></td></tr>`).join("")}</tbody></table>`
       : '<div class="empty"><h3>No gift vouchers yet</h3><p>Create your first sale using New sale.</p></div>';
     root
       .querySelectorAll("[data-voucher]")
@@ -426,6 +434,18 @@ ${v.kind === "amount" ? field("amount", "Gift value (RSD)", v.priceCents ? v.pri
         (b) => (b.onclick = () => openVoucher(b.dataset.voucher).catch(err)),
       );
   }
+  async function changedVoucher(id) {
+    if (!isCurrent()) return;
+    await list();
+    if (id && isCurrent()) await openVoucher(id);
+  }
+  function useVoucher(id) {
+    drawerVersion++;
+    return openVoucherRedemption(ctx, {
+      voucherId: id,
+      onSaved: changedVoucher,
+    }).catch(err);
+  }
   async function openVoucher(id) {
     const n = drawer(
       "Gift voucher",
@@ -439,7 +459,7 @@ ${v.kind === "amount" ? field("amount", "Gift value (RSD)", v.priceCents ? v.pri
       v.serviceName,
       v.code,
       `<p class="hint">${labelStatus(v.status)} · ${e(stamp(v.issuedAt))}</p><iframe class="voucher-preview" id="voucher-preview" title="Issued voucher preview" sandbox></iframe>
-<div class="sales-actions"><a class="btn" target="_blank" rel="noopener" href="/api/sales/vouchers/${e(id)}/print">Print / Save as PDF</a>${button("open-voucher-sale", "View sale")}</div>
+<div class="sales-actions"><a class="btn" target="_blank" rel="noopener" href="/api/sales/vouchers/${e(id)}/print">Print / Save as PDF</a>${button("open-voucher-sale", "View sale")}${["issued", "partially_redeemed"].includes(v.status) ? button("use-this-voucher", "Use voucher", true) : ""}</div><p>Remaining: ${v.kind === "treatment" ? (v.remainingCents > 0 ? "1 matching treatment" : "Used") : money(v.remainingCents)}</p><div id="voucher-use-history">${redemptionHistoryHTML(ctx, data.redemptions)}</div>
 <h3>Email this gift</h3><p class="hint">From: info@reithailandmassage.com</p>
 ${settings.emailReady ? "" : '<p class="hint">Email sending awaits sender verification and setup. You can prepare a preview now.</p>'}
 <form id="voucher-email-form" class="sales-form">${field("recipientEmail", "Recipient email", "", "email", 'required maxlength="254" autocomplete="off"')}${data.sale.buyerEmail ? button("use-buyer-email", "Use buyer’s email: " + e(data.sale.buyerEmail)) : ""}
@@ -448,6 +468,11 @@ ${field("subject", "Subject", "A gift for you from Rei Thailand Massage", "text"
 <h3>Delivery history</h3><div id="delivery-history">${data.deliveries.length ? data.deliveries.map((d) => `<article class="delivery-row"><strong>${e(d.recipient)}</strong><span>${e(labelStatus(d.status))}</span><small>${e(stamp(d.updatedAt))}</small>${button("delivery-" + d.id, "Open email")}</article>`).join("") : '<p class="hint">No emails prepared or sent.</p>'}</div>${errorHTML}`,
     );
     previewFrame(data.preview.html);
+    if ($("use-this-voucher"))
+      $("use-this-voucher").onclick = () => useVoucher(id);
+    wireRedemptionHistory(ctx, $("voucher-use-history"), data.redemptions, () =>
+      changedVoucher(id),
+    );
     $("open-voucher-sale").onclick = () => showSale(data.sale).catch(err);
     if ($("use-buyer-email"))
       $("use-buyer-email").onclick = () =>

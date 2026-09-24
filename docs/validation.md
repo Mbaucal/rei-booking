@@ -17,6 +17,12 @@ Verification used fictional local data only:
 
 A successful hosted deployment is a separate check; see `docs/deployment.md`. Existing device, email and production acceptance limitations below still apply.
 
+## Voucher redemption release 0.4
+
+Seven new Worker/D1 scenarios cover schema/migration parity and repeated initialization; lookup/role/CSRF checks; partial amount use and concurrent idempotent retries; concurrent spending and appointment coverage; exact treatment/duration entitlements and discounted prices; invalid/stale/future/expired uses; auditable corrections, immutable history and protected appointment edits; and suppression of an old email preview after voucher use. The parent scenario is also counted by Node. Reports and original sale values are compared before and after use. All records and email transports are fictional/local.
+
+Local validation: all 46 tests, JavaScript syntax checks and the configured deployment dry run passed. The cloud browser could not reach the disposable local fixture (`ERR_BLOCKED_BY_CLIENT`), so no visual, keyboard or mobile acceptance is claimed. The new workflow still needs a test in the hosted application. See `docs/voucher-redemption.md` for steps and limits.
+
 ## Sales release 0.3
 
 Added actual Worker/D1 checks for automatic additive schema, template version/audit consistency, explicit validity/payment confirmation, unique voucher codes, optional buyer and no automatic sending, concurrent checkout retries with one atomic new client, rejection of changed retry contents, immutable snapshots across menu edits, issued-record guards, filtered CSV/formula escaping, print content, unchanged treatment-report revenue and owner-only API/CSV/print/email access.
@@ -63,6 +69,6 @@ GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91
 - Browser visual checks, keyboard/screen-reader review and touch interaction on real devices. Automated browser review of local files was unavailable in this session; no substitute browser route was used.
 - Hosted acceptance of the new Reports/Dashboard/Team bonus screens. Initial schema, origin and successful owner sign-in have been confirmed by the user.
 - Hosted login performance/CPU budget, backup export/restore drill and operational monitoring.
-- Scheduled report archive/email, scoped Sheets integration, voucher redemption/refunds/packages, live email setup, private photo uploads, imports and loyalty calculations.
+- Scheduled report archive/email, scoped Sheets integration, voucher cash refunds/packages, live email setup, private photo uploads, imports and loyalty calculations.
 
 The first slice is suitable for code review and deployment to a dedicated fictional-data test environment once access is configured. It is not a sign-off for live salon use.

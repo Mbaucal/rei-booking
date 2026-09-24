@@ -58,6 +58,8 @@ test("Sales Worker + D1: atomic checkout, immutable gifts and independently addr
         "report-schema.mjs",
         "sales.mjs",
         "sales-schema.mjs",
+        "redemption-schema.mjs",
+        "voucher-redemption.mjs",
         "voucher-render.mjs",
         "voucher-email.mjs",
       ].map((f) => ({ type: "ESModule", path: resolve("src", f) })),

@@ -120,7 +120,7 @@ export async function sendDelivery(db, env, user, id, transport = fetch) {
     );
   let job = await one(
     db,
-    "SELECT d.*,v.expires_on FROM voucher_deliveries d JOIN gift_vouchers v ON v.id=d.voucher_id WHERE d.id=?",
+    "SELECT d.*,v.expires_on,v.used_cents FROM voucher_deliveries d JOIN voucher_balances v ON v.id=d.voucher_id WHERE d.id=?",
     id,
   );
   if (!job) fail(404, "Email preview not found.");
@@ -133,6 +133,11 @@ export async function sendDelivery(db, env, user, id, transport = fetch) {
     );
   if (job.expires_on && job.expires_on < belgradeToday())
     fail(409, "This voucher has expired.");
+  if (job.used_cents > 0)
+    fail(
+      409,
+      "This voucher has already been used. Open its current balance in Sales.",
+    );
   const time = Date.now();
   if (job.first_attempt_at && time - job.first_attempt_at >= 23 * 3600000) {
     await stmt(
@@ -159,7 +164,8 @@ export async function sendDelivery(db, env, user, id, transport = fetch) {
   const claim = await stmt(
     db,
     `UPDATE voucher_deliveries SET status='sending',attempts=attempts+1,first_attempt_at=COALESCE(first_attempt_at,?),lease_until=?,updated_at=?
-WHERE id=? AND status IN ('prepared','sending','retry') AND lease_until<=? AND next_attempt_at<=? RETURNING *`,
+WHERE id=? AND status IN ('prepared','sending','retry') AND lease_until<=? AND next_attempt_at<=?
+AND NOT EXISTS(SELECT 1 FROM active_voucher_redemptions r WHERE r.voucher_id=voucher_deliveries.voucher_id) RETURNING *`,
     time,
     time + 60000,
     new Date(time).toISOString(),
@@ -167,10 +173,22 @@ WHERE id=? AND status IN ('prepared','sending','retry') AND lease_until<=? AND n
     time,
     time,
   ).first();
-  if (!claim)
+  if (!claim) {
+    if (
+      await one(
+        db,
+        "SELECT id FROM active_voucher_redemptions WHERE voucher_id=? LIMIT 1",
+        job.voucher_id,
+      )
+    )
+      fail(
+        409,
+        "This voucher has already been used. Open its current balance in Sales.",
+      );
     return deliveryView(
       await one(db, "SELECT * FROM voucher_deliveries WHERE id=?", id),
     );
+  }
   job = claim;
   let result, response;
   try {

@@ -414,7 +414,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.3.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.4.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -730,6 +730,10 @@ export default {
       } else if (detail.includes("room_capacity")) {
         status = 400;
         message = "Choose a valid table for this room.";
+      } else if (detail.includes("redeemed_appointment_locked")) {
+        status = 409;
+        message =
+          "Reverse the voucher use in Sales before changing this appointment. Notes can still be edited.";
       } else if (detail.includes("UNIQUE constraint failed")) {
         status = 409;
         message =

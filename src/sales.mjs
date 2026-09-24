@@ -3,6 +3,14 @@ import { fail, digest, requireRole, readJSON } from "./security.mjs";
 import { text, integer, isoDate, clientInput } from "./domain.mjs";
 import { belgradeToday } from "./reports.mjs";
 import { ensureSalesSchema } from "./sales-schema.mjs";
+import { ensureRedemptionSchema } from "./redemption-schema.mjs";
+import {
+  redeemVoucher,
+  reverseRedemption,
+  redemptionHistory,
+  redemptionAppointment,
+  redemptionAppointments,
+} from "./voucher-redemption.mjs";
 import { DEFAULT_DESIGN, voucherContent } from "./voucher-render.mjs";
 import {
   emailReady,
@@ -120,6 +128,8 @@ export function voucherView(row) {
     serviceName: row.service_name,
     duration: row.duration,
     priceCents: row.price_cents,
+    usedCents: row.used_cents || 0,
+    remainingCents: row.remaining_cents ?? row.price_cents,
     recipientName: row.recipient_name,
     senderName: row.sender_name,
     message: row.message,
@@ -127,7 +137,13 @@ export function voucherView(row) {
     design: JSON.parse(row.design_json),
     issuedAt: row.issued_at,
     status:
-      row.expires_on && row.expires_on < belgradeToday() ? "expired" : "issued",
+      row.remaining_cents === 0
+        ? "redeemed"
+        : row.expires_on && row.expires_on < belgradeToday()
+          ? "expired"
+          : row.used_cents > 0
+            ? "partially_redeemed"
+            : "issued",
   };
 }
 async function saleDetail(db, id) {
@@ -135,7 +151,7 @@ async function saleDetail(db, id) {
   if (!sale) fail(404, "Sale not found.");
   const vouchers = await all(
     db,
-    "SELECT * FROM gift_vouchers WHERE sale_id=? ORDER BY id",
+    "SELECT * FROM voucher_balances WHERE sale_id=? ORDER BY id",
     id,
   );
   return {
@@ -315,7 +331,7 @@ async function register(db, params, exporting = false) {
   const candidate = await all(
     db,
     `SELECT v.*,s.reference,s.buyer_name,s.buyer_email,s.payment_method,s.payment_reference,s.created_at AS sale_created_at
-FROM gift_vouchers v JOIN sales s ON s.id=v.sale_id
+FROM voucher_balances v JOIN sales s ON s.id=v.sale_id
 WHERE (?='' OR v.code LIKE ? ESCAPE '\\' OR s.buyer_name LIKE ? ESCAPE '\\' OR v.recipient_name LIKE ? ESCAPE '\\')
 AND (? IS NULL OR s.created_at>=datetime(?,'-1 day')) AND (? IS NULL OR s.created_at<=datetime(?,'+2 days'))
 ORDER BY s.created_at DESC,v.id DESC LIMIT 10001`,
@@ -380,6 +396,8 @@ function vouchersCSV(rows) {
         "Payment reference",
         "Expiry",
         "Status",
+        "Used voucher value (RSD)",
+        "Remaining voucher value (RSD)",
       ],
       ...rows.map((v) => [
         v.reference,
@@ -395,6 +413,8 @@ function vouchersCSV(rows) {
         v.paymentReference,
         v.expiresOn || "No expiry",
         v.status,
+        (v.usedCents / 100).toFixed(2),
+        (v.remainingCents / 100).toFixed(2),
       ]),
     ]
       .map((r) => r.map(cell).join(","))
@@ -408,7 +428,48 @@ export async function salesRoutes(request, env, user) {
     path = url.pathname,
     method = request.method;
   await ensureSalesSchema(db);
+  await ensureRedemptionSchema(db);
   const json = (value, status = 200) => Response.json(value, { status });
+  if (path === "/api/sales/voucher-lookup" && method === "GET") {
+    const code = text(
+      url.searchParams.get("code"),
+      100,
+      "voucher code",
+    ).toUpperCase();
+    const row = await one(
+      db,
+      "SELECT * FROM voucher_balances WHERE code=?",
+      code,
+    );
+    if (!row) fail(404, "Voucher not found. Check the complete code.");
+    return json({ voucher: voucherView(row) });
+  }
+  if (path === "/api/sales/redemption-appointments" && method === "GET")
+    return json({
+      appointments: await redemptionAppointments(
+        db,
+        isoDate(url.searchParams.get("date")),
+      ),
+    });
+  const appointment = path.match(/^\/api\/sales\/appointments\/([^/]+)$/);
+  if (appointment && method === "GET")
+    return json(await redemptionAppointment(db, appointment[1]));
+  if (path === "/api/sales/redemptions" && method === "POST") {
+    const result = await redeemVoucher(db, user, await readJSON(request, 4096));
+    return json(result, result.replayed ? 200 : 201);
+  }
+  const correction = path.match(
+    /^\/api\/sales\/redemptions\/([^/]+)\/reverse$/,
+  );
+  if (correction && method === "POST")
+    return json(
+      await reverseRedemption(
+        db,
+        user,
+        correction[1],
+        await readJSON(request, 4096),
+      ),
+    );
   if (path === "/api/sales/settings" && method === "GET") {
     const settings = await one(
       db,
@@ -484,7 +545,7 @@ ON CONFLICT(id) DO UPDATE SET design_json=excluded.design_json,version=voucher_s
   if (voucher) {
     const row = await one(
       db,
-      "SELECT * FROM gift_vouchers WHERE id=?",
+      "SELECT * FROM voucher_balances WHERE id=?",
       voucher[1],
     );
     if (!row) fail(404, "Voucher not found.");
@@ -516,6 +577,7 @@ ON CONFLICT(id) DO UPDATE SET design_json=excluded.design_json,version=voucher_s
             row.id,
           )
         ).map(deliveryView),
+        redemptions: await redemptionHistory(db, "voucher_id", row.id),
       });
   }
   const delivery = path.match(/^\/api\/sales\/deliveries\/([^/]+)$/);

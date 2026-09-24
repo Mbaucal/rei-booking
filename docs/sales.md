@@ -1,4 +1,4 @@
-# Sales and gift vouchers — implementation v0.3
+# Sales and gift vouchers — implementation v0.4
 
 ## Included
 
@@ -14,11 +14,15 @@ Design controls: ivory/forest brand palette, centred/personal-letter layout, tit
 
 Checkout records a payment already received externally (cash, card, bank transfer or other, with an optional reference). It does not charge a card or connect to a payment terminal. Completing a sale issues the vouchers in the same D1 transaction. A unique request ID and normalized payload hash ensure concurrent or interrupted retries return the original sale. A changed payload cannot reuse a completed request ID. A browser network failure freezes the submitted cart and offers **Retry same checkout**.
 
-The Sales register measures voucher sales. Existing Dashboard/Reports continue to measure completed treatment performance and do not add gift sales to those figures. Payment, issuance and future redemption are distinct events; a combined cash/revenue report is not implemented here.
+The Sales register measures voucher sales. Existing Dashboard/Reports continue to measure completed treatment performance and do not add gift sales to those figures. Payment, issuance and redemption are distinct events; a combined cash/revenue report is not implemented here.
+
+## Voucher use
+
+**Sales → Use voucher** looks up the full code and links a confirmed use to a completed appointment. The same workflow opens from Calendar appointment details. Amount vouchers allow partial use; treatment vouchers cover one exact treatment/duration. The register and CSV show current used/remaining values. Mistaken uses can be reversed with a recorded reason; they are never deleted. Appointment edits are guarded while voucher use is active, except notes. These operations do not change treatment prices or bonuses. See [the full workflow and limits](voucher-redemption.md).
 
 ## Email delivery
 
-From is fixed to **Rei Thailand Massage <info@reithailandmassage.com>**. The owner enters the recipient and subject, opens **Review email**, then explicitly clicks **Send email**. Preparing or selling a voucher never sends it. The preview is the exact persisted HTML/text payload, with a unique delivery record. The voucher appears in the body of the email; no public voucher URL or attachment is generated. Printed vouchers are available independently of email setup.
+From is fixed to **Rei Thailand Massage <info@reithailandmassage.com>**. The owner enters the recipient and subject, opens **Review email**, then explicitly clicks **Send email**. Preparing or selling a voucher never sends it. The preview is the exact persisted HTML/text payload, with a unique delivery record. The voucher appears in the body of the email; no public voucher URL or attachment is generated. Printed vouchers are available independently of email setup. Used vouchers cannot prepare or send a new original-entitlement email; historical accepted/delivered records remain available.
 
 Sending requires `EMAIL_ENABLED=true`, the server-only `RESEND_API_KEY` secret and `RESEND_WEBHOOK_SECRET`. See [email setup](email-setup.md). A successful provider API response is **Accepted by email service**, not **Delivered**. Signed Resend callbacks record delivery, delay, failure, bounce, complaint or suppression. Event IDs are deduplicated and late events cannot downgrade a terminal result. Callback-before-API-response races are reconciled after the provider ID is saved. Bounce/complaint/suppression blocks subsequent sends to that recipient.
 
@@ -29,7 +33,7 @@ Email API errors shown to the browser use generic codes; keys, raw provider erro
 ## Deliberate remaining scope
 
 - Sales is owner-only in this slice. Reception retains the approved no-financial-access policy; a narrower permission to sell vouchers needs an explicit decision.
-- Package rules, redemption, remaining balances/uses, appointment payment allocation, refunds, cancellation and treatment substitution are pending. The register says **Issued**, not **Redeemed** or **Active balance**.
+- [Voucher use and balances](voucher-redemption.md) are implemented in v0.4, including completed appointment links and audited corrections. Package rules, cash refunds, transfers, reservations and treatment substitution remain pending.
 - The final recipient design, expiry/transfer rules and PDF-attachment versus other delivery formats remain reviewable decisions.
 - Browser/device visual acceptance, actual DNS verification, sender secrets and a user-authorized end-to-end delivery test are still required. Automated tests use fictional recipients and a mock provider; no real email has been sent.
 
