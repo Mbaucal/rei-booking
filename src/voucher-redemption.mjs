@@ -1,3 +1,4 @@
+import { voucherChangeError } from "./voucher-changes.mjs";
 import { randomUUID } from "node:crypto";
 import { fail, digest } from "./security.mjs";
 import { integer, text } from "./domain.mjs";
@@ -29,7 +30,7 @@ export function redemptionError(error) {
   };
   for (const [code, explanation] of Object.entries(errors))
     if (message.includes(code)) fail(409, explanation);
-  throw error;
+  voucherChangeError(error);
 }
 export function redemptionView(r) {
   const snapshot = JSON.parse(r.appointment_json);
@@ -228,7 +229,7 @@ export async function reverseRedemption(db, user, id, body) {
       )
     )
       fail(409, "This voucher use was already reversed. Refresh the history.");
-    throw error;
+    voucherChangeError(error);
   }
   return { ok: true, replayed: false };
 }

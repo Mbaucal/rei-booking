@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from "miniflare";
 import { digest, token } from "../src/security.mjs";
+import { VOUCHER_CHANGE_SCHEMA } from "../src/voucher-change-schema.mjs";
 import { REDEMPTION_SCHEMA } from "../src/redemption-schema.mjs";
 import { DEFAULT_DESIGN } from "../src/voucher-render.mjs";
 import { belgradeToday } from "../src/reports.mjs";
@@ -41,6 +42,8 @@ test("Voucher Worker + D1: balances, linked treatments, concurrent use and corre
         "sales-schema.mjs",
         "redemption-schema.mjs",
         "voucher-redemption.mjs",
+        "voucher-changes.mjs",
+        "voucher-change-schema.mjs",
         "voucher-render.mjs",
         "voucher-email.mjs",
       ].map((f) => ({ type: "ESModule", path: resolve("src", f) })),
@@ -561,6 +564,356 @@ SELECT ?,sale_id,?,kind,service_id,service_name,duration,price_cents,recipient_n
         (await request("/sales/deliveries/" + preview.delivery.id)).status,
         200,
       );
+    },
+  );
+  const changeInput = (v, kind = "void", extra = {}) => ({
+    requestId: randomUUID(),
+    kind,
+    expectedRemainingCents: v.remainingCents,
+    reason: "Duplicate entry",
+    confirmed: true,
+    noPaymentConfirmed: true,
+    refundPaidConfirmed: true,
+    paymentMethod: "cash",
+    paymentReference: "return-123",
+    ...extra,
+  });
+  const change = (v, body, role = "owner", headers = {}) =>
+    request(`/sales/vouchers/${v.id}/change`, "POST", body, role, headers);
+  await t.test(
+    "voucher changes migrate repeatedly and require owner, CSRF and explicit refund/void confirmation",
+    async () => {
+      assert.equal(
+        await readFile("migrations/0005_voucher_changes.sql", "utf8"),
+        VOUCHER_CHANGE_SCHEMA.map((s) => s + ";").join("\n\n") + "\n",
+      );
+      for (const statement of statements(
+        await readFile("migrations/0005_voucher_changes.sql", "utf8"),
+      ))
+        await db.prepare(statement).run();
+      await db.batch(VOUCHER_CHANGE_SCHEMA.map((s) => db.prepare(s)));
+      const v = await gift();
+      for (const role of ["anonymous", "reception", "therapist"]) {
+        assert.equal(
+          (await change(v, changeInput(v), role)).status,
+          role === "anonymous" ? 401 : 403,
+        );
+        assert.equal(
+          (
+            await request(
+              `/sales/vouchers/${v.id}/correction-preview`,
+              "POST",
+              {},
+              role,
+            )
+          ).status,
+          role === "anonymous" ? 401 : 403,
+        );
+      }
+      assert.equal(
+        (await change(v, changeInput(v), "owner", { "x-csrf-token": "bad" }))
+          .status,
+        403,
+      );
+      for (const body of [
+        changeInput(v, "void", { noPaymentConfirmed: false }),
+        changeInput(v, "refund", { refundPaidConfirmed: false }),
+        changeInput(v, "refund", { paymentMethod: "invalid" }),
+        changeInput(v, "void", { reason: "x" }),
+        changeInput(v, "void", { confirmed: false }),
+      ])
+        assert.equal((await change(v, body)).status, 400);
+      assert.equal(
+        (await change(v, changeInput(v, "void", { expectedRemainingCents: 1 })))
+          .status,
+        409,
+      );
+      assert.equal((await lookup(v)).status, "issued");
+    },
+  );
+  await t.test(
+    "void excludes net sales, preserves all-record CSV/history and stops voucher use/email",
+    async () => {
+      const v = await gift(),
+        body = changeInput(v, "void", { reason: "=Duplicate sale" });
+      const email = (
+        await request(`/sales/vouchers/${v.id}/email-preview`, "POST", {
+          recipientEmail: "gift@example.test",
+          subject: "Your gift",
+        })
+      ).data;
+      const results = await Promise.all([change(v, body), change(v, body)]);
+      assert.deepEqual(results.map((r) => r.status).sort(), [200, 201]);
+      assert.equal(results[0].data.changeId, results[1].data.changeId);
+      assert.equal(
+        (await change(v, { ...body, reason: "Different reason" })).status,
+        409,
+      );
+      const closed = await lookup(v);
+      assert.equal(closed.status, "voided");
+      assert.equal(closed.remainingCents, 0);
+      assert.equal(closed.netSaleCents, 0);
+      const net = (await request("/sales/vouchers?q=" + v.code)).data;
+      assert.equal(net.count, 0);
+      assert.equal(net.totalCents, 0);
+      assert.equal(net.voidedCents, v.priceCents);
+      const all = (await request("/sales/vouchers?view=all&q=" + v.code)).data;
+      assert.equal(all.count, 1);
+      assert.equal(all.vouchers[0].closure.reason, body.reason);
+      assert.equal(all.originalCents, v.priceCents);
+      const csv = await (
+        await raw("/sales/vouchers.csv?view=all&q=" + v.code)
+      ).text();
+      assert.match(csv, /Voided value/);
+      assert.ok(csv.includes("'=Duplicate sale"));
+      assert.ok(
+        !(await (await raw("/sales/vouchers.csv?q=" + v.code)).text()).includes(
+          v.code,
+        ),
+      );
+      const order = (await request("/sales/orders/" + v.saleId)).data.sale;
+      assert.equal(order.totalCents, v.priceCents);
+      assert.equal(order.netCents, 0);
+      assert.equal(order.voidedCents, v.priceCents);
+      assert.match(
+        await (await raw(`/sales/vouchers/${v.id}/print`)).text(),
+        /VOID — not valid/,
+      );
+      assert.equal((await redeem(input(v, await booking()))).status, 409);
+      assert.equal(
+        (
+          await request(`/sales/vouchers/${v.id}/email-preview`, "POST", {
+            recipientEmail: "new@example.test",
+            subject: "gift",
+          })
+        ).status,
+        409,
+      );
+      assert.equal(
+        (await request("/sales/deliveries/" + email.delivery.id)).data.delivery
+          .canSend,
+        false,
+      );
+      let sends = 0;
+      await assert.rejects(
+        sendDelivery(
+          db,
+          {
+            EMAIL_ENABLED: "true",
+            RESEND_API_KEY: "test-only",
+            RESEND_WEBHOOK_SECRET: "test-only",
+          },
+          { id: "owner" },
+          email.delivery.id,
+          async () => {
+            sends++;
+            return Response.json({ id: "unused" });
+          },
+        ),
+        /voided|refunded|replaced/,
+      );
+      assert.equal(sends, 0);
+      assert.equal(
+        (
+          await sql(
+            "SELECT COUNT(*) n FROM audit_log WHERE action='voucher_void' AND entity_id=?",
+            v.id,
+          ).first()
+        ).n,
+        1,
+      );
+      await assert.rejects(
+        sql("DELETE FROM voucher_changes WHERE voucher_id=?", v.id).run(),
+        /voucher_change_immutable/,
+      );
+      await assert.rejects(
+        sql(
+          "UPDATE voucher_changes SET reason='altered' WHERE voucher_id=?",
+          v.id,
+        ).run(),
+        /voucher_change_immutable/,
+      );
+    },
+  );
+  await t.test(
+    "refund closes only remaining value, retains earned value and cannot restore a refunded balance",
+    async () => {
+      const v = await gift(),
+        a = await booking(),
+        use = input(v, a, 170000);
+      const reportPath =
+        "/reports/appointments?from=" + a.date + "&to=" + a.date;
+      const before = (await request(reportPath)).data;
+      const useResult = await redeem(use);
+      assert.equal(useResult.status, 201);
+      const partial = await lookup(v);
+      assert.equal(partial.remainingCents, 300000);
+      assert.equal(
+        (await change(partial, changeInput(partial, "void"))).status,
+        409,
+      );
+      const body = changeInput(partial, "refund", {
+        reason: "Customer cancelled unused balance",
+      });
+      const result = await change(partial, body);
+      assert.equal(result.status, 201, JSON.stringify(result.data));
+      assert.equal((await change(partial, body)).status, 200);
+      const closed = await lookup(v);
+      assert.equal(closed.netSaleCents, 170000);
+      assert.equal(closed.remainingCents, 0);
+      assert.equal(closed.status, "refunded");
+      assert.equal(closed.closure.amountCents, 300000);
+      const register = (await request("/sales/vouchers?q=" + v.code)).data;
+      assert.equal(register.count, 1);
+      assert.equal(register.totalCents, 170000);
+      assert.equal(register.refundedCents, 300000);
+      const history = (await request("/sales/vouchers/" + v.id)).data
+        .redemptions;
+      assert.equal((await reverse(history[0].id)).status, 409);
+      assert.equal((await redeem(use)).status, 200);
+      assert.equal((await lookup(v)).remainingCents, 0);
+      assert.deepEqual((await request(reportPath)).data, before);
+      const unused = await gift();
+      assert.equal(
+        (await change(unused, changeInput(unused, "refund"))).status,
+        201,
+      );
+      assert.equal(
+        (await request("/sales/vouchers?q=" + unused.code)).data.count,
+        0,
+      );
+      assert.match(
+        await (await raw(`/sales/vouchers/${unused.id}/print`)).text(),
+        /REFUNDED — not valid/,
+      );
+    },
+  );
+  await t.test(
+    "simultaneous voucher use and closure has one winner; no overspend or double refund",
+    async () => {
+      for (const kind of ["void", "refund", "replaced"]) {
+        const v = await gift(),
+          a = await booking();
+        const details = {
+          recipientName: "Correct name",
+          senderName: "",
+          message: "",
+          expiresOn: null,
+          design: DEFAULT_DESIGN,
+        };
+        const results = await Promise.all([
+          redeem(input(v, a)),
+          change(v, changeInput(v, kind, { details })),
+        ]);
+        assert.deepEqual(
+          results.map((r) => r.status).sort(),
+          [201, 409],
+          JSON.stringify(results),
+        );
+      }
+      const v = await gift();
+      const results = await Promise.all([
+        change(v, changeInput(v, "refund")),
+        change(v, changeInput(v, "void")),
+      ]);
+      assert.deepEqual(results.map((r) => r.status).sort(), [201, 409]);
+      assert.equal(
+        (
+          await sql(
+            "SELECT COUNT(*) n FROM voucher_changes WHERE voucher_id=?",
+            v.id,
+          ).first()
+        ).n,
+        1,
+      );
+    },
+  );
+  await t.test(
+    "corrected vouchers retain archived treatment/value, replace the code once and reconcile a replacement chain",
+    async () => {
+      const v = await gift("treatment", 470000, { serviceId: secondServiceId });
+      await sql(
+        "UPDATE services SET version=2,active=0,price_cents=590000 WHERE id=?",
+        secondServiceId,
+      ).run();
+      const details = {
+        recipientName: "Correct recipient",
+        senderName: "Sender",
+        message: "<script>no</script>",
+        expiresOn: null,
+        design: { ...DEFAULT_DESIGN, theme: "forest" },
+        priceCents: 1,
+        serviceId: "wrong",
+      };
+      const preview = await request(
+        `/sales/vouchers/${v.id}/correction-preview`,
+        "POST",
+        { details },
+      );
+      assert.equal(preview.status, 200);
+      assert.match(preview.data.html, /Correct recipient/);
+      assert.ok(!preview.data.html.includes("<script>no</script>"));
+      const body = changeInput(v, "replaced", {
+        reason: "Name and design corrected",
+        details,
+      });
+      const results = await Promise.all([change(v, body), change(v, body)]);
+      assert.deepEqual(
+        results.map((r) => r.status).sort(),
+        [200, 201],
+        JSON.stringify(results),
+      );
+      const id = results[0].data.replacementId;
+      assert.ok(id);
+      assert.equal(id, results[1].data.replacementId);
+      const original = await lookup(v);
+      assert.equal(original.status, "replaced");
+      assert.equal(original.remainingCents, 0);
+      const next = (await request("/sales/vouchers/" + id)).data.voucher;
+      assert.notEqual(next.code, v.code);
+      assert.equal(next.saleId, v.saleId);
+      assert.equal(next.replacesId, v.id);
+      assert.equal(next.priceCents, 470000);
+      assert.equal(next.serviceId, secondServiceId);
+      assert.equal(next.recipientName, details.recipientName);
+      assert.equal(next.design.theme, "forest");
+      assert.equal(
+        (await request("/sales/orders/" + v.saleId)).data.sale.netCents,
+        470000,
+      );
+      assert.equal(
+        (await redeem(input(v, await booking({ serviceId })))).status,
+        409,
+      );
+      assert.equal(
+        (
+          await sql(
+            "SELECT recipient_name FROM gift_vouchers WHERE id=?",
+            v.id,
+          ).first()
+        ).recipient_name,
+        v.recipientName,
+      );
+      const second = await change(
+        next,
+        changeInput(next, "replaced", {
+          details: { ...details, recipientName: "Final name" },
+        }),
+      );
+      assert.equal(second.status, 201);
+      const final = (
+        await request("/sales/vouchers/" + second.data.replacementId)
+      ).data.voucher;
+      assert.equal(
+        (await change(final, changeInput(final, "refund"))).status,
+        201,
+      );
+      const sale = (await request("/sales/orders/" + v.saleId)).data.sale;
+      assert.equal(sale.totalCents, 470000);
+      assert.equal(sale.netCents, 0);
+      assert.equal(sale.refundedCents, 470000);
+      assert.equal(sale.vouchers.length, 3);
+      assert.equal((await change(v, body)).status, 200);
     },
   );
 });

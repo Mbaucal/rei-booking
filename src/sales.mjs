@@ -3,6 +3,8 @@ import { fail, digest, requireRole, readJSON } from "./security.mjs";
 import { text, integer, isoDate, clientInput } from "./domain.mjs";
 import { belgradeToday } from "./reports.mjs";
 import { ensureSalesSchema } from "./sales-schema.mjs";
+import { ensureVoucherChangeSchema } from "./voucher-change-schema.mjs";
+import { changeVoucher, correctionDetails } from "./voucher-changes.mjs";
 import { ensureRedemptionSchema } from "./redemption-schema.mjs";
 import {
   redeemVoucher,
@@ -129,15 +131,33 @@ export function voucherView(row) {
     duration: row.duration,
     priceCents: row.price_cents,
     usedCents: row.used_cents || 0,
-    remainingCents: row.remaining_cents ?? row.price_cents,
+    remainingCents:
+      row.available_cents ?? row.remaining_cents ?? row.price_cents,
+    netSaleCents: row.net_sale_cents ?? row.price_cents,
+    replacesId: row.replaces_id || null,
+    closure: row.closure_kind
+      ? {
+          kind: row.closure_kind,
+          amountCents: row.closure_amount_cents,
+          reason: row.closure_reason,
+          createdAt: row.closed_at,
+          createdBy: row.closed_by,
+          paymentMethod: row.refund_method,
+          paymentReference: row.refund_reference,
+          replacementId: row.replacement_id || null,
+        }
+      : null,
     recipientName: row.recipient_name,
     senderName: row.sender_name,
     message: row.message,
     expiresOn: row.expires_on,
     design: JSON.parse(row.design_json),
     issuedAt: row.issued_at,
-    status:
-      row.remaining_cents === 0
+    status: row.closure_kind
+      ? { void: "voided", refund: "refunded", replaced: "replaced" }[
+          row.closure_kind
+        ]
+      : row.remaining_cents === 0
         ? "redeemed"
         : row.expires_on && row.expires_on < belgradeToday()
           ? "expired"
@@ -151,7 +171,7 @@ async function saleDetail(db, id) {
   if (!sale) fail(404, "Sale not found.");
   const vouchers = await all(
     db,
-    "SELECT * FROM voucher_balances WHERE sale_id=? ORDER BY id",
+    "SELECT * FROM voucher_register WHERE sale_id=? ORDER BY id",
     id,
   );
   return {
@@ -164,6 +184,17 @@ async function saleDetail(db, id) {
       paymentMethod: sale.payment_method,
       paymentReference: sale.payment_reference,
       totalCents: sale.total_cents,
+      netCents: vouchers.reduce((sum, v) => sum + v.net_sale_cents, 0),
+      voidedCents: vouchers.reduce(
+        (sum, v) =>
+          sum + (v.closure_kind === "void" ? v.closure_amount_cents : 0),
+        0,
+      ),
+      refundedCents: vouchers.reduce(
+        (sum, v) =>
+          sum + (v.closure_kind === "refund" ? v.closure_amount_cents : 0),
+        0,
+      ),
       createdAt: sale.created_at,
       vouchers: vouchers.map(voucherView),
     },
@@ -319,10 +350,13 @@ function filters(params) {
     from = params.get("from") ? isoDate(params.get("from")) : null,
     to = params.get("to") ? isoDate(params.get("to")) : null;
   if (from && to && from > to) fail(400, "End date must follow start date.");
-  return { q, from, to };
+  const view = params.get("view") || "net";
+  if (!["net", "all"].includes(view))
+    fail(400, "Choose Net sales or All records.");
+  return { q, from, to, view };
 }
 async function register(db, params, exporting = false) {
-  const { q, from, to } = filters(params),
+  const { q, from, to, view } = filters(params),
     page = exporting
       ? 0
       : integer(Number(params.get("page") || 0), 0, 1000000, "page");
@@ -331,7 +365,7 @@ async function register(db, params, exporting = false) {
   const candidate = await all(
     db,
     `SELECT v.*,s.reference,s.buyer_name,s.buyer_email,s.payment_method,s.payment_reference,s.created_at AS sale_created_at
-FROM voucher_balances v JOIN sales s ON s.id=v.sale_id
+FROM voucher_register v JOIN sales s ON s.id=v.sale_id
 WHERE (?='' OR v.code LIKE ? ESCAPE '\\' OR s.buyer_name LIKE ? ESCAPE '\\' OR v.recipient_name LIKE ? ESCAPE '\\')
 AND (? IS NULL OR s.created_at>=datetime(?,'-1 day')) AND (? IS NULL OR s.created_at<=datetime(?,'+2 days'))
 ORDER BY s.created_at DESC,v.id DESC LIMIT 10001`,
@@ -360,16 +394,35 @@ ORDER BY s.created_at DESC,v.id DESC LIMIT 10001`,
     .map((r) => ({
       ...voucherView(r),
       reference: r.reference,
+      soldAt: r.sale_created_at,
       buyerName: r.buyer_name,
       buyerEmail: r.buyer_email,
       paymentMethod: r.payment_method,
       paymentReference: r.payment_reference,
     }));
+  const visible =
+    view === "all" ? rows : rows.filter((v) => v.netSaleCents > 0);
   return {
-    vouchers: exporting ? rows : rows.slice(page * 50, page * 50 + 50),
-    count: rows.length,
+    vouchers: exporting ? visible : visible.slice(page * 50, page * 50 + 50),
+    count: visible.length,
+    recordCount: rows.length,
     page,
-    totalCents: rows.reduce((sum, r) => sum + r.priceCents, 0),
+    view,
+    totalCents: rows.reduce((sum, r) => sum + r.netSaleCents, 0),
+    originalCents: rows.reduce(
+      (sum, r) => sum + (r.status === "replaced" ? 0 : r.priceCents),
+      0,
+    ),
+    voidedCents: rows.reduce(
+      (sum, r) =>
+        sum + (r.closure?.kind === "void" ? r.closure.amountCents : 0),
+      0,
+    ),
+    refundedCents: rows.reduce(
+      (sum, r) =>
+        sum + (r.closure?.kind === "refund" ? r.closure.amountCents : 0),
+      0,
+    ),
   };
 }
 function vouchersCSV(rows) {
@@ -384,6 +437,7 @@ function vouchersCSV(rows) {
     [
       [
         "Sale",
+        "Sold at (UTC)",
         "Issued at (UTC)",
         "Code",
         "Buyer",
@@ -391,16 +445,26 @@ function vouchersCSV(rows) {
         "Type",
         "Treatment",
         "Minutes",
-        "Value (RSD)",
+        "Face value (RSD)",
         "Payment method",
         "Payment reference",
         "Expiry",
         "Status",
         "Used voucher value (RSD)",
         "Remaining voucher value (RSD)",
+        "Net sale (RSD)",
+        "Voided value (RSD)",
+        "Refunded value (RSD)",
+        "Changed at (UTC)",
+        "Changed by",
+        "Reason",
+        "Refund method",
+        "Refund reference",
+        "Replacement voucher ID",
       ],
       ...rows.map((v) => [
         v.reference,
+        v.soldAt,
         v.issuedAt,
         v.code,
         v.buyerName || "Walk-in",
@@ -415,6 +479,19 @@ function vouchersCSV(rows) {
         v.status,
         (v.usedCents / 100).toFixed(2),
         (v.remainingCents / 100).toFixed(2),
+        (v.netSaleCents / 100).toFixed(2),
+        (
+          (v.closure?.kind === "void" ? v.closure.amountCents : 0) / 100
+        ).toFixed(2),
+        (
+          (v.closure?.kind === "refund" ? v.closure.amountCents : 0) / 100
+        ).toFixed(2),
+        v.closure?.createdAt,
+        v.closure?.createdBy,
+        v.closure?.reason,
+        v.closure?.paymentMethod,
+        v.closure?.paymentReference,
+        v.closure?.replacementId,
       ]),
     ]
       .map((r) => r.map(cell).join(","))
@@ -429,7 +506,43 @@ export async function salesRoutes(request, env, user) {
     method = request.method;
   await ensureSalesSchema(db);
   await ensureRedemptionSchema(db);
+  await ensureVoucherChangeSchema(db);
   const json = (value, status = 200) => Response.json(value, { status });
+  const change = path.match(
+    /^\/api\/sales\/vouchers\/([^/]+)\/(change|correction-preview)$/,
+  );
+  if (change && method === "POST") {
+    const body = await readJSON(request, 8192);
+    if (change[2] === "change") {
+      const result = await changeVoucher(
+        db,
+        user,
+        change[1],
+        body,
+        designInput,
+      );
+      return json(result, result.replayed ? 200 : 201);
+    }
+    const row = await one(
+      db,
+      "SELECT * FROM voucher_register WHERE id=?",
+      change[1],
+    );
+    if (!row) fail(404, "Voucher not found.");
+    if (row.closure_kind || row.used_cents > 0)
+      fail(409, "Only an unused, open voucher can be corrected.");
+    return json(
+      voucherContent(
+        {
+          ...voucherView(row),
+          ...correctionDetails(row, body, designInput),
+          code: "PREVIEW",
+        },
+        env.APP_ORIGIN,
+        { preview: true },
+      ),
+    );
+  }
   if (path === "/api/sales/voucher-lookup" && method === "GET") {
     const code = text(
       url.searchParams.get("code"),
@@ -438,7 +551,7 @@ export async function salesRoutes(request, env, user) {
     ).toUpperCase();
     const row = await one(
       db,
-      "SELECT * FROM voucher_balances WHERE code=?",
+      "SELECT * FROM voucher_register WHERE code=?",
       code,
     );
     if (!row) fail(404, "Voucher not found. Check the complete code.");
@@ -545,7 +658,7 @@ ON CONFLICT(id) DO UPDATE SET design_json=excluded.design_json,version=voucher_s
   if (voucher) {
     const row = await one(
       db,
-      "SELECT * FROM voucher_balances WHERE id=?",
+      "SELECT * FROM voucher_register WHERE id=?",
       voucher[1],
     );
     if (!row) fail(404, "Voucher not found.");
@@ -576,7 +689,13 @@ ON CONFLICT(id) DO UPDATE SET design_json=excluded.design_json,version=voucher_s
             "SELECT * FROM voucher_deliveries WHERE voucher_id=? ORDER BY created_at DESC",
             row.id,
           )
-        ).map(deliveryView),
+        ).map((d) => ({
+          ...deliveryView(d),
+          canSend:
+            !value.closure &&
+            value.status === "issued" &&
+            deliveryView(d).canSend,
+        })),
         redemptions: await redemptionHistory(db, "voucher_id", row.id),
       });
   }
@@ -584,13 +703,16 @@ ON CONFLICT(id) DO UPDATE SET design_json=excluded.design_json,version=voucher_s
   if (delivery && method === "GET") {
     const row = await one(
       db,
-      "SELECT * FROM voucher_deliveries WHERE id=?",
+      "SELECT d.*,c.kind AS closure_kind FROM voucher_deliveries d LEFT JOIN voucher_changes c ON c.voucher_id=d.voucher_id WHERE d.id=?",
       delivery[1],
     );
     if (!row) fail(404, "Email preview not found.");
     const saved = JSON.parse(row.payload_json);
     return json({
-      delivery: deliveryView(row),
+      delivery: {
+        ...deliveryView(row),
+        canSend: !row.closure_kind && deliveryView(row).canSend,
+      },
       preview: { html: saved.html, text: saved.text },
       from: saved.from,
     });

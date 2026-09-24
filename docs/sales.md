@@ -1,4 +1,4 @@
-# Sales and gift vouchers — implementation v0.4
+# Sales and gift vouchers — implementation v0.5
 
 ## Included
 
@@ -20,9 +20,13 @@ The Sales register measures voucher sales. Existing Dashboard/Reports continue t
 
 **Sales → Use voucher** looks up the full code and links a confirmed use to a completed appointment. The same workflow opens from Calendar appointment details. Amount vouchers allow partial use; treatment vouchers cover one exact treatment/duration. The register and CSV show current used/remaining values. Mistaken uses can be reversed with a recorded reason; they are never deleted. Appointment edits are guarded while voucher use is active, except notes. These operations do not change treatment prices or bonuses. See [the full workflow and limits](voucher-redemption.md).
 
+## Cancellation, refunds and corrected details
+
+Open a voucher and use **Void erroneous voucher**, **Record refund** or **Correct details**. Net sales excludes voided, replaced and fully refunded codes. All records includes the reasons and adjusted amounts. Partial refunds retain the used amount in net sales. Sale-date filters include later adjustments to those original sales, not cash movement by adjustment date. See [voucher changes](voucher-changes.md) for exact eligibility and owner workflow.
+
 ## Email delivery
 
-From is fixed to **Rei Thailand Massage <info@reithailandmassage.com>**. The owner enters the recipient and subject, opens **Review email**, then explicitly clicks **Send email**. Preparing or selling a voucher never sends it. The preview is the exact persisted HTML/text payload, with a unique delivery record. The voucher appears in the body of the email; no public voucher URL or attachment is generated. Printed vouchers are available independently of email setup. Used vouchers cannot prepare or send a new original-entitlement email; historical accepted/delivered records remain available.
+From is fixed to **Rei Thailand Massage <info@reithailandmassage.com>**. The owner enters the recipient and subject, opens **Review email**, then explicitly clicks **Send email**. Preparing or selling a voucher never sends it. The preview is the exact persisted HTML/text payload, with a unique delivery record. The voucher appears in the body of the email; no public voucher URL or attachment is generated. Printed vouchers are available independently of email setup. Used or closed vouchers cannot prepare or send a new original-entitlement email; historical accepted/delivered records remain available.
 
 Sending requires `EMAIL_ENABLED=true`, the server-only `RESEND_API_KEY` secret and `RESEND_WEBHOOK_SECRET`. See [email setup](email-setup.md). A successful provider API response is **Accepted by email service**, not **Delivered**. Signed Resend callbacks record delivery, delay, failure, bounce, complaint or suppression. Event IDs are deduplicated and late events cannot downgrade a terminal result. Callback-before-API-response races are reconciled after the provider ID is saved. Bounce/complaint/suppression blocks subsequent sends to that recipient.
 
@@ -33,7 +37,7 @@ Email API errors shown to the browser use generic codes; keys, raw provider erro
 ## Deliberate remaining scope
 
 - Sales is owner-only in this slice. Reception retains the approved no-financial-access policy; a narrower permission to sell vouchers needs an explicit decision.
-- [Voucher use and balances](voucher-redemption.md) are implemented in v0.4, including completed appointment links and audited corrections. Package rules, cash refunds, transfers, reservations and treatment substitution remain pending.
+- [Voucher use and balances](voucher-redemption.md) are implemented in v0.4, including completed appointment links and audited corrections. Voids, refunds already paid outside the app and corrected reissues are implemented in v0.5. Package rules, payment processing, transfers, reservations and treatment substitution remain pending.
 - The final recipient design, expiry/transfer rules and PDF-attachment versus other delivery formats remain reviewable decisions.
 - Browser/device visual acceptance, actual DNS verification, sender secrets and a user-authorized end-to-end delivery test are still required. Automated tests use fictional recipients and a mock provider; no real email has been sent.
 

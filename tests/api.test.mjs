@@ -45,6 +45,8 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
       "sales-schema.mjs",
       "redemption-schema.mjs",
       "voucher-redemption.mjs",
+      "voucher-changes.mjs",
+      "voucher-change-schema.mjs",
       "voucher-render.mjs",
       "voucher-email.mjs",
     ].map((f) => ({

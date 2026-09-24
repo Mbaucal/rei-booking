@@ -12,13 +12,13 @@
 
 ## Correcting a mistake
 
-Open the voucher or appointment history, choose **Correct this use**, give a reason and confirm. This restores the voucher value and records who corrected it and when. It does not refund money, change the sale or cancel the appointment; an expired voucher remains expired. The original use record is retained. A use can be reversed once, and retrying the original use after reversal does not reapply it.
+Open the voucher or appointment history, choose **Correct this use**, give a reason and confirm. This restores the voucher value and records who corrected it and when. It does not refund money, change the sale or cancel the appointment; an expired voucher remains expired. The original use record is retained. A use cannot be reversed after its voucher is closed or refunded; that would restore value already returned to the customer. A use can be reversed once, and retrying the original use after reversal does not reapply it.
 
 While voucher use is active, changing the appointment's client, time, therapist, treatment, price, request, room/table or status is rejected. Notes can still be edited. Reverse the use first if the linked appointment was wrong, then edit and apply the appropriate voucher again.
 
 ## Reports and access
 
-Recorded voucher sales and performed treatments remain separate. Redemption creates no new sale and does not change completed treatment earnings, full-price percentage bonuses, requested bonuses, hours or appointment prices. Voucher sales must not be added to performed treatment revenue as though they were an extra treatment. Financial accounting/refund policies are not introduced here.
+Recorded voucher sales and performed treatments remain separate. Redemption creates no new sale and does not change completed treatment earnings, full-price percentage bonuses, requested bonuses, hours or appointment prices. Voucher sales must not be added to performed treatment revenue as though they were an extra treatment. Refunds of the unused balance are recorded separately in Sales; they do not rewrite completed treatment performance. See [voucher changes](voucher-changes.md).
 
 The existing owner-only Sales boundary also applies to lookup, balances, history, redemption and corrections. Reception and therapist APIs receive no voucher financial data. Broader reception sales permissions still require an explicit product decision.
 
@@ -26,7 +26,7 @@ The existing owner-only Sales boundary also applies to lookup, balances, history
 
 A used voucher cannot prepare or send a new email showing its original full entitlement. Previously accepted/delivered email records remain available. Printed issued documents retain the original entitlement; check the code in Sales for its current status. Actual email sender verification is still pending; this feature sends no automatic messages.
 
-This release does not add voucher reservations for future bookings, refunds, transfers, service substitutions, package sessions or loyalty rewards. Those policies remain to be defined.
+This release does not add voucher reservations for future bookings, payment processing, transfers, service substitutions, package sessions or loyalty rewards. Those policies remain to be defined.
 
 ## Hosted acceptance with fictional data
 

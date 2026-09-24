@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.4.0** — 24 September 2026.
+Current implementation release, **0.5.0** — 24 September 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -8,6 +8,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 
 - Owner **Sales → Gift vouchers**: sold register, search/date filters, CSV, treatment/custom-amount cart and atomic checkout with an optional buyer.
 - Voucher code lookup from Sales/Calendar, completed-appointment use, partial amount balances, exact treatment entitlements and auditable corrections. See [voucher use](docs/voucher-redemption.md).
+- Owner voucher voids, externally paid refund records and corrected reissues with new codes. Net sales excludes zero-net vouchers; All records preserves history. See [voucher changes](docs/voucher-changes.md).
 - Personalised voucher design, unique immutable codes, treatment/price snapshots, separate buyer/recipient, preview and browser Print / Save as PDF.
 - Persisted email previews, guarded Resend sending/retries and signed delivery callbacks. **Live sending is disabled pending domain verification and Worker secrets.** No email was sent during development.
 - Owner Dashboard with completed treatment revenue, massage count and hours, Last 7/30 days and previous-period comparisons.
@@ -86,13 +87,13 @@ The report update automatically creates two empty bonus-rule tables after authen
 ## Next implementation stages
 
 1. Confirm Reports/Team/Dashboard and Sales on the test URL and complete role/device acceptance.
-2. Finish [voucher email setup](docs/email-setup.md) and agree refund, package, substitution and reception sales permissions. See [the implemented Sales scope](docs/sales.md).
+2. Finish [voucher email setup](docs/email-setup.md) and agree package, substitution and reception sales permissions. See [the implemented Sales scope](docs/sales.md).
 3. Add scheduled monthly reporting, email notifications and an authenticated Google Sheets integration.
 4. Add private profile-photo storage for clients and team, import/history migration and approved loyalty rules.
 
 These requirements are preserved in [scope and decisions](docs/scope.md). An item being in the prototype does not mean it is implemented in this release.
 
-Opening Sales as owner installs its empty additive tables and indexes automatically (`0003_sales.sql`); no terminal or manual SQL is required. Existing data and owner access are preserved. Sales records payments already received externally; voucher redemption uses its additive ledger (`0004_voucher_redemptions.sql`). Cash refunds and card charging are not implemented. Gift sales are not added to completed-treatment revenue on the Dashboard.
+Opening Sales as owner installs its empty additive tables and indexes automatically (`0003_sales.sql`); no terminal or manual SQL is required. Existing data and owner access are preserved. Sales records payments already received externally; voucher redemption uses its additive ledger (`0004_voucher_redemptions.sql`). Voids, recorded refunds of the full remaining balance and corrected reissues use `0005_voucher_changes.sql`. The application does not move money or charge cards. Gift sales are not added to completed-treatment revenue on the Dashboard.
 
 Repository: https://github.com/Mbaucal/rei-booking
 

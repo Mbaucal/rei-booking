@@ -22,7 +22,7 @@ export async function renderSales(ctx) {
     catalogue = [],
     cart = [],
     page = 0,
-    filters = { q: "", from: "", to: "" },
+    filters = { q: "", from: "", to: "", view: "net" },
     buyerMode = "walkin",
     buyer = null,
     newBuyer = { name: "", phone: "", email: "" },
@@ -69,6 +69,9 @@ export async function renderSales(ctx) {
       expired: "Expired",
       partially_redeemed: "Partly used",
       redeemed: "Fully used",
+      voided: "Voided",
+      refunded: "Refunded",
+      replaced: "Replaced",
     })[value] || value;
   function previewFrame(html) {
     const frame = $("voucher-preview");
@@ -134,8 +137,8 @@ export async function renderSales(ctx) {
     const n = ++view;
     closeDrawer();
     root.innerHTML = `<div class="sales-heading"><div><p class="eyebrow">Sales</p><h2>Gift vouchers</h2><p class="hint">Find an issued gift, view its sale or send it to the recipient.</p></div><div class="sales-actions">${button("redeem-voucher", "Use voucher")}${button("voucher-design", "Voucher design")}${button("new-sale", "New sale", true)}</div></div>
-<form id="voucher-filters" class="sales-filters">${field("q", "Search code, buyer or recipient", filters.q, "search", 'maxlength="100"')}${field("from", "Sold from", filters.from, "date")}${field("to", "Sold through", filters.to, "date")}<button class="btn primary" type="submit">Search</button>${button("voucher-export", "Export CSV")}</form>
-${errorHTML}<p class="hint" id="voucher-count" role="status">Loading vouchers…</p><div class="table-wrap" id="voucher-register"></div><div class="sales-actions" id="voucher-pages"></div>`;
+<form id="voucher-filters" class="sales-filters">${field("q", "Search code, buyer or recipient", filters.q, "search", 'maxlength="100"')}${field("from", "Sold from", filters.from, "date")}${field("to", "Sold through", filters.to, "date")}<label>Show<select name="view"><option value="net"${choice(filters.view, "net")}>Net sales</option><option value="all"${choice(filters.view, "all")}>All records</option></select></label><button class="btn primary" type="submit">Search</button>${button("voucher-export", "Export CSV")}</form>
+<p class="hint">Dates select the original sale period. Totals include all later adjustments to those sales. Net sales hides vouchers with zero net value.</p>${errorHTML}<p class="hint" id="voucher-count" role="status">Loading vouchers…</p><div class="table-wrap" id="voucher-register"></div><div class="sales-actions" id="voucher-pages"></div>`;
     $("redeem-voucher").onclick = () => useVoucher();
     $("new-sale").onclick = () => startSale().catch(err);
     $("voucher-design").onclick = () => editDesign().catch(err);
@@ -152,10 +155,10 @@ ${errorHTML}<p class="hint" id="voucher-count" role="status">Loading vouchers…
     );
     if (!isCurrent() || n !== view) return;
     $("voucher-count").textContent =
-      `${result.count} vouchers · ${money(result.totalCents)} sold in this selection`;
+      `${result.count} vouchers · Net sales ${money(result.totalCents)} · Before adjustments ${money(result.originalCents)} · Voided ${money(result.voidedCents)} · Refunded ${money(result.refundedCents)}`;
     $("voucher-register").innerHTML = result.vouchers.length
-      ? `<table class="data-table"><thead><tr><th>Voucher</th><th>Gift</th><th>Buyer / recipient</th><th>Sold</th><th>Original value</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${result.vouchers.map((v) => `<tr><td><button type="button" class="btn link" data-voucher="${e(v.id)}">${e(v.code)}</button><small>${e(v.reference)}</small></td><td>${e(v.serviceName)}<small>${v.duration ? `${v.duration} min` : "Custom amount"}</small></td><td>${e(v.buyerName || "Walk-in buyer")}<small>For ${e(v.recipientName || "Gift recipient")}</small></td><td>${e(stamp(v.issuedAt))}</td><td>${money(v.priceCents)}</td><td>${v.kind === "treatment" ? (v.remainingCents > 0 ? "1 treatment" : "Used") : money(v.remainingCents)}</td><td><span class="status">${labelStatus(v.status)}</span></td></tr>`).join("")}</tbody></table>`
-      : '<div class="empty"><h3>No gift vouchers yet</h3><p>Create your first sale using New sale.</p></div>';
+      ? `<table class="data-table"><thead><tr><th>Voucher</th><th>Gift</th><th>Buyer / recipient</th><th>Sold</th><th>Face value</th><th>Net sale</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${result.vouchers.map((v) => `<tr><td><button type="button" class="btn link" data-voucher="${e(v.id)}">${e(v.code)}</button><small>${e(v.reference)}</small></td><td>${e(v.serviceName)}<small>${v.duration ? `${v.duration} min` : "Custom amount"}</small></td><td>${e(v.buyerName || "Walk-in buyer")}<small>For ${e(v.recipientName || "Gift recipient")}</small></td><td>${e(stamp(v.soldAt))}</td><td>${money(v.priceCents)}</td><td>${money(v.netSaleCents)}</td><td>${v.closure ? "Unavailable" : v.kind === "treatment" ? (v.remainingCents > 0 ? "1 treatment" : "Used") : money(v.remainingCents)}</td><td><span class="status">${labelStatus(v.status)}</span></td></tr>`).join("")}</tbody></table>`
+      : '<div class="empty"><h3>No vouchers in this selection</h3><p>Use All records to include voided, fully refunded and replaced vouchers, or start a New sale.</p></div>';
     root
       .querySelectorAll("[data-voucher]")
       .forEach(
@@ -424,9 +427,9 @@ ${v.kind === "amount" ? field("amount", "Gift value (RSD)", v.priceCents ? v.pri
   async function showSale(sale) {
     ++view;
     closeDrawer();
-    root.innerHTML = `<div class="sales-heading"><div><p class="eyebrow">Sale completed</p><h2>${e(sale.reference)}</h2><p class="hint">${e(stamp(sale.createdAt))} · ${e(sale.buyerName || "Walk-in buyer")}</p></div>${button("back-to-sales", "Gift vouchers")}</div>
+    root.innerHTML = `<div class="sales-heading"><div><p class="eyebrow">Sale details</p><h2>${e(sale.reference)}</h2><p class="hint">${e(stamp(sale.createdAt))} · ${e(sale.buyerName || "Walk-in buyer")}</p></div>${button("back-to-sales", "Gift vouchers")}</div>
 <section class="sale-panel"><div class="sale-total"><span>${e(sale.paymentMethod.replaceAll("_", " "))}${sale.paymentReference ? ` · ${e(sale.paymentReference)}` : ""}</span><strong>${money(sale.totalCents)}</strong></div>
-<p class="hint">${sale.vouchers.length} vouchers issued. Choose each voucher to print it or prepare its email.</p><div class="voucher-catalogue">${sale.vouchers.map((v) => `<button class="voucher-option" data-voucher="${e(v.id)}"><span class="eyebrow">${e(v.code)}</span><strong>${e(v.serviceName)}</strong><span>${v.duration ? `${v.duration} min · ` : ""}${money(v.priceCents)}</span><span>For ${e(v.recipientName || "Gift recipient")}</span></button>`).join("")}</div></section>${errorHTML}`;
+<p class="hint">Original payment ${money(sale.totalCents)} · Voided ${money(sale.voidedCents)} · Refunded ${money(sale.refundedCents)} · Net sale ${money(sale.netCents)}. All issued codes and replacements are shown below.</p><div class="voucher-catalogue">${sale.vouchers.map((v) => `<button class="voucher-option" data-voucher="${e(v.id)}"><span class="eyebrow">${e(v.code)}</span><strong>${e(v.serviceName)}</strong><span>${v.duration ? `${v.duration} min · ` : ""}${money(v.priceCents)}</span><span>For ${e(v.recipientName || "Gift recipient")}</span><span>${e(labelStatus(v.status))}</span></button>`).join("")}</div></section>${errorHTML}`;
     $("back-to-sales").onclick = () => list().catch(err);
     root
       .querySelectorAll("[data-voucher]")
@@ -459,7 +462,9 @@ ${v.kind === "amount" ? field("amount", "Gift value (RSD)", v.priceCents ? v.pri
       v.serviceName,
       v.code,
       `<p class="hint">${labelStatus(v.status)} · ${e(stamp(v.issuedAt))}</p><iframe class="voucher-preview" id="voucher-preview" title="Issued voucher preview" sandbox></iframe>
-<div class="sales-actions"><a class="btn" target="_blank" rel="noopener" href="/api/sales/vouchers/${e(id)}/print">Print / Save as PDF</a>${button("open-voucher-sale", "View sale")}${["issued", "partially_redeemed"].includes(v.status) ? button("use-this-voucher", "Use voucher", true) : ""}</div><p>Remaining: ${v.kind === "treatment" ? (v.remainingCents > 0 ? "1 matching treatment" : "Used") : money(v.remainingCents)}</p><div id="voucher-use-history">${redemptionHistoryHTML(ctx, data.redemptions)}</div>
+<div class="sales-actions"><a class="btn" target="_blank" rel="noopener" href="/api/sales/vouchers/${e(id)}/print">Print / Save as PDF</a>${button("open-voucher-sale", "View sale")}${["issued", "partially_redeemed"].includes(v.status) ? button("use-this-voucher", "Use voucher", true) : ""}</div><p>Remaining: ${v.closure ? "Unavailable" : v.kind === "treatment" ? (v.remainingCents > 0 ? "1 matching treatment" : "Used") : money(v.remainingCents)}</p><div id="voucher-use-history">${redemptionHistoryHTML(ctx, data.redemptions)}</div>
+${v.closure ? `<section class="sale-panel"><h3>${e(labelStatus(v.status))}</h3><p>${e(v.closure.reason)}</p><p class="hint">${e(stamp(v.closure.createdAt))} · ${e(v.closure.createdBy)}</p>${v.closure.kind === "refund" ? `<p>Refund recorded: ${money(v.closure.amountCents)} · ${e(v.closure.paymentMethod.replaceAll("_", " "))} ${e(v.closure.paymentReference)}</p>` : ""}${v.closure.replacementId ? button("open-replacement", "Open corrected voucher") : ""}</section>` : `<div class="sales-actions">${v.usedCents === 0 ? button("correct-voucher", "Correct details") + button("void-voucher", "Void erroneous voucher") : ""}${v.remainingCents > 0 ? button("refund-voucher", "Record refund") : ""}</div>`}
+${v.replacesId ? button("open-original", "View original voucher") : ""}
 <h3>Email this gift</h3><p class="hint">From: info@reithailandmassage.com</p>
 ${settings.emailReady ? "" : '<p class="hint">Email sending awaits sender verification and setup. You can prepare a preview now.</p>'}
 <form id="voucher-email-form" class="sales-form">${field("recipientEmail", "Recipient email", "", "email", 'required maxlength="254" autocomplete="off"')}${data.sale.buyerEmail ? button("use-buyer-email", "Use buyer’s email: " + e(data.sale.buyerEmail)) : ""}
@@ -468,8 +473,23 @@ ${field("subject", "Subject", "A gift for you from Rei Thailand Massage", "text"
 <h3>Delivery history</h3><div id="delivery-history">${data.deliveries.length ? data.deliveries.map((d) => `<article class="delivery-row"><strong>${e(d.recipient)}</strong><span>${e(labelStatus(d.status))}</span><small>${e(stamp(d.updatedAt))}</small>${button("delivery-" + d.id, "Open email")}</article>`).join("") : '<p class="hint">No emails prepared or sent.</p>'}</div>${errorHTML}`,
     );
     previewFrame(data.preview.html);
+    if ($("correct-voucher"))
+      $("correct-voucher").onclick = () => correctVoucher(v);
+    if ($("void-voucher"))
+      $("void-voucher").onclick = () => closeVoucher(v, "void");
+    if ($("refund-voucher"))
+      $("refund-voucher").onclick = () => closeVoucher(v, "refund");
+    if ($("open-replacement"))
+      $("open-replacement").onclick = () =>
+        openVoucher(v.closure.replacementId).catch(err);
+    if ($("open-original"))
+      $("open-original").onclick = () => openVoucher(v.replacesId).catch(err);
     if ($("use-this-voucher"))
       $("use-this-voucher").onclick = () => useVoucher(id);
+    if (v.closure)
+      $("voucher-use-history")
+        .querySelectorAll("[data-reverse-use]")
+        .forEach((b) => b.remove());
     wireRedemptionHistory(ctx, $("voucher-use-history"), data.redemptions, () =>
       changedVoucher(id),
     );
@@ -491,6 +511,144 @@ ${field("subject", "Subject", "A gift for you from Rei Thailand Massage", "text"
           id,
           form.elements.recipientEmail.value,
           form.elements.subject.value,
+        );
+      } catch (error) {
+        err(error);
+      } finally {
+        if (submit.isConnected) submit.disabled = false;
+      }
+    };
+  }
+  function changeSubmit(v, form, buildPayload, successText) {
+    const submit = $("drawer-footer").querySelector('[type="submit"]');
+    let payload = null,
+      pending = false;
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      if (pending) return;
+      if (!payload)
+        payload = {
+          ...buildPayload(new FormData(form)),
+          requestId: crypto.randomUUID(),
+          expectedRemainingCents: v.remainingCents,
+          confirmed: true,
+        };
+      pending = true;
+      form
+        .querySelectorAll("input,select,textarea,button")
+        .forEach((el) => (el.disabled = true));
+      submit.disabled = true;
+      try {
+        const result = await api(`/sales/vouchers/${v.id}/change`, {
+          method: "POST",
+          body: payload,
+        });
+        if (!submit.isConnected || !isCurrent()) return;
+        await changedVoucher(result.replacementId || v.id);
+        toast(successText);
+      } catch (error) {
+        if (!submit.isConnected) return;
+        if (error.status && error.status < 500) {
+          payload = null;
+          form
+            .querySelectorAll("input,select,textarea,button")
+            .forEach((el) => (el.disabled = false));
+          if (error.status === 409) {
+            submit.textContent = "Refresh voucher";
+            submit.type = "button";
+            submit.onclick = () => openVoucher(v.id).catch(err);
+          }
+        } else {
+          submit.textContent = "Retry same action";
+          error.message =
+            "Confirmation was interrupted. Retry the same action to retrieve its result without duplicating it.";
+        }
+        err(error);
+        submit.disabled = false;
+      } finally {
+        pending = false;
+      }
+    };
+  }
+  function closeVoucher(v, kind) {
+    const refund = kind === "refund";
+    drawer(
+      refund ? "Record refund" : "Void erroneous voucher",
+      v.code,
+      `<form id="voucher-change-form" class="sales-form"><p><strong>${e(v.serviceName)}</strong></p><p>${refund ? "Refund the full unused balance" : "Remove this erroneous sale from net sales"}: ${money(v.remainingCents)}</p>
+<p class="hint">${refund ? "Return the money outside this application first, then record it here. This does not send a payment. Any used value stays in net sales." : "Use this for an erroneous or duplicate entry with no separate payment to return. If money was received and returned, choose Record refund."} This code will stop working.</p>
+${refund ? `<label>Refund paid by<select name="paymentMethod"><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>${field("paymentReference", "Refund reference (optional)", "", "text", 'maxlength="120"')}` : ""}
+<label>Reason<textarea name="reason" required minlength="3" maxlength="500" rows="3"></textarea></label>
+<label class="sales-check"><input name="acknowledged" type="checkbox" required>${refund ? "I have returned this amount to the customer." : "This is an incorrect entry with no separate payment to refund."}</label>${errorHTML}</form>`,
+    );
+    $("drawer-footer").innerHTML =
+      button("cancel-voucher-change", "Back") +
+      `<button class="btn primary" type="submit" form="voucher-change-form">${refund ? "Record refund & close voucher" : "Void voucher"}</button>`;
+    $("cancel-voucher-change").onclick = () => openVoucher(v.id).catch(err);
+    changeSubmit(
+      v,
+      $("voucher-change-form"),
+      (d) => ({
+        kind,
+        reason: d.get("reason"),
+        noPaymentConfirmed: !refund && d.has("acknowledged"),
+        refundPaidConfirmed: refund && d.has("acknowledged"),
+        paymentMethod: d.get("paymentMethod"),
+        paymentReference: d.get("paymentReference"),
+      }),
+      refund
+        ? "Refund recorded. The unused balance is closed."
+        : "Voucher voided and excluded from net sales.",
+    );
+  }
+  function correctVoucher(v, values = null, reason = "") {
+    const d = values || v;
+    const n = drawer(
+      "Correct voucher details",
+      v.code,
+      `<form id="voucher-correction-form" class="sales-form"><p><strong>${e(v.serviceName)}</strong> · ${v.duration ? v.duration + " min · " : ""}${money(v.priceCents)}</p>
+<p class="hint">A new code replaces this one, with the same treatment and value. No additional payment is recorded. To change the treatment or value, void an erroneous sale or record a refund, then create a new sale.</p>
+${field("recipientName", "Recipient name", d.recipientName, "text", 'maxlength="100"')}${field("senderName", "From", d.senderName, "text", 'maxlength="100"')}
+<label>Gift message<textarea name="message" maxlength="1000" rows="3">${e(d.message)}</textarea></label>
+${field("expiresOn", "Valid through (leave blank for no expiry)", d.expiresOn || "", "date")}
+${designFields(d.design)}<label>Reason for correction<textarea name="reason" required minlength="3" maxlength="500" rows="3">${e(reason)}</textarea></label>${errorHTML}</form>`,
+    );
+    $("drawer-footer").innerHTML =
+      `<button class="btn primary" type="submit" form="voucher-correction-form">Preview correction</button>`;
+    $("voucher-correction-form").onsubmit = async (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget),
+        submit = $("drawer-footer").querySelector("button");
+      const details = {
+        recipientName: data.get("recipientName"),
+        senderName: data.get("senderName"),
+        message: data.get("message"),
+        expiresOn: data.get("expiresOn") || null,
+        design: readDesign(data),
+      };
+      const reason = data.get("reason");
+      submit.disabled = true;
+      try {
+        const preview = await api(
+          `/sales/vouchers/${v.id}/correction-preview`,
+          { method: "POST", body: { details } },
+        );
+        if (!stillDrawer(n)) return;
+        drawer(
+          "Review corrected voucher",
+          "New code · same sale",
+          `<form id="confirm-correction" class="sales-form"><iframe class="voucher-preview" id="voucher-preview" title="Corrected voucher preview" sandbox></iframe><p>${e(reason)}</p><label class="sales-check"><input type="checkbox" required>I confirm the old code will be invalid. I will send the corrected voucher separately.</label>${errorHTML}</form>`,
+        );
+        previewFrame(preview.html);
+        $("drawer-footer").innerHTML =
+          button("edit-correction", "Edit") +
+          '<button class="btn primary" type="submit" form="confirm-correction">Issue corrected voucher</button>';
+        $("edit-correction").onclick = () => correctVoucher(v, details, reason);
+        changeSubmit(
+          v,
+          $("confirm-correction"),
+          () => ({ kind: "replaced", reason, details }),
+          "Corrected voucher issued. Send its new code to the recipient.",
         );
       } catch (error) {
         err(error);

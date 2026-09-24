@@ -120,7 +120,7 @@ export async function sendDelivery(db, env, user, id, transport = fetch) {
     );
   let job = await one(
     db,
-    "SELECT d.*,v.expires_on,v.used_cents FROM voucher_deliveries d JOIN voucher_balances v ON v.id=d.voucher_id WHERE d.id=?",
+    "SELECT d.*,v.expires_on,v.used_cents,v.closure_kind FROM voucher_deliveries d JOIN voucher_register v ON v.id=d.voucher_id WHERE d.id=?",
     id,
   );
   if (!job) fail(404, "Email preview not found.");
@@ -137,6 +137,11 @@ export async function sendDelivery(db, env, user, id, transport = fetch) {
     fail(
       409,
       "This voucher has already been used. Open its current balance in Sales.",
+    );
+  if (job.closure_kind)
+    fail(
+      409,
+      "This voucher was voided, refunded or replaced. Its old email cannot be sent.",
     );
   const time = Date.now();
   if (job.first_attempt_at && time - job.first_attempt_at >= 23 * 3600000) {
@@ -165,7 +170,8 @@ export async function sendDelivery(db, env, user, id, transport = fetch) {
     db,
     `UPDATE voucher_deliveries SET status='sending',attempts=attempts+1,first_attempt_at=COALESCE(first_attempt_at,?),lease_until=?,updated_at=?
 WHERE id=? AND status IN ('prepared','sending','retry') AND lease_until<=? AND next_attempt_at<=?
-AND NOT EXISTS(SELECT 1 FROM active_voucher_redemptions r WHERE r.voucher_id=voucher_deliveries.voucher_id) RETURNING *`,
+AND NOT EXISTS(SELECT 1 FROM active_voucher_redemptions r WHERE r.voucher_id=voucher_deliveries.voucher_id)
+AND NOT EXISTS(SELECT 1 FROM voucher_changes c WHERE c.voucher_id=voucher_deliveries.voucher_id) RETURNING *`,
     time,
     time + 60000,
     new Date(time).toISOString(),
@@ -174,6 +180,17 @@ AND NOT EXISTS(SELECT 1 FROM active_voucher_redemptions r WHERE r.voucher_id=vou
     time,
   ).first();
   if (!claim) {
+    if (
+      await one(
+        db,
+        "SELECT id FROM voucher_changes WHERE voucher_id=?",
+        job.voucher_id,
+      )
+    )
+      fail(
+        409,
+        "This voucher was voided, refunded or replaced. Its old email cannot be sent.",
+      );
     if (
       await one(
         db,

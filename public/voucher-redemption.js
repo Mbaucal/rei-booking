@@ -7,6 +7,9 @@ const statusLabel = (v) =>
     partially_redeemed: "Partly used",
     redeemed: "Fully used",
     expired: "Expired",
+    voided: "Voided",
+    refunded: "Refunded",
+    replaced: "Replaced",
   })[v.status];
 
 export function redemptionHistoryHTML({ esc: e, money, stamp }, records) {
@@ -122,7 +125,8 @@ export async function openVoucherRedemption(ctx, options = {}) {
         "This appointment has no remaining value to cover with a voucher.";
     else if (!voucher) reason = "Find a voucher by its code to continue.";
     else if (!["issued", "partially_redeemed"].includes(voucher.status))
-      reason = "This voucher is fully used or expired.";
+      reason =
+        "This voucher is fully used, expired, voided, refunded or replaced.";
     else if (
       voucher.kind === "treatment" &&
       (voucher.serviceId !== a.serviceId ||
