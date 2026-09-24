@@ -14,7 +14,7 @@ All application UI is English. Conversations and planning can remain Serbian. Pr
 
 ## Reports and bonuses: MBA-80
 
-Implemented in v0.2 with persistent Worker/D1-backed report and CSV endpoints, Team rate settings, booking rate snapshots, owner-only access and Dashboard comparisons. Monthly delivery/archive and Sheets credentials remain separate work.
+Implemented in v0.2 with persistent Worker/D1-backed report and CSV endpoints, Team rate settings, booking rate snapshots, owner-only access and Dashboard comparisons. Monthly delivery/archive is implemented in v0.7; Sheets credentials remain separate work.
 
 Detailed rows: therapist, massage date/time, duration, full and discounted price, when booked, cancellation/status and requested flag. Filter/group by therapist, date/month and treatment. Summary: treatment count, completed hours, requested hours, earned treatment revenue, average earned revenue per massage, average hours per day and total hours for the chosen period. Implemented both denominators: default distinct dates with completed massages, or all calendar days in the selected/group period; labels and CSV identify the choice.
 
@@ -24,11 +24,11 @@ Main Dashboard: Last 7 days / Last 30 days, total earnings and change versus the
 
 ## Scheduled exports and integration: MBA-81 / MBA-82
 
-Owner-selected monthly report with an email notification when the previous month's report is ready, plus CSV export/archive inside the app. Salon timezone and month boundary must be explicit. Optional owner-only scoped API for automatic Google Sheets Apps Script retrieval, with revoked credentials and clear report definitions. This is an application feature, not a ChatGPT reminder automation.
+MBA-81 is implemented in v0.7: owner-selected monthly schedules, immutable report versions and CSV archive, Belgrade-time execution and catch-up, prior-month comparison, explicit corrections, verified-recipient notifications and persistent delivery state. Live sending stays disabled pending sender setup; hosted timing, delivery and device acceptance remain open. See [monthly reports](monthly-reports.md). Salon timezone and month boundary must be explicit. Optional owner-only scoped API for automatic Google Sheets Apps Script retrieval, with revoked credentials and clear report definitions. This is an application feature, not a ChatGPT reminder automation.
 
 ## Sales and gift vouchers: MBA-76
 
-Implemented in v0.3: owner-only persistent sold register/CSV, current-menu and custom-amount vouchers, cart, optional atomic new/existing buyer, separate recipient, immutable codes and snapshots, personalised/default designs, preview and browser print/PDF. Email previews, provider sending and signed delivery events are implemented; live sending remains disabled pending DNS verification and server secrets. Redemption/refunds, package rules and reception financial permissions remain pending. See [Sales implementation](sales.md) and [email setup](email-setup.md).
+Implemented in v0.3: owner-only persistent sold register/CSV, current-menu and custom-amount vouchers, cart, optional atomic new/existing buyer, separate recipient, immutable codes and snapshots, personalised/default designs, preview and browser print/PDF. Email previews, provider sending and signed delivery events are implemented; live sending remains disabled pending DNS verification and server secrets. Voucher use and partial balances were added in v0.4, followed by voids, recorded refunds and corrected reissues in v0.5. Package rules and reception financial permissions remain pending. See [Sales implementation](sales.md) and [email setup](email-setup.md).
 
 - Visible Sales navigation, sold voucher list, search, dates/statuses and details.
 - Sell a predefined treatment type + duration + fixed price, or a custom monetary amount. Prepare for the new menu; do not hardcode illustrative prices as the final menu.

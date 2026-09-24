@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.6.0** — 24 September 2026.
+Current implementation release, **0.7.0** — 24 September 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -13,6 +13,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Persisted email previews, guarded Resend sending/retries and signed delivery callbacks. **Live sending is disabled pending domain verification and Worker secrets.** No email was sent during development.
 - Owner Dashboard with completed treatment revenue, massage count and hours, Last 7/30 days and previous-period comparisons.
 - Owner Reports with shared filters, nine groupings, Summary/Appointment list, and CSV export without client identities.
+- Monthly report schedules in Belgrade time, immutable archives and corrected versions, previous-month comparisons and three saved CSV exports. Verified-recipient email notifications are implemented but remain disabled until sender setup. See [monthly reports](docs/monthly-reports.md).
 - Team bonus settings: 100 RSD/hour regular, 500 RSD/hour fulfilled requested by default; optional percentages on full price. Persisted booking rate snapshots and reconciled report totals.
 - Cookie-based sign-in, password change, first-login password replacement and owner-managed accounts.
 - Server-enforced owner, reception and therapist permissions.
@@ -89,7 +90,7 @@ The report update automatically creates two empty bonus-rule tables after authen
 
 1. Confirm Reports/Team/Dashboard and Sales on the test URL and complete role/device acceptance.
 2. Finish [voucher email setup](docs/email-setup.md) and agree package, substitution and reception sales permissions. See [the implemented Sales scope](docs/sales.md).
-3. Add scheduled monthly reporting, email notifications and an authenticated Google Sheets integration.
+3. Complete hosted monthly report acceptance and add an authenticated Google Sheets integration.
 4. Add client/history import and approved loyalty rules.
 
 These requirements are preserved in [scope and decisions](docs/scope.md). An item being in the prototype does not mean it is implemented in this release.

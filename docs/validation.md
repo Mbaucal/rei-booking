@@ -1,4 +1,12 @@
-# Development validation — 23 September 2026
+# Development validation — 24 September 2026
+
+## Monthly reporting release 0.7 — 24 September 2026
+
+Local `npm run check`, `npm test` and `npm run build` passed: **71 tests, 0 failures** (including parent integration tests).
+
+New tests run the actual Worker and persistent D1 with fictional accounts and appointments. They cover owner isolation/CSRF, automatic schema and tracked migration parity, stale schedule writes, concurrent snapshot generation, immutable source/CSV reconciliation, previous-period comparisons and bonus inputs, correction retries, retained originals and template versions, Belgrade DST/leap-year/year boundaries, pause/resume, catch-up and empty months, incomplete data without fabricated totals, recipient verification/rate limits/expiry, atomic email claims, exact retry payload/key, signed callbacks and suppression. The Worker's actual scheduled entry point is invoked and data survives a Worker restart.
+
+Email transport is mocked. No actual email, account credentials or salon records were changed. Local browser navigation was blocked by the browser environment; no visual, touch or hosted email acceptance is claimed. Hosted Cron timing and delivery after sender setup remain operational checks. GitHub/Cloudflare results are recorded in MBA-81 after publishing.
 
 ## Profile photo release 0.6 — 24 September 2026
 
@@ -11,7 +19,6 @@ The existing appointment, reporting, voucher, email and account suites also pass
 Local `npm run check`, `npm test` and `npm run build` passed: **51 tests, 0 failures** (including parent integration tests). New Worker/D1 scenarios verify owner/CSRF enforcement, explicit confirmations, stale balance rejection, repeatable schema initialization and tracked migration parity, concurrent identical retries, changed retry rejection, simultaneous use versus closure, void/refund totals, Net sales versus All records CSV, formula escaping, invalid-code print/email/use, immutable audit/history, remaining-balance refunds, blocked post-refund reversals, original treatment report preservation and corrected-code chains retaining archived menu snapshots without a duplicate sale.
 
 No real voucher, payment, password or email was changed by these tests. GitHub and Cloudflare results are recorded in MBA-76 after publishing. Hosted visual and device acceptance remain pending.
-
 
 Validated locally with Node.js 24.19.0, Wrangler 4.136.3 and its Miniflare/Workerd D1 runtime. Only fictional test records were used.
 
@@ -82,6 +89,6 @@ GitHub Actions also passed for implementation commit `d2ba4e8c1d9a2d9f9e73483b91
 - Browser visual checks, keyboard/screen-reader review and touch interaction on real devices. Automated browser review of local files was unavailable in this session; no substitute browser route was used.
 - Hosted acceptance of the new Reports/Dashboard/Team bonus screens. Initial schema, origin and successful owner sign-in have been confirmed by the user.
 - Hosted login performance/CPU budget, backup export/restore drill and operational monitoring.
-- Scheduled report archive/email, scoped Sheets integration, voucher payment processing/packages, live email setup, private photo uploads, imports and loyalty calculations.
+- Hosted scheduled report timing and live email setup/delivery; scoped Sheets integration, voucher payment processing/packages, imports and loyalty calculations. Monthly archive/email implementation and private photos are included; the owner confirmed photo upload works, while broader device acceptance remains pending.
 
 The first slice is suitable for code review and deployment to a dedicated fictional-data test environment once access is configured. It is not a sign-off for live salon use.

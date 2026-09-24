@@ -1,4 +1,4 @@
-# Voucher email setup
+# Voucher and report email setup
 
 The delivery implementation is prepared, but **sending is disabled**. The connected Resend account was inspected on 22 September 2026: `reithailandmassage.com` exists in region `eu-west-1`, with domain status `not_started`. No DNS records or provider account settings were changed during implementation, and no messages were sent.
 
@@ -24,3 +24,9 @@ Use automatic TTL. These are sending-authentication records; leave the existing 
 The app uses no SMTP inbox password. No credentials need to be shared with the assistant. Existing owner sign-in and D1 database setup are unchanged; no terminal or owner-password setup is required for this release.
 
 For an interrupted send, reopen the existing delivery and retry. Do not create another external send while its outcome is uncertain. After the safe retry window, check the message in Resend first. A permanent failure, wrong prepared destination or a resend request requires review; the current release does not silently replace an existing delivery payload.
+
+## Monthly report notifications
+
+Release 0.7 uses the same verified sender, server secrets, signed webhook and recipient suppression list. After completing setup above, open **Reports → Monthly reports → Email notifications**, send a verification code to the explicitly chosen recipient and enter it in the app. Then edit the report schedule, choose that verified address and enable **Email me when ready**. Verifying an address does not grant application access; the saved report link still requires its owning account.
+
+Monthly reports remain available in the archive when email is off. Notification bodies have no financial values, client details or CSV attachment. Confirm both initial verification and a saved report notification with an approved test recipient before relying on delivery. See [retry, pause and correction behavior](monthly-reports.md). No sender/DNS settings or real messages were changed as part of the 0.7 implementation.

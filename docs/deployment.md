@@ -8,6 +8,8 @@ Release `0.5.0` adds voucher voids, recorded refunds and corrected reissues. Hea
 
 Release `0.6.0` adds private client/team portraits. `0006_profile_photos.sql` initializes after authentication and can also be applied through tracked migrations. Only processed JPEGs (maximum 512 px per side and 150 KiB) are stored in the existing dedicated D1 database. No R2 bucket, new secrets, public image hosting, console setup or account reset is needed. Image bytes are delivered through authenticated routes with no-store and same-origin resource headers. The pinned pure-JavaScript JPEG codec is generated with `npm run photos:codec`; its license is committed. Confirm upload responsiveness on the deployed Worker's actual CPU plan during device acceptance. Original files are never sent to the server.
 
+Release `0.7.0` adds monthly report schedules, immutable archives and guarded email notifications. Its empty additive tables and indexes (`0007_monthly_reports.sql`) initialize on the first authorized monthly-report request or scheduled run; tracked migration parity is tested. The same Worker now has a `*/15 * * * *` Cron Trigger in both root and `env.test` configuration. It handles local Belgrade month boundaries and catches up after missed runs. No existing data, owner password or binding is replaced, and no manual SQL is needed for this update. `EMAIL_ENABLED` remains `false`; archive generation works independently. See [monthly reports](monthly-reports.md) and [email setup](email-setup.md).
+
 ## Cloudflare dashboard connection
 
 In Workers & Pages, open the existing `rei-booking` Worker and confirm these build settings. Do not create another Worker:

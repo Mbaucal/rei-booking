@@ -18,7 +18,9 @@
   ],
   "main": "src/worker.mjs",
   "compatibility_date": "2026-09-22",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
@@ -41,7 +43,17 @@
           "database_id": "7078aa06-6963-4e34-bdee-90e32e2764ae",
           "migrations_dir": "migrations"
         }
-      ]
+      ],
+      "triggers": {
+        "crons": [
+          "*/15 * * * *"
+        ]
+      }
     }
+  },
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
   }
 }

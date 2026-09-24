@@ -26,7 +26,10 @@ const hours = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }) + " h";
-export async function renderReports(ctx, dashboard = false) {
+export async function renderReports(ctx, dashboard = false, snapshot = null) {
+  const viewState = snapshot
+    ? { ...saved, bonuses: snapshot.includeBonuses !== false }
+    : saved;
   const {
     root,
     api,
@@ -49,7 +52,7 @@ export async function renderReports(ctx, dashboard = false) {
       .join("")}</select></label>`;
   const form = dashboard
     ? { preset: dashboardPreset, group: "therapist", dayBasis: "active" }
-    : { ...saved };
+    : { ...viewState };
   let report = null,
     sequence = 0,
     loadedQuery = "";
@@ -100,7 +103,7 @@ export async function renderReports(ctx, dashboard = false) {
         c?.totalMinutes,
         hours,
       ) +
-      (!dashboard && saved.bonuses
+      (!dashboard && viewState.bonuses
         ? metric(
             "Earned bonuses",
             money(t.totalBonusCents),
@@ -110,8 +113,8 @@ export async function renderReports(ctx, dashboard = false) {
           )
         : "");
     if (dashboard) return;
-    const bonus = saved.bonuses,
-      details = saved.view === "details";
+    const bonus = viewState.bonuses,
+      details = viewState.view === "details";
     let heads,
       rows,
       footer = "";
@@ -218,10 +221,10 @@ export async function renderReports(ctx, dashboard = false) {
     }
     const values = Object.fromEntries(new FormData(filter));
     if (dashboard) dashboardPreset = values.preset;
-    else Object.assign(saved, values);
+    else Object.assign(viewState, values);
     const query = new URLSearchParams(values).toString();
     try {
-      const next = await api("/reports/appointments?" + query);
+      const next = snapshot || (await api("/reports/appointments?" + query));
       if (!isCurrent() || seq !== sequence) return;
       report = next;
       loadedQuery = query;
@@ -261,11 +264,11 @@ export async function renderReports(ctx, dashboard = false) {
   if (dashboard) $("open-reports").onclick = openReports;
   else {
     root.querySelector('[name="view"]').onchange = (e) => {
-      saved.view = e.target.value;
+      viewState.view = e.target.value;
       renderData();
     };
     $("report-bonuses").onchange = (e) => {
-      saved.bonuses = e.target.checked;
+      viewState.bonuses = e.target.checked;
       renderData();
     };
     $("report-export").onclick = async () => {
@@ -275,7 +278,7 @@ export async function renderReports(ctx, dashboard = false) {
       try {
         await download(
           loadedQuery +
-            `&view=${saved.view}&bonuses=${saved.bonuses ? "1" : "0"}`,
+            `&view=${viewState.view}&bonuses=${viewState.bonuses ? "1" : "0"}`,
         );
       } catch (error) {
         if (isCurrent()) showError(error);
@@ -283,6 +286,22 @@ export async function renderReports(ctx, dashboard = false) {
         if (isCurrent() && report) button.disabled = false;
       }
     };
+  }
+  if (snapshot) {
+    filter.hidden = true;
+    $("report-bonuses").disabled = true;
+  } else if (!dashboard && ctx.openMonthly) {
+    const toolbar = document.createElement("div");
+    toolbar.className = "toolbar";
+    toolbar.innerHTML =
+      '<button class="btn" data-monthly>Monthly reports</button><button class="btn" data-schedule>Save filters as monthly schedule</button>';
+    root.prepend(toolbar);
+    toolbar.querySelector("[data-monthly]").onclick = () => ctx.openMonthly();
+    toolbar.querySelector("[data-schedule]").onclick = () =>
+      ctx.openMonthly({
+        ...Object.fromEntries(new FormData(filter)),
+        bonuses: viewState.bonuses,
+      });
   }
   await load();
 }

@@ -1,3 +1,4 @@
+import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
 import { renderReports } from "./reports.js";
@@ -239,7 +240,13 @@ async function enterApp(session) {
     return;
   }
   await loadCatalogue();
-  await setPage(owner() ? "dashboard" : "calendar");
+  await setPage(
+    owner() && /^#report=[a-f0-9]{64}$/.test(location.hash)
+      ? "monthly"
+      : owner()
+        ? "dashboard"
+        : "calendar",
+  );
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
     if (state.user && state.page === "calendar" && !document.hidden && !drag)
@@ -253,11 +260,13 @@ function showAppError(error) {
 async function loadCatalogue() {
   state.catalogue = await api("/catalogue");
 }
-async function setPage(page) {
+async function setPage(page, monthlyFilters = null) {
   if (!state.user) return;
   if (page !== "calendar" && (!operator() || (page !== "clients" && !owner())))
     return;
   state.page = page;
+  if (page !== "monthly" && location.hash.startsWith("#report="))
+    history.replaceState(null, "", location.pathname);
   closeDrawer();
   state.version++;
   $("app-error").hidden = true;
@@ -265,6 +274,7 @@ async function setPage(page) {
     calendar: "Calendar",
     dashboard: "Dashboard",
     reports: "Reports",
+    monthly: "Reports",
     sales: "Sales",
     clients: "Clients",
     team: "Team",
@@ -273,11 +283,37 @@ async function setPage(page) {
   }[page];
   document
     .querySelectorAll("[data-page]")
-    .forEach((b) => b.classList.toggle("active", b.dataset.page === page));
+    .forEach((b) =>
+      b.classList.toggle(
+        "active",
+        b.dataset.page === (page === "monthly" ? "reports" : page),
+      ),
+    );
   try {
     if (page === "calendar") {
       renderCalendarShell();
       await loadCalendar();
+    } else if (page === "monthly") {
+      const version = state.version;
+      await renderMonthly(
+        {
+          root: $("page-content"),
+          api,
+          esc,
+          money,
+          stamp,
+          clock,
+          statusName,
+          catalogue: state.catalogue,
+          isCurrent: () => state.version === version && owner(),
+          download: downloadReport,
+          openReports: () => setPage("reports"),
+        },
+        monthlyFilters,
+        /^#report=[a-f0-9]{64}$/.test(location.hash)
+          ? location.hash.slice(8)
+          : null,
+      );
     } else if (page === "reports" || page === "dashboard") {
       const version = state.version;
       await renderReports(
@@ -293,6 +329,7 @@ async function setPage(page) {
           isCurrent: () => state.version === version && owner(),
           download: downloadReport,
           openReports: () => setPage("reports"),
+          openMonthly: (filters) => setPage("monthly", filters),
         },
         page === "dashboard",
       );
@@ -1228,3 +1265,8 @@ try {
     $("login-error").hidden = false;
   }
 }
+
+window.addEventListener("hashchange", () => {
+  if (owner() && /^#report=[a-f0-9]{64}$/.test(location.hash))
+    setPage("monthly");
+});

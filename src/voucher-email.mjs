@@ -1,3 +1,5 @@
+import { ensureMonthlySchema } from "./monthly-schema.mjs";
+import { reconcileReportEvents } from "./monthly-email.mjs";
 import { randomUUID, createHmac, timingSafeEqual } from "node:crypto";
 import { fail } from "./security.mjs";
 import { text, email } from "./domain.mjs";
@@ -411,5 +413,7 @@ export async function emailWebhook(request, env) {
     new Date().toISOString(),
   ).run();
   await reconcileEvents(env.DB, data.data.email_id);
+  await ensureMonthlySchema(env.DB);
+  await reconcileReportEvents(env.DB, data.data.email_id);
   return Response.json({ ok: true });
 }

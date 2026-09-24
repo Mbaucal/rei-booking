@@ -1,3 +1,4 @@
+import { monthlyRoutes, runMonthly } from "./monthly-reports.mjs";
 import { ensurePhotoSchema } from "./photo-schema.mjs";
 import {
   photoInput,
@@ -430,7 +431,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.6.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.7.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -511,6 +512,12 @@ async function routes(request, env) {
       })),
     });
   }
+  if (
+    /^\/api\/reports\/(monthly|archive|recipients|notifications)(\/|$)/.test(
+      path,
+    )
+  )
+    return monthlyRoutes(request, env, user);
   if (
     ["/api/reports/appointments", "/api/reports/appointments.csv"].includes(
       path,
@@ -744,6 +751,9 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
   fail(404, "This feature is not available in the first development release.");
 }
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(runMonthly(env, controller.scheduledTime));
+  },
   async fetch(request, env) {
     try {
       return secureHeaders(await routes(request, env));

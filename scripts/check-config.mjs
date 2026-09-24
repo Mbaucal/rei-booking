@@ -31,6 +31,8 @@ if (
 // same test Worker and must include its runtime variables and database binding.
 for (const target of [config, test]) {
   if (
+    JSON.stringify(target.triggers?.crons) !==
+      JSON.stringify(["*/15 * * * *"]) ||
     target.name !== test.name ||
     target.workers_dev !== true ||
     target.preview_urls !== false ||

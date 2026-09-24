@@ -1242,3 +1242,39 @@ tr:last-child td {
     height: 64px;
   }
 }
+
+.monthly-section {
+  margin: 24px 0;
+}
+.monthly-card {
+  border: 1px solid var(--line, #ddd7c9);
+  background: var(--surface, #fffdf8);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 16px 0;
+}
+.monthly-card h3 {
+  margin-top: 0;
+}
+.monthly-card .toolbar {
+  flex-wrap: wrap;
+}
+.monthly-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 12px 0;
+}
+#monthly-editor {
+  scroll-margin-top: 24px;
+}
+#monthly-editor .check {
+  min-height: 44px;
+}
+@media (max-width: 600px) {
+  .monthly-card {
+    padding: 14px;
+  }
+  .monthly-card .toolbar .btn {
+    flex: 1 1 auto;
+  }
+}
