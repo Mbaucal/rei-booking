@@ -1,3 +1,10 @@
+import { ensurePhotoSchema } from "./photo-schema.mjs";
+import {
+  photoInput,
+  photoStatement,
+  addPhotoMetadata,
+  photoRoute,
+} from "./photos.mjs";
 import { randomUUID } from "node:crypto";
 import {
   fail,
@@ -225,6 +232,10 @@ async function saveEntity(db, user, entity, body, id) {
         time,
         time,
       );
+  const photo =
+    entity !== "services" && body.photo !== undefined
+      ? photoInput(body.photo)
+      : null;
   await auditedWrite(
     db,
     query,
@@ -234,21 +245,26 @@ async function saveEntity(db, user, entity, body, id) {
     id ? "update" : "create",
     before,
     bonus ? { ...values, bonus } : values,
-    bonus
-      ? [
-          stmt(
-            db,
-            `INSERT INTO therapist_bonus_rules(therapist_id,mode,regular_rate,requested_rate,updated_at)
+    [
+      ...(bonus
+        ? [
+            stmt(
+              db,
+              `INSERT INTO therapist_bonus_rules(therapist_id,mode,regular_rate,requested_rate,updated_at)
 SELECT ?,?,?,?,? WHERE changes()=1
 ON CONFLICT(therapist_id) DO UPDATE SET mode=excluded.mode,regular_rate=excluded.regular_rate,requested_rate=excluded.requested_rate,updated_at=excluded.updated_at`,
-            recordId,
-            bonus.mode,
-            bonus.regular_rate,
-            bonus.requested_rate,
-            time,
-          ),
-        ]
-      : [],
+              recordId,
+              bonus.mode,
+              bonus.regular_rate,
+              bonus.requested_rate,
+              time,
+            ),
+          ]
+        : []),
+      ...(photo
+        ? [photoStatement(db, user, entity, recordId, photo, true)]
+        : []),
+    ],
   );
   return json({ id: recordId }, id ? 200 : 201);
 }
@@ -414,7 +430,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.5.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.6.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -461,6 +477,12 @@ async function routes(request, env) {
   if (user.must_change_password)
     fail(403, "Change your temporary password before continuing.");
   await ensureReportSchema(db);
+  await ensurePhotoSchema(db);
+  const photoMatch = path.match(
+    /^\/api\/photos\/(clients|therapists)\/([^/]+)$/,
+  );
+  if (photoMatch)
+    return photoRoute(request, db, user, photoMatch[1], photoMatch[2]);
   if (path.startsWith("/api/sales/")) return salesRoutes(request, env, user);
   if (path === "/api/catalogue" && method === "GET") {
     const [therapists, rooms, services] = await Promise.all([
@@ -472,7 +494,11 @@ async function routes(request, env) {
       all(db, "SELECT * FROM services ORDER BY name,duration"),
     ]);
     return json({
-      therapists: therapists.map((t) => projectTherapist(t, user.role)),
+      therapists: await addPhotoMetadata(
+        db,
+        "therapists",
+        therapists.map((t) => projectTherapist(t, user.role)),
+      ),
       rooms,
       services: services.map((s) => ({
         id: s.id,
@@ -552,7 +578,7 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
       normalized,
       normalized ? "%" + normalized + "%" : null,
     );
-    return json({ clients: rows });
+    return json({ clients: await addPhotoMetadata(db, "clients", rows) });
   }
   const clientMatch = path.match(/^\/api\/clients\/([^/]+)$/);
   if (clientMatch && method === "GET") {
@@ -570,7 +596,7 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
       client.id,
     );
     return json({
-      client,
+      client: (await addPhotoMetadata(db, "clients", [client]))[0],
       appointments: items.map((a) => projectAppointment(a, user.role)),
     });
   }
@@ -602,10 +628,22 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
     );
   for (const entity of ["clients", "therapists", "services"]) {
     if (path === "/api/" + entity && method === "POST")
-      return saveEntity(db, user, entity, await readJSON(request), null);
+      return saveEntity(
+        db,
+        user,
+        entity,
+        await readJSON(request, 250000),
+        null,
+      );
     const match = path.match(new RegExp("^/api/" + entity + "/([^/]+)$"));
     if (match && method === "PUT")
-      return saveEntity(db, user, entity, await readJSON(request), match[1]);
+      return saveEntity(
+        db,
+        user,
+        entity,
+        await readJSON(request, 250000),
+        match[1],
+      );
   }
   if (path === "/api/users" && method === "GET") {
     requireRole(user, "owner");
@@ -716,7 +754,13 @@ export default {
             ? error.message
             : "The request could not be completed.";
       const detail = String(error?.message || "");
-      if (detail.includes("booking_slots.")) {
+      if (detail.includes("photo_conflict")) {
+        status = 409;
+        message = "This photo changed. Reopen the profile before saving again.";
+      } else if (detail.includes("photo_missing_profile")) {
+        status = 404;
+        message = "Profile not found.";
+      } else if (detail.includes("booking_slots.")) {
         status = 409;
         message =
           "That therapist or table is already booked. Choose another time or resource.";

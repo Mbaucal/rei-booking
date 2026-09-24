@@ -52,6 +52,9 @@ test("Sales Worker + D1: atomic checkout, immutable gifts and independently addr
     convertV4MiniflareOptions({
       modules: [
         "worker.mjs",
+        "photos.mjs",
+        "photo-schema.mjs",
+        "photo-codec.mjs",
         "security.mjs",
         "domain.mjs",
         "reports.mjs",

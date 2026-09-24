@@ -6,6 +6,8 @@
 
 Release `0.5.0` adds voucher voids, recorded refunds and corrected reissues. Health identifies version `0.5.0`. Opening Sales initializes `0005_voucher_changes.sql` after the existing Sales and redemption schema. The migration adds history, a register view and guards; it also replaces the treatment catalogue guard transactionally to allow exact-value corrected copies of previously sold treatments. Existing users/passwords and original sale/voucher rows are preserved. No console SQL or password reset is required. See [voucher changes](voucher-changes.md) for acceptance steps. Deployment check results for the release are recorded in MBA-76 after publishing.
 
+Release `0.6.0` adds private client/team portraits. `0006_profile_photos.sql` initializes after authentication and can also be applied through tracked migrations. Only processed JPEGs (maximum 512 px per side and 150 KiB) are stored in the existing dedicated D1 database. No R2 bucket, new secrets, public image hosting, console setup or account reset is needed. Image bytes are delivered through authenticated routes with no-store and same-origin resource headers. The pinned pure-JavaScript JPEG codec is generated with `npm run photos:codec`; its license is committed. Confirm upload responsiveness on the deployed Worker's actual CPU plan during device acceptance. Original files are never sent to the server.
+
 ## Cloudflare dashboard connection
 
 In Workers & Pages, open the existing `rei-booking` Worker and confirm these build settings. Do not create another Worker:

@@ -8,9 +8,9 @@ All application UI is English. Conversations and planning can remain Serbian. Pr
 | ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | MBA-71 | Private repository and test environment | GitHub repository public; dedicated test Worker/D1 deployed; owner confirms hosted sign-in; device/backup acceptance pending                     |
 | MBA-72 | Calendar                                | Persistent day/calendar/API, therapist/room views, optional client, 5-minute edits, pointer drag, conflict protection; device acceptance pending |
-| MBA-73 | Clients and treatments                  | Persistent CRUD/search/history and treatment variants; imports and photo storage pending                                                         |
+| MBA-73 | Clients and treatments                  | Persistent CRUD/search/history and treatment variants; private profile photos; imports pending                                                   |
 | MBA-74 | Permissions                             | Owner/reception/therapist server projections and protected actions; hosted acceptance pending                                                    |
-| MBA-79 | Team                                    | Profiles, weekly hours, dated time off, bonus configuration and account separation; photos pending                                               |
+| MBA-79 | Team                                    | Profiles, weekly hours, dated time off, bonus configuration and account separation; private profile photos included                              |
 
 ## Reports and bonuses: MBA-80
 
@@ -40,7 +40,7 @@ Implemented in v0.3: owner-only persistent sold register/CSV, current-menu and c
 
 ## Profile photos: MBA-73 / MBA-79
 
-Optional upload/change/remove for clients and team, supported file validation, size limits, image processing and persistent private storage. Team photos can appear in calendar headers. Therapist view must not receive client photos, initials, names or other identifying information. Browser-only demonstration uploads in v11 are not the storage implementation.
+Optional upload/change/remove for clients and team, supported file validation, size limits, image processing and persistent private storage. Team photos can appear in calendar headers. Therapist view must not receive client photos, initials, names or other identifying information. Implemented in v0.6 with bounded, processed portraits in private D1 storage, authenticated image delivery and atomic profile/photo saving. See [profile photos](profile-photos.md).
 
 ## Import: MBA-75
 

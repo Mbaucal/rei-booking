@@ -1,6 +1,18 @@
+import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
 import { renderReports } from "./reports.js";
 import { renderSales } from "./sales.js";
+document.addEventListener(
+  "error",
+  (event) => {
+    if (
+      event.target instanceof HTMLImageElement &&
+      event.target.closest(".avatar")
+    )
+      event.target.remove();
+  },
+  true,
+);
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
   String(value ?? "").replace(
@@ -143,12 +155,15 @@ function signOutView() {
   $("app").hidden = true;
   $("login-screen").hidden = false;
 }
+let drawerEpoch = 0;
 function closeDrawer() {
+  drawerEpoch++;
   if ($("drawer").open) $("drawer").close();
   $("drawer-content").textContent = "";
   $("drawer-footer").textContent = "";
 }
 function showDrawer(title, kicker, html) {
+  drawerEpoch++;
   $("drawer-title").textContent = title;
   $("drawer-kicker").textContent = kicker;
   $("drawer-content").innerHTML = html;
@@ -170,13 +185,26 @@ function bindForm(id, save, label = "Save changes") {
   $("form-cancel").onclick = closeDrawer;
   $(id).onsubmit = async (event) => {
     event.preventDefault();
-    const button = $("form-save");
+    const form = event.currentTarget,
+      button = $("form-save"),
+      epoch = drawerEpoch;
+    if (button.disabled) return;
+    const data = new FormData(form);
+    const controls = [...form.querySelectorAll("input,select,textarea,button")];
+    const disabled = controls.map((el) => el.disabled);
+    controls.forEach((el) => (el.disabled = true));
     button.disabled = true;
     try {
-      await save(new FormData($(id)));
+      await save(
+        data,
+        () => form.isConnected && $("drawer").open && drawerEpoch === epoch,
+      );
     } catch (error) {
-      formError(error);
+      if (form.isConnected && drawerEpoch === epoch) formError(error);
     } finally {
+      if (form.isConnected) {
+        controls.forEach((el, i) => (el.disabled = disabled[i]));
+      }
       if (button.isConnected) button.disabled = false;
     }
   };
@@ -425,7 +453,7 @@ function renderCalendar() {
     list
       .map(
         (r) =>
-          `<div><span class="avatar ${r.kind === "room" ? "room-avatar" : ""}">${esc(r.kind === "room" ? "R" + r.id.slice(1) : r.name.slice(0, 2))}</span><div>${esc(r.name)}<small>${r.kind === "room" ? r.capacity + " tables" : "Therapist"}</small></div></div>`,
+          `<div>${r.kind === "room" ? `<span class="avatar room-avatar">${esc("R" + r.id.slice(1))}</span>` : avatar("therapists", r, esc)}<div>${esc(r.name)}<small>${r.kind === "room" ? r.capacity + " tables" : "Therapist"}</small></div></div>`,
       )
       .join("");
   let ticks = "";
@@ -670,7 +698,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
   showDrawer(
     existing ? "Appointment details" : "New appointment",
     prettyDate(a.date),
-    `<form id="appointment-form"><label><span>Client</span><input id="booking-client-search" type="search" placeholder="Search name, phone or email"><select name="clientId" id="booking-client">${opts(state.clients, a.clientId, "Walk-in · no client selected")}</select></label>${!existing ? '<label class="check"><input type="checkbox" id="new-client-check">Create a new client</label><fieldset id="new-client-fields" hidden><legend>New client</legend><div class="fields">' + input("newName", "Full name", "", "text", 'maxlength="100"') + input("newPhone", "Phone · optional", "", "tel") + input("newEmail", "Email · optional", "", "email") + "</div></fieldset>" : ""}${existing?.clientId ? '<button class="btn link" type="button" id="booking-open-profile">Open client profile</button>' : ""}<h3 class="form-section">Treatment</h3><div class="fields"><label class="wide"><span>Massage</span><select name="serviceId" id="booking-service">${state.catalogue.services
+    `<form id="appointment-form"><div id="booking-client-photo"></div><label><span>Client</span><input id="booking-client-search" type="search" placeholder="Search name, phone or email"><select name="clientId" id="booking-client">${opts(state.clients, a.clientId, "Walk-in · no client selected")}</select></label>${!existing ? '<label class="check"><input type="checkbox" id="new-client-check">Create a new client</label><fieldset id="new-client-fields" hidden><legend>New client</legend><div class="fields">' + input("newName", "Full name", "", "text", 'maxlength="100"') + input("newPhone", "Phone · optional", "", "tel") + input("newEmail", "Email · optional", "", "email") + "</div></fieldset>" : ""}${existing?.clientId ? '<button class="btn link" type="button" id="booking-open-profile">Open client profile</button>' : ""}<h3 class="form-section">Treatment</h3><div class="fields"><label class="wide"><span>Massage</span><select name="serviceId" id="booking-service">${state.catalogue.services
       .filter((s) => s.active || s.id === a.serviceId)
       .map(
         (s) =>
@@ -738,6 +766,15 @@ async function appointmentDialog(existing = null, defaults = {}) {
         s.priceCents / 100
       ).toFixed(2);
   };
+  const showClientPhoto = () => {
+    const c = state.clients.find((c) => c.id === $("booking-client").value);
+    $("booking-client-photo").innerHTML =
+      c && !$("new-client-check")?.checked
+        ? `<div class="profile-top">${avatar("clients", c, esc)}</div>`
+        : "";
+  };
+  $("booking-client").addEventListener("change", showClientPhoto);
+  showClientPhoto();
   let searchSequence = 0;
   $("booking-client-search").oninput = async () => {
     const sequence = ++searchSequence;
@@ -756,6 +793,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
         selected,
         "Walk-in · no client selected",
       );
+      showClientPhoto();
     } catch (error) {
       formError(error);
     }
@@ -766,6 +804,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
       $("new-client-fields").hidden = !enabled;
       form.elements.newName.required = enabled;
       $("booking-client").disabled = enabled;
+      showClientPhoto();
     };
   if (existing?.clientId)
     $("booking-open-profile").onclick = () =>
@@ -829,7 +868,7 @@ async function renderClients() {
       if (current !== sequence || state.page !== "clients") return;
       state.clients = data.clients;
       $("client-results").innerHTML = data.clients.length
-        ? `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Phone</th><th>Email</th><th></th></tr></thead><tbody>${data.clients.map((c) => `<tr><td><div class="name-cell"><span class="avatar">${esc(c.name.slice(0, 2))}</span><strong>${esc(c.name)}</strong></div></td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><button class="btn" data-profile="${esc(c.id)}">Profile</button></td></tr>`).join("")}</tbody></table></div><p class="hint">Up to 100 matching clients. Use search to narrow the list.</p>`
+        ? `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Phone</th><th>Email</th><th></th></tr></thead><tbody>${data.clients.map((c) => `<tr><td><div class="name-cell">${avatar("clients", c, esc)}<strong>${esc(c.name)}</strong></div></td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><button class="btn" data-profile="${esc(c.id)}">Profile</button></td></tr>`).join("")}</tbody></table></div><p class="hint">Up to 100 matching clients. Use search to narrow the list.</p>`
         : '<div class="empty"><h2>No clients found</h2><p>Add a client or leave a booking as Walk-in.</p></div>';
       document
         .querySelectorAll("[data-profile]")
@@ -845,18 +884,28 @@ function clientDialog(c = null) {
   showDrawer(
     c ? "Edit client" : "New client",
     "Clients",
-    `<form id="client-form"><div class="fields">${input("name", "Full name", c?.name, "text", 'required maxlength="100"')}${input("phone", "Phone · optional", c?.phone, "tel")}${input("email", "Email · optional", c?.email, "email")}<label class="wide"><span>Client note</span><textarea name="note" maxlength="2000">${esc(c?.note || "")}</textarea></label></div>${errorBox()}</form>`,
+    `<form id="client-form"><div id="client-photo-editor"></div><div class="fields">${input("name", "Full name", c?.name, "text", 'required maxlength="100"')}${input("phone", "Phone · optional", c?.phone, "tel")}${input("email", "Email · optional", c?.email, "email")}<label class="wide"><span>Client note</span><textarea name="note" maxlength="2000">${esc(c?.note || "")}</textarea></label></div>${errorBox()}</form>`,
+  );
+  const epoch = sessionEpoch;
+  const photo = mountPhotoEditor(
+    $("client-photo-editor"),
+    c,
+    "clients",
+    esc,
+    () => sessionEpoch === epoch && operator() && $("drawer").open,
   );
   bindForm(
     "client-form",
-    async (fd) => {
+    async (fd, current) => {
       const data = await api("/clients" + (c ? "/" + c.id : ""), {
         method: c ? "PUT" : "POST",
         body: {
           ...Object.fromEntries(fd),
+          photo: photo.payload(),
           ...(c ? { version: c.version } : {}),
         },
       });
+      if (!current()) return;
       closeDrawer();
       await setPage("clients");
       await clientProfile(data.id);
@@ -866,17 +915,51 @@ function clientDialog(c = null) {
   );
 }
 async function clientProfile(id, back = null) {
+  const epoch = ++drawerEpoch;
   try {
     const { client: c, appointments: items } = await api("/clients/" + id);
+    if (epoch !== drawerEpoch || !operator()) return;
     showDrawer(
       c.name,
       "Client profile",
-      `<div class="profile-top"><span class="avatar">${esc(c.name.slice(0, 2))}</span><div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}</p></div></div>${c.note ? `<p class="hint">${esc(c.note)}</p>` : ""}<strong>${items.filter((a) => a.status === "done").length} completed visits</strong><h3 class="form-section">Appointment history</h3><div class="history">${items.map((a) => `<article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}</strong><p>${esc(a.serviceName)} · ${a.duration} min</p><p>${esc(therapist(a.therapistId)?.name)} · ${esc(room(a.roomId)?.name)}</p><p><span class="status ${a.status}">${statusName(a.status)}</span>${a.requestedTherapistId ? " · ♥ Requested" : ""}</p></article>`).join("") || '<p class="hint">No appointments yet.</p>'}</div>`,
+      `<div class="profile-top">${avatar("clients", c, esc)}<div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}</p></div></div>${c.note ? `<p class="hint">${esc(c.note)}</p>` : ""}<strong>${items.filter((a) => a.status === "done").length} completed visits</strong><h3 class="form-section">Appointment history</h3><div class="history">${items.map((a) => `<article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}</strong><p>${esc(a.serviceName)} · ${a.duration} min</p><p>${esc(therapist(a.therapistId)?.name)} · ${esc(room(a.roomId)?.name)}</p><p><span class="status ${a.status}">${statusName(a.status)}</span>${a.requestedTherapistId ? " · ♥ Requested" : ""}</p></article>`).join("") || '<p class="hint">No appointments yet.</p>'}</div>`,
     );
     $("drawer-footer").innerHTML =
-      `${back ? '<button class="btn" id="profile-back">Back to appointment</button>' : ""}<button class="btn primary" id="profile-edit">Edit client</button>`;
+      `${back ? '<button class="btn" id="profile-back">Back to appointment</button>' : ""}<button class="btn" id="profile-photo">Upload / change photo</button><button class="btn primary" id="profile-edit">Edit client</button>`;
     if (back) $("profile-back").onclick = back;
     $("profile-edit").onclick = () => clientDialog(c);
+    $("profile-photo").onclick = () => {
+      const epoch = sessionEpoch;
+      showDrawer(
+        "Profile photo",
+        c.name,
+        `<form id="client-photo-form"><div id="profile-photo-editor"></div>${errorBox()}</form>`,
+      );
+      const photo = mountPhotoEditor(
+        $("profile-photo-editor"),
+        c,
+        "clients",
+        esc,
+        () => epoch === sessionEpoch && operator() && $("drawer").open,
+      );
+      bindForm(
+        "client-photo-form",
+        async (_fd, current) => {
+          const payload = photo.payload();
+          if (payload)
+            await api(`/photos/clients/${c.id}`, {
+              method: "PUT",
+              body: payload,
+            });
+          if (epoch !== sessionEpoch || !current()) return;
+          closeDrawer();
+          if (state.page === "clients") await renderClients();
+          await clientProfile(c.id, back);
+          toast("Profile photo saved.");
+        },
+        "Save photo",
+      );
+    };
   } catch (error) {
     toast(error.message);
   }
@@ -890,7 +973,7 @@ async function renderTeam() {
       state.catalogue.therapists
         .map(
           (t) =>
-            `<article class="team-card"><header><span class="avatar">${esc(t.name.slice(0, 2))}</span><div><h3>${esc(t.name)}</h3><small>${t.active ? "Active" : "Inactive"}</small></div></header><p>${esc(t.fullName || "Therapist")}<br>Days off: ${
+            `<article class="team-card"><header>${avatar("therapists", t, esc)}<div><h3>${esc(t.name)}</h3><small>${t.active ? "Active" : "Inactive"}</small></div></header><p>${esc(t.fullName || "Therapist")}<br>Days off: ${
               t.weekly
                 .map((d, i) =>
                   !d.enabled
@@ -924,7 +1007,15 @@ function teamDialog(t = null) {
   showDrawer(
     t ? "Edit team member" : "New team member",
     "Team",
-    `<form id="team-form"><div class="fields">${input("name", "Display name", t?.name, "text", 'required maxlength="70"')}${input("fullName", "Full name", t?.fullName)}${input("phone", "Phone", t?.phone, "tel")}${input("email", "Email", t?.email, "email")}<label class="wide"><span>Owner note</span><textarea name="note" maxlength="2000">${esc(t?.note || "")}</textarea></label></div><label class="check"><input name="active" type="checkbox" ${t?.active !== false ? "checked" : ""}>Active therapist</label><h3 class="form-section">Weekly working hours</h3>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<div class="weekly-row"><label><input type="checkbox" name="day-${d}" ${week[d].enabled ? "checked" : ""}>${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label><input name="start-${d}" type="time" value="${clock(week[d].start)}" step="300" required aria-label="Start on day ${d}"><span>–</span><input name="end-${d}" type="time" value="${clock(week[d].end)}" step="300" required aria-label="End on day ${d}"></div>`).join("")}${bonusFields(t)}<h3 class="form-section">Time off</h3><label><span>Dates · one YYYY-MM-DD date per line</span><textarea name="timeOff" rows="3">${esc(t?.timeOff.join("\n") || "")}</textarea></label><p class="hint">Existing bookings must be moved before changing availability that would conflict with them. Account access is managed in Accounts.</p>${errorBox()}</form>`,
+    `<form id="team-form"><div id="team-photo-editor"></div><div class="fields">${input("name", "Display name", t?.name, "text", 'required maxlength="70"')}${input("fullName", "Full name", t?.fullName)}${input("phone", "Phone", t?.phone, "tel")}${input("email", "Email", t?.email, "email")}<label class="wide"><span>Owner note</span><textarea name="note" maxlength="2000">${esc(t?.note || "")}</textarea></label></div><label class="check"><input name="active" type="checkbox" ${t?.active !== false ? "checked" : ""}>Active therapist</label><h3 class="form-section">Weekly working hours</h3>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<div class="weekly-row"><label><input type="checkbox" name="day-${d}" ${week[d].enabled ? "checked" : ""}>${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label><input name="start-${d}" type="time" value="${clock(week[d].start)}" step="300" required aria-label="Start on day ${d}"><span>–</span><input name="end-${d}" type="time" value="${clock(week[d].end)}" step="300" required aria-label="End on day ${d}"></div>`).join("")}${bonusFields(t)}<h3 class="form-section">Time off</h3><label><span>Dates · one YYYY-MM-DD date per line</span><textarea name="timeOff" rows="3">${esc(t?.timeOff.join("\n") || "")}</textarea></label><p class="hint">Existing bookings must be moved before changing availability that would conflict with them. Account access is managed in Accounts.</p>${errorBox()}</form>`,
+  );
+  const epoch = sessionEpoch;
+  const photo = mountPhotoEditor(
+    $("team-photo-editor"),
+    t,
+    "therapists",
+    esc,
+    () => epoch === sessionEpoch && owner() && $("drawer").open,
   );
   $("bonus-mode").onchange = () => {
     const percent = $("bonus-mode").value === "percent";
@@ -949,8 +1040,9 @@ function teamDialog(t = null) {
   };
   bindForm(
     "team-form",
-    async (fd) => {
+    async (fd, current) => {
       const body = {
+        photo: photo.payload(),
         name: fd.get("name"),
         fullName: fd.get("fullName"),
         phone: fd.get("phone"),
@@ -974,6 +1066,7 @@ function teamDialog(t = null) {
         method: t ? "PUT" : "POST",
         body,
       });
+      if (!current()) return;
       closeDrawer();
       await renderTeam();
       toast("Team member saved.");

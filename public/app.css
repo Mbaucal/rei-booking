@@ -981,10 +981,9 @@ tr:last-child td {
 }
 .sales-filters {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) repeat(
-      2,
-      minmax(130px, 180px)
-    ) auto auto;
+  grid-template-columns:
+    minmax(180px, 1fr) repeat(2, minmax(130px, 180px))
+    auto auto;
   gap: 12px;
   align-items: end;
 }
@@ -1178,5 +1177,68 @@ tr:last-child td {
   }
   .sales-heading h2 {
     font-size: 24px;
+  }
+}
+
+/* Private profile portraits preserve the initials fallback and touch targets. */
+.avatar {
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.photo-editor {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 0 20px;
+}
+.photo-preview .avatar {
+  width: 84px;
+  height: 84px;
+  font-size: 24px;
+}
+.photo-upload {
+  display: inline-flex;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.photo-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.photo-upload:focus-within {
+  outline: 3px solid var(--gold, #ac8834);
+  outline-offset: 2px;
+}
+.photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.photo-editor .hint {
+  margin: 8px 0 0;
+}
+@media (max-width: 480px) {
+  .photo-editor {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .photo-preview .avatar {
+    width: 64px;
+    height: 64px;
   }
 }

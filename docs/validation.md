@@ -1,5 +1,11 @@
 # Development validation — 23 September 2026
 
+## Profile photo release 0.6 — 24 September 2026
+
+Local `npm run check`, `npm test` and `npm run build` passed: **61 tests, 0 failures** (including parent integration tests). Actual Worker/D1 checks cover private client/team image delivery, role and CSRF enforcement, validated JPEG decoding and metadata removal, invalid/oversized input preserving the current portrait, atomic profile/bonus/photo updates, concurrent replacements, revision-preserving removal, schema/migration parity and persistence across a Worker restart. A full 100-client page and larger catalogue are hydrated within D1 statement binding limits. Draft tests cover stale processing after replacement, removal, undo and profile/session changes. Canvas and orientation calls use mocks, not real browser rendering.
+
+The existing appointment, reporting, voucher, email and account suites also pass. No real photo, credential, payment or email was changed. GitHub/Cloudflare results are recorded in MBA-73 and MBA-79 after publishing. Real camera/device, visual and touch acceptance and photo processing responsiveness on the actual Worker plan remain pending; see `docs/profile-photos.md`.
+
 ## Voucher changes release 0.5 — 24 September 2026
 
 Local `npm run check`, `npm test` and `npm run build` passed: **51 tests, 0 failures** (including parent integration tests). New Worker/D1 scenarios verify owner/CSRF enforcement, explicit confirmations, stale balance rejection, repeatable schema initialization and tracked migration parity, concurrent identical retries, changed retry rejection, simultaneous use versus closure, void/refund totals, Net sales versus All records CSV, formula escaping, invalid-code print/email/use, immutable audit/history, remaining-balance refunds, blocked post-refund reversals, original treatment report preservation and corrected-code chains retaining archived menu snapshots without a duplicate sale.

@@ -4,3 +4,5 @@ dist
 private
 docs/reference
 package-lock.json
+
+src/photo-codec.mjs
