@@ -10,6 +10,18 @@ Release `0.6.0` adds private client/team portraits. `0006_profile_photos.sql` in
 
 Release `0.7.0` adds monthly report schedules, immutable archives and guarded email notifications. Its empty additive tables and indexes (`0007_monthly_reports.sql`) initialize on the first authorized monthly-report request or scheduled run; tracked migration parity is tested. The same Worker now has a `*/15 * * * *` Cron Trigger in both root and `env.test` configuration. It handles local Belgrade month boundaries and catches up after missed runs. No existing data, owner password or binding is replaced, and no manual SQL is needed for this update. `EMAIL_ENABLED` remains `false`; archive generation works independently. See [monthly reports](monthly-reports.md) and [email setup](email-setup.md).
 
+## Recover a deployment blocked by Cron quota
+
+The initial `0.7.0` deployment on 24 September passed its build and uploaded the Worker, then failed while updating `/schedules` because the account had reached its Workers Free Cron Trigger limit. Cloudflare reported that successful trigger changes were not rolled back. A working application or a new version number therefore does not, by itself, confirm that monthly scheduling is active.
+
+The owner confirmed upgrading the account on 25 September. After the increased quota is available, retry the failed build in Cloudflare, or deploy the same application source through the connected `main` branch. Keep the existing check, test and deploy commands. Rei Booking needs one Cron Trigger, `*/15 * * * *`; do not remove schedules belonging to other applications to make room.
+
+Confirm the new **Workers Builds: rei-booking** check succeeds and record the commit, build and Worker version in MBA-81. In the Worker's **Settings → Trigger Events → Cron Triggers**, verify the quarter-hour expression. Allow up to 15 minutes for a new trigger to propagate, then verify a scheduled invocation before treating hosted execution as accepted. The app evaluates each report's Belgrade due date on those invocations; the quarter-hour trigger does not generate or email a report every 15 minutes.
+
+An owner can check **Reports → Monthly reports** and save a closed-month report to verify archive and CSV behavior independently of the scheduler. `EMAIL_ENABLED=false` still prevents live delivery; upgrading Cloudflare does not configure the sender or activate email. This recovery requires no database reset, new owner password or manual SQL.
+
+References: [Cron Trigger configuration and propagation](https://developers.cloudflare.com/workers/configuration/cron-triggers/) and [Git-triggered Workers builds](https://developers.cloudflare.com/workers/ci-cd/builds/).
+
 ## Cloudflare dashboard connection
 
 In Workers & Pages, open the existing `rei-booking` Worker and confirm these build settings. Do not create another Worker:
