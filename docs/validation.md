@@ -1,4 +1,12 @@
-# Development validation — 24 September 2026
+# Development validation — 26 September 2026
+
+## Client transfer release 0.8 — 26 September 2026
+
+Local `npm run check`, `npm test` and `npm run build` passed: **83 tests, 0 failures**. Local application of all eight tracked migrations also succeeded.
+
+The new real Worker/D1 integration covers owner-only import/export, reception/therapist/anonymous denial, origin and CSRF enforcement, explicit column mapping, normalization, conflicting/shared contacts, no merging by name, preview without client writes, selected-row validation, owner isolation, retry receipts, competing previews, stale normal edits, forced transactional rollback, spreadsheet-safe export and Rei round-trip decoding, expiry, disabled accounts, Worker restart and a 1,000-client import. It checks additive schema/migration parity and that applied previews discard mapped personal data. Existing application suites remain enabled.
+
+Only fictional local clients/accounts were used. No real salon records or messages were created. Browser validation was attempted using a local Worker/D1 harness, but Playwright has no installed Chromium executable. Desktop/mobile visual and touch acceptance are still pending; code review is not claimed as browser acceptance. Real Fresha client column acceptance and historical appointment migration remain separate work under MBA-75. Email setup and remaining vouchers are deferred.
 
 ## Monthly reporting release 0.7 — 24 September 2026
 

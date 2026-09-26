@@ -1278,3 +1278,71 @@ tr:last-child td {
     flex: 1 1 auto;
   }
 }
+
+.transfer-card {
+  padding: 24px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper, #fffdf8);
+}
+.transfer-card h2,
+.transfer-card h3 {
+  margin-top: 0;
+}
+.transfer-card .toolbar {
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.transfer-card .fields {
+  margin: 20px 0;
+}
+.transfer-card .check {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 52px;
+}
+.transfer-card input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+.transfer-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+.transfer-table td {
+  vertical-align: top;
+}
+.transfer-table td:last-child {
+  min-width: 200px;
+  max-width: 340px;
+}
+.transfer-table details p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 240px;
+}
+.transfer-table caption {
+  text-align: left;
+  padding: 12px 0;
+}
+.transfer-card [data-sample] {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .transfer-card {
+    padding: 14px;
+  }
+  .transfer-card .toolbar .btn {
+    flex: 1 1 auto;
+  }
+  .transfer-card .fields {
+    grid-template-columns: 1fr;
+  }
+  #transfer-commit {
+    width: 100%;
+  }
+}

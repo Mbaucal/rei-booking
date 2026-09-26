@@ -44,6 +44,8 @@ Optional upload/change/remove for clients and team, supported file validation, s
 
 ## Import: MBA-75
 
+Client CSV import/export is implemented in v0.8, with owner-only mapping/preview, explicit selection, safe duplicate handling, atomic confirmation and repeat receipts. See [client transfer](client-transfer.md). Real Fresha file acceptance and historical appointment import remain pending; do not infer completed/requested status or link clients using names alone.
+
 Import clients and past appointments from exports, with preview, normalization, duplicate resolution and rollback/reconciliation. Retain original booking dates, treatment duration, therapist and request history where present. Work on copies; import real records only after access and recovery checks.
 
 ## Loyalty: MBA-77

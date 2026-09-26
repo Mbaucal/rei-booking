@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.7.0** — 24 September 2026.
+Current implementation release, **0.8.0** — 26 September 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -19,6 +19,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Server-enforced owner, reception and therapist permissions.
 - Private client/team photo upload, preview, replace/remove/undo and persistent avatars in profiles, lists, booking details and calendar headers. See [profile photos](docs/profile-photos.md).
 - Client records and name/phone/email search, contact deduplication, visit history and optional walk-ins.
+- Owner client CSV import with explicit column mapping, preview/selection, duplicate and conflict checks, atomic repeat-safe confirmation; all-client CSV export with optional notes. See [client transfer](docs/client-transfer.md).
 - Therapist profiles, weekly hours and dated time off, independent of login accounts.
 - Treatment variants with duration, price and calendar colour.
 - Daily calendar by therapist, room or both; two-table couple rooms; current Belgrade time.

@@ -1,3 +1,4 @@
+import { renderClientTransfer } from "./client-transfer.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
@@ -277,6 +278,7 @@ async function setPage(page, monthlyFilters = null) {
     monthly: "Reports",
     sales: "Sales",
     clients: "Clients",
+    "client-transfer": "Clients",
     team: "Team",
     services: "Treatments",
     users: "Accounts",
@@ -286,7 +288,12 @@ async function setPage(page, monthlyFilters = null) {
     .forEach((b) =>
       b.classList.toggle(
         "active",
-        b.dataset.page === (page === "monthly" ? "reports" : page),
+        b.dataset.page ===
+          (page === "monthly"
+            ? "reports"
+            : page === "client-transfer"
+              ? "clients"
+              : page),
       ),
     );
   try {
@@ -347,6 +354,15 @@ async function setPage(page, monthlyFilters = null) {
         closeDrawer,
         toast,
         download: (query) => downloadReport(query, "/api/sales/vouchers.csv?"),
+      });
+    } else if (page === "client-transfer") {
+      const version = state.version;
+      renderClientTransfer({
+        root: $("page-content"),
+        api,
+        esc,
+        isCurrent: () => state.version === version && owner(),
+        back: () => setPage("clients"),
       });
     } else if (page === "clients") await renderClients();
     else if (page === "team") await renderTeam();
@@ -894,6 +910,41 @@ function appointmentDetails(a) {
 async function renderClients() {
   $("page-content").innerHTML =
     '<div class="toolbar"><input type="search" id="client-search" placeholder="Search name, phone or email" aria-label="Search clients"><button class="btn primary" id="client-add">+ New client</button></div><div id="client-results"></div>';
+  const version = state.version;
+  if (owner()) {
+    $("client-add").insertAdjacentHTML(
+      "beforebegin",
+      '<button class="btn" id="client-import">Import clients</button><button class="btn" id="client-export">Export CSV</button>',
+    );
+    $("client-import").onclick = () => setPage("client-transfer");
+    $("client-export").onclick = () => {
+      showDrawer(
+        "Export clients",
+        "Clients",
+        '<p>Export all client profiles as a UTF-8 CSV. Photos and appointment history are not included.</p><label class="check"><input type="checkbox" id="client-export-notes"> Include client notes</label><p id="client-export-error" class="error" role="alert" hidden></p>',
+      );
+      $("drawer-footer").innerHTML =
+        '<button class="btn primary" id="client-export-download">Download CSV</button>';
+      const epoch = drawerEpoch;
+      $("client-export-download").onclick = async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          await downloadReport(
+            "notes=" + $("client-export-notes").checked,
+            "/api/clients/export.csv?",
+          );
+          if (epoch === drawerEpoch) closeDrawer();
+        } catch (error) {
+          if (epoch === drawerEpoch) {
+            $("client-export-error").textContent = error.message;
+            $("client-export-error").hidden = false;
+            button.disabled = false;
+          }
+        }
+      };
+    };
+  }
   $("client-add").onclick = () => clientDialog();
   let sequence = 0;
   const search = async () => {
@@ -902,7 +953,12 @@ async function renderClients() {
       const data = await api(
         "/clients?q=" + encodeURIComponent($("client-search").value),
       );
-      if (current !== sequence || state.page !== "clients") return;
+      if (
+        current !== sequence ||
+        state.page !== "clients" ||
+        state.version !== version
+      )
+        return;
       state.clients = data.clients;
       $("client-results").innerHTML = data.clients.length
         ? `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Phone</th><th>Email</th><th></th></tr></thead><tbody>${data.clients.map((c) => `<tr><td><div class="name-cell">${avatar("clients", c, esc)}<strong>${esc(c.name)}</strong></div></td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><button class="btn" data-profile="${esc(c.id)}">Profile</button></td></tr>`).join("")}</tbody></table></div><p class="hint">Up to 100 matching clients. Use search to narrow the list.</p>`

@@ -34,6 +34,9 @@ test("Voucher Worker + D1: balances, linked treatments, concurrent use and corre
     convertV4MiniflareOptions({
       modules: [
         "worker.mjs",
+        "client-transfer.mjs",
+        "client-transfer-schema.mjs",
+        "client-csv.mjs",
         "monthly-schema.mjs",
         "monthly-periods.mjs",
         "monthly-email.mjs",
