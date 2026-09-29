@@ -1,5 +1,6 @@
 import { mountClientMatches } from "./client-matches.js";
 import { mountBookingAvailability } from "./calendar-availability.js";
+import { mountCalendarInteractions } from "./calendar-interactions.js";
 import { renderClientTransfer } from "./client-transfer.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
@@ -92,6 +93,7 @@ let state = {
   toastTimer,
   refreshTimer,
   drag = null,
+  calendarInteractions = null,
   sessionEpoch = 0;
 const owner = () => state.user?.role === "owner",
   operator = () => ["owner", "reception"].includes(state.user?.role);
@@ -140,6 +142,8 @@ async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 function signOutView() {
+  calendarInteractions?.dispose();
+  calendarInteractions = null;
   sessionEpoch++;
   state = {
     ...state,
@@ -168,12 +172,14 @@ function closeDrawer() {
   $("drawer-footer").textContent = "";
 }
 function showDrawer(title, kicker, html) {
+  calendarInteractions?.dismiss();
   drawerEpoch++;
   $("drawer-title").textContent = title;
   $("drawer-kicker").textContent = kicker;
   $("drawer-content").innerHTML = html;
   $("drawer-footer").innerHTML = "";
   if (!$("drawer").open) $("drawer").showModal();
+  $("drawer-content").scrollTop = 0;
 }
 function errorBox(message) {
   return `<p class="error" id="form-error" role="alert" ${message ? "" : "hidden"}>${esc(message || "")}</p>`;
@@ -272,6 +278,8 @@ async function setPage(page, monthlyFilters = null) {
   if (!state.user) return;
   if (page !== "calendar" && (!operator() || (page !== "clients" && !owner())))
     return;
+  calendarInteractions?.dispose();
+  calendarInteractions = null;
   state.page = page;
   if (page !== "monthly" && location.hash.startsWith("#report="))
     history.replaceState(null, "", location.pathname);
@@ -427,6 +435,8 @@ function resources() {
   ];
 }
 function renderCalendarShell() {
+  calendarInteractions?.dispose();
+  calendarInteractions = null;
   $("page-content").innerHTML =
     `<div class="toolbar"><div class="toolgroup"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button><div class="segments" aria-label="Calendar resources">${[
       ["all", "All resources"],
@@ -447,6 +457,8 @@ function renderCalendarShell() {
       )
       .join("")}<span>♥ Requested therapist</span></div>`;
   const change = async (date) => {
+    calendarInteractions?.dispose();
+    calendarInteractions = null;
     state.date = date;
     $("calendar-date").value = date;
     try {
@@ -495,6 +507,8 @@ async function loadCalendar() {
 }
 function renderCalendar() {
   if (!$("calendar-grid")) return;
+  calendarInteractions?.dispose();
+  calendarInteractions = null;
   const list = resources(),
     scroll = $("calendar-scroll"),
     top = scroll.scrollTop,
@@ -563,37 +577,22 @@ function renderCalendar() {
     const grip = el.querySelector(".drag-grip");
     if (grip) grip.onpointerdown = (event) => startDrag(event, a, el);
   });
-  if (operator())
-    document.querySelectorAll("[data-resource]").forEach(
-      (column) =>
-        (column.onclick = (event) => {
-          if (event.target.closest("[data-appointment]")) return;
-          const r = list.find((r) => r.id === column.dataset.resource),
-            rect = column.getBoundingClientRect(),
-            start = Math.max(
-              600,
-              Math.min(
-                1315,
-                Math.round(((event.clientY - rect.top) / 2 + 600) / 5) * 5,
-              ),
-            );
-          appointmentDialog(null, {
-            date: state.date,
-            start,
-            ...(r.kind === "therapist"
-              ? { therapistId: r.id }
-              : {
-                  roomId: r.id,
-                  bed: Math.min(
-                    r.capacity - 1,
-                    Math.floor(
-                      ((event.clientX - rect.left) / rect.width) * r.capacity,
-                    ),
-                  ),
-                }),
-          });
-        }),
-    );
+  if (operator()) {
+    const date = state.date,
+      version = state.version;
+    calendarInteractions = mountCalendarInteractions({
+      root: scroll,
+      resources: list,
+      date,
+      onAdd: (defaults) =>
+        appointmentDialog(null, defaults).catch(showAppError),
+      isCurrent: () =>
+        operator() &&
+        state.page === "calendar" &&
+        state.date === date &&
+        state.version === version,
+    });
+  }
 }
 function availability(r) {
   if (r.kind !== "therapist") return "";
@@ -629,6 +628,7 @@ function updateClock() {
 }
 function startDrag(event, a, element) {
   if (!operator() || event.button !== 0) return;
+  calendarInteractions?.dismiss({ blockClick: true });
   event.preventDefault();
   event.stopPropagation();
   drag = {
@@ -717,12 +717,6 @@ document.addEventListener("pointercancel", () => {
 
 async function appointmentDialog(existing = null, defaults = {}) {
   if (!operator()) return;
-  try {
-    state.clients = (await api("/clients")).clients;
-  } catch (error) {
-    showAppError(error);
-    return;
-  }
   if (
     !state.catalogue.services.some((s) => s.active) ||
     !state.catalogue.therapists.some((t) => t.active)
@@ -730,9 +724,57 @@ async function appointmentDialog(existing = null, defaults = {}) {
     toast("Add a treatment and an active team member first.");
     return;
   }
+  const openingDate = existing?.date || defaults.date || state.date;
+  showDrawer(
+    existing ? "Appointment details" : "New appointment",
+    prettyDate(openingDate),
+    '<p id="booking-opening" class="hint" role="status" aria-live="polite" aria-busy="true">Loading appointment…</p>',
+  );
+  $("drawer-footer").innerHTML =
+    '<button class="btn" id="form-cancel">Cancel</button>';
+  $("form-cancel").onclick = closeDrawer;
+  const openingEpoch = drawerEpoch,
+    openingVersion = state.version,
+    openingSession = sessionEpoch,
+    openingCurrent = () =>
+      $("drawer").open &&
+      drawerEpoch === openingEpoch &&
+      state.version === openingVersion &&
+      sessionEpoch === openingSession &&
+      operator();
+  let clients;
+  try {
+    clients = (await api("/clients")).clients;
+    if (!openingCurrent()) return;
+    if (!Array.isArray(clients))
+      throw new Error("Client details could not be loaded. Please try again.");
+    if (
+      existing?.clientId &&
+      !clients.some((c) => c.id === existing.clientId)
+    ) {
+      const result = await api("/clients/" + existing.clientId);
+      if (!openingCurrent()) return;
+      if (!result.client || result.client.id !== existing.clientId)
+        throw new Error(
+          "Client details could not be loaded. Please try again.",
+        );
+      clients.push(result.client);
+    }
+  } catch (error) {
+    if (!openingCurrent()) return;
+    $("drawer-content").innerHTML =
+      `<p class="error" id="booking-opening-error" role="alert">${esc(error.message)}</p><button class="btn primary" id="booking-opening-retry" type="button">Try again</button>`;
+    $("booking-opening-retry").onclick = () => {
+      if (openingCurrent())
+        void appointmentDialog(existing, { ...defaults, date: openingDate });
+    };
+    return;
+  }
+  if (!openingCurrent()) return;
+  state.clients = clients;
   const first = state.catalogue.services.find((s) => s.active),
     a = existing || {
-      date: state.date,
+      date: openingDate,
       start: 600,
       duration: first.duration,
       serviceId: first.id,
@@ -747,17 +789,6 @@ async function appointmentDialog(existing = null, defaults = {}) {
       netCents: first.priceCents,
       ...defaults,
     };
-  if (
-    existing?.clientId &&
-    !state.clients.some((c) => c.id === existing.clientId)
-  ) {
-    try {
-      state.clients.push((await api("/clients/" + existing.clientId)).client);
-    } catch (error) {
-      showAppError(error);
-      return;
-    }
-  }
   showDrawer(
     existing ? "Appointment details" : "New appointment",
     prettyDate(a.date),
@@ -777,6 +808,14 @@ async function appointmentDialog(existing = null, defaults = {}) {
     )}</select></label><label><span>Room</span><select name="roomId" id="booking-room">${opts(state.catalogue.rooms, a.roomId)}</select></label><label><span>Table</span><select name="bed" id="booking-bed"></select></label>${owner() ? input("grossCents", "Full price (RSD)", (a.grossCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') + input("netCents", "After discount (RSD)", (a.netCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') : ""}<label class="wide"><span>Requested therapist · optional</span><select name="requestedTherapistId">${opts(state.catalogue.therapists, a.requestedTherapistId, "No specific request")}</select></label><label class="wide"><span>Appointment note</span><textarea name="note" rows="3" maxlength="2000">${esc(a.note)}</textarea></label></div>${existing ? `<p class="hint">Booked on ${esc(stamp(a.createdAt))}</p>` : ""}${errorBox()}</form>`,
   );
   const form = $("appointment-form"),
+    formEpoch = drawerEpoch,
+    formCurrent = () =>
+      form.isConnected &&
+      $("drawer").open &&
+      drawerEpoch === formEpoch &&
+      state.version === openingVersion &&
+      sessionEpoch === openingSession &&
+      operator(),
     beds = (selected = a.bed) => {
       const capacity = room($("booking-room").value).capacity;
       selected = Math.min(capacity - 1, Math.max(0, Number(selected)));
@@ -883,7 +922,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
       const data = await api(
         "/clients?q=" + encodeURIComponent($("booking-client-search").value),
       );
-      if (sequence !== searchSequence || !$("booking-client")) return;
+      if (sequence !== searchSequence || !formCurrent()) return;
       const selected = $("booking-client").value,
         known = state.clients.find((c) => c.id === selected);
       state.clients = data.clients;
@@ -896,7 +935,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
       );
       showClientPhoto();
     } catch (error) {
-      formError(error);
+      if (sequence === searchSequence && formCurrent()) formError(error);
     }
   };
   if (!existing)
@@ -913,7 +952,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
       clientProfile(existing.clientId, () => appointmentDialog(existing));
   bindForm(
     "appointment-form",
-    async (fd) => {
+    async (fd, isCurrent) => {
       const body = {
         date: fd.get("date"),
         start: minutes(fd.get("start")),
@@ -947,9 +986,10 @@ async function appointmentDialog(existing = null, defaults = {}) {
           body,
         });
       } catch (error) {
-        void availability?.resume();
+        if (isCurrent() && formCurrent()) void availability?.resume();
         throw error;
       }
+      if (!isCurrent() || !formCurrent()) return;
       closeDrawer();
       await loadCalendar();
       toast("Appointment saved.");
