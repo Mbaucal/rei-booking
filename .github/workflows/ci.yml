@@ -38,4 +38,14 @@ jobs:
       - name: Install Chromium headless shell
         run: node "$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/cli.js" install --with-deps chromium --only-shell
       - name: Check calendar in desktop, phone and tablet browsers
+        env:
+          REI_BROWSER_ARTIFACTS: browser-artifacts
         run: REI_PLAYWRIGHT_MODULE="$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/index.mjs" node scripts/test-calendar-browser.mjs
+      - name: Keep fictional calendar screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: calendar-browser-screenshots
+          path: browser-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
