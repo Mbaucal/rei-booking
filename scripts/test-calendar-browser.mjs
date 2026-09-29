@@ -833,7 +833,11 @@ try {
       const abandoned = deferred();
       f.delayed.set("abandoned-opening", abandoned);
       f.clientResponses.push({ wait: abandoned });
+      const abandonedStarted = page.waitForRequest(
+        (r) => new URL(r.url()).pathname === "/api/clients",
+      );
       await page.locator("#appointment-add").click();
+      const abandonedRequest = await abandonedStarted;
       await page.locator("#booking-opening").waitFor();
       await page.locator("#form-cancel").click();
       await page.locator('[data-page="clients"]').click();
@@ -842,7 +846,7 @@ try {
         .filter({ hasText: "Clients" })
         .waitFor();
       const abandonedResponse = page.waitForResponse(
-        (r) => new URL(r.url()).pathname === "/api/clients",
+        (r) => r.request() === abandonedRequest,
       );
       abandoned.release();
       await abandonedResponse;
