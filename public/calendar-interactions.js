@@ -86,6 +86,7 @@ export function mountCalendarInteractions({
     blockClick = false,
     keyboardScroll = null;
   const remembered = new WeakMap();
+  let scrollPositionsAtOpen = new Map();
   const columns = [...root.querySelectorAll("[data-resource]")];
   const resource = (column) =>
     resources.find(
@@ -105,6 +106,7 @@ export function mountCalendarInteractions({
     menu.hidden = true;
     selected = null;
     menuColumn = null;
+    scrollPositionsAtOpen.clear();
     hint.remove();
     if (suppress) blockClick = true;
     if (restoreFocus && previous?.isConnected)
@@ -149,6 +151,14 @@ export function mountCalendarInteractions({
       position = calendarMenuPosition(anchor, box, visible);
     menu.style.left = `${position.left}px`;
     menu.style.top = `${position.top}px`;
+    // Focus and keyboard navigation can queue scroll events. Layout already
+    // reflects those offsets when the menu is anchored; only a later movement
+    // should dismiss it, not notification of an earlier scroll.
+    for (let node = root; node; node = node.parentElement)
+      scrollPositionsAtOpen.set(node, {
+        top: node.scrollTop,
+        left: node.scrollLeft,
+      });
     add.focus({ preventScroll: true });
   }
   function fromPointer(column, event) {
@@ -309,13 +319,19 @@ export function mountCalendarInteractions({
     "scroll",
     (event) => {
       if (menu.contains(event.target)) return;
+      const scroller =
+        event.target === doc ? doc.scrollingElement : event.target;
+      const atOpen = scrollPositionsAtOpen.get(scroller);
+      if (
+        !menu.hidden &&
+        atOpen &&
+        atOpen.top === scroller.scrollTop &&
+        atOpen.left === scroller.scrollLeft
+      )
+        return;
       const movedByKeyboard = keyboardScroll;
       keyboardScroll = null;
-      if (
-        event.target === root &&
-        movedByKeyboard?.top === root.scrollTop &&
-        menu.hidden
-      ) {
+      if (event.target === root && movedByKeyboard?.top === root.scrollTop) {
         showHint(
           movedByKeyboard.column,
           remembered.get(movedByKeyboard.column),

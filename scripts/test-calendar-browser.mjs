@@ -267,6 +267,12 @@ async function scenario(name, device, run) {
     );
     passed++;
     console.log(`PASS ${device.name}: ${name}`);
+  } catch (error) {
+    await capture(
+      page,
+      id.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-failure",
+    ).catch(() => {});
+    throw error;
   } finally {
     for (const delay of f.delayed.values()) delay.release();
     await context.close();
@@ -693,6 +699,12 @@ try {
         await column.evaluate((el) => document.activeElement === el),
         true,
       );
+      await page.keyboard.press("Enter");
+      await page.locator("#calendar-slot-menu").waitFor();
+      await page.locator("#calendar-scroll").evaluate((el) => {
+        el.scrollTop += 20;
+      });
+      await page.locator("#calendar-slot-menu").waitFor({ state: "hidden" });
     },
   );
   for (const device of [desktop, phone])
