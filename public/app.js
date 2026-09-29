@@ -1,4 +1,5 @@
 import { mountClientMatches } from "./client-matches.js";
+import { mountBookingAvailability } from "./calendar-availability.js";
 import { renderClientTransfer } from "./client-transfer.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
@@ -577,6 +578,7 @@ function renderCalendar() {
               ),
             );
           appointmentDialog(null, {
+            date: state.date,
             start,
             ...(r.kind === "therapist"
               ? { therapistId: r.id }
@@ -775,13 +777,26 @@ async function appointmentDialog(existing = null, defaults = {}) {
     )}</select></label><label><span>Room</span><select name="roomId" id="booking-room">${opts(state.catalogue.rooms, a.roomId)}</select></label><label><span>Table</span><select name="bed" id="booking-bed"></select></label>${owner() ? input("grossCents", "Full price (RSD)", (a.grossCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') + input("netCents", "After discount (RSD)", (a.netCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') : ""}<label class="wide"><span>Requested therapist · optional</span><select name="requestedTherapistId">${opts(state.catalogue.therapists, a.requestedTherapistId, "No specific request")}</select></label><label class="wide"><span>Appointment note</span><textarea name="note" rows="3" maxlength="2000">${esc(a.note)}</textarea></label></div>${existing ? `<p class="hint">Booked on ${esc(stamp(a.createdAt))}</p>` : ""}${errorBox()}</form>`,
   );
   const form = $("appointment-form"),
-    beds = () => {
+    beds = (selected = a.bed) => {
+      const capacity = room($("booking-room").value).capacity;
+      selected = Math.min(capacity - 1, Math.max(0, Number(selected)));
       $("booking-bed").innerHTML = Array.from(
-        { length: room($("booking-room").value).capacity },
+        { length: capacity },
         (_, i) =>
-          `<option value="${i}" ${i === a.bed ? "selected" : ""}>Table ${i + 1}</option>`,
+          `<option value="${i}" ${i === selected ? "selected" : ""}>Table ${i + 1}</option>`,
       ).join("");
     };
+  let availability = null;
+  const availabilityEpoch = drawerEpoch,
+    availabilityVersion = state.version;
+  if (!existing) {
+    const feedback = document.createElement("p");
+    feedback.id = "booking-availability";
+    feedback.className = "booking-availability";
+    feedback.setAttribute("role", "status");
+    feedback.setAttribute("aria-live", "polite");
+    form.elements.bed.closest(".fields").after(feedback);
+  }
   if (existing && owner()) {
     const button = document.createElement("button");
     button.type = "button";
@@ -842,7 +857,8 @@ async function appointmentDialog(existing = null, defaults = {}) {
     });
   }
   beds();
-  $("booking-room").onchange = beds;
+  $("booking-room").onchange = () =>
+    beds(existing ? a.bed : form.elements.bed.value);
   $("booking-service").onchange = () => {
     const s = service($("booking-service").value);
     form.elements.duration.value = s.duration;
@@ -924,16 +940,42 @@ async function appointmentDialog(existing = null, defaults = {}) {
           instagram: fd.get("newInstagram"),
           note: fd.get("newNote"),
         };
-      await api("/appointments" + (existing ? "/" + existing.id : ""), {
-        method: existing ? "PUT" : "POST",
-        body,
-      });
+      availability?.suspend();
+      try {
+        await api("/appointments" + (existing ? "/" + existing.id : ""), {
+          method: existing ? "PUT" : "POST",
+          body,
+        });
+      } catch (error) {
+        void availability?.resume();
+        throw error;
+      }
       closeDrawer();
       await loadCalendar();
       toast("Appointment saved.");
     },
     "Save appointment",
   );
+  if (!existing)
+    availability = mountBookingAvailability({
+      form,
+      feedback: $("booking-availability"),
+      catalogue: state.catalogue,
+      defaults,
+      loadAppointments: async (date) =>
+        (await api(`/appointments?from=${date}&to=${date}`)).appointments,
+      applyResources: (selected) => {
+        form.elements.therapistId.value = selected.therapistId;
+        form.elements.roomId.value = selected.roomId;
+        beds(selected.bed);
+      },
+      isCurrent: () =>
+        form.isConnected &&
+        $("drawer").open &&
+        availabilityEpoch === drawerEpoch &&
+        availabilityVersion === state.version &&
+        operator(),
+    });
 }
 function appointmentDetails(a) {
   showDrawer(

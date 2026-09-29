@@ -306,6 +306,25 @@ main {
   color: var(--muted);
   border-bottom: 1px solid var(--line);
 }
+.booking-availability {
+  padding: 12px 14px;
+  margin: 16px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f1f5ef;
+  color: var(--green-dark);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.booking-availability[data-state="loading"] {
+  background: var(--panel);
+  color: var(--muted);
+}
+.booking-availability[data-state="warning"] {
+  background: #fff5e5;
+  border-color: #dfc9a2;
+  color: #705121;
+}
 .calendar-scroll {
   height: 70vh;
   min-height: 440px;
