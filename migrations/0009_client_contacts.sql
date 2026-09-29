@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS client_instagram (client_id TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, instagram TEXT UNIQUE CHECK(instagram IS NULL OR length(instagram) BETWEEN 1 AND 30));

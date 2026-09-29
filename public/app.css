@@ -1346,3 +1346,27 @@ tr:last-child td {
     width: 100%;
   }
 }
+
+.client-matches {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid var(--gold, #b08b3b);
+  border-radius: 12px;
+  background: #faf5e9;
+  overflow-wrap: anywhere;
+}
+.client-matches[hidden] {
+  display: none;
+}
+.client-match + .client-match {
+  border-top: 1px solid #ddd4bf;
+  margin-top: 12px;
+}
+.client-match .btn {
+  margin: 4px 8px 4px 0;
+  min-height: 44px;
+}
+.client-note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

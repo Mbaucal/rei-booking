@@ -1,3 +1,8 @@
+import {
+  instagramHandle,
+  instagramStatement,
+  contactWrite,
+} from "./client-contacts.mjs";
 import { randomUUID, randomBytes } from "node:crypto";
 import { fail, digest, requireRole, readJSON } from "./security.mjs";
 import { text, integer, isoDate, clientInput } from "./domain.mjs";
@@ -75,7 +80,14 @@ function saleInput(body) {
   if (body.buyerId && body.newBuyer)
     fail(400, "Choose an existing buyer or add a new one.");
   const buyerId = body.buyerId ? text(body.buyerId, 100, "buyer") : null;
-  const newBuyer = body.newBuyer ? clientInput(body.newBuyer) : null;
+  const newBuyer = body.newBuyer
+    ? {
+        ...clientInput(body.newBuyer),
+        ...(body.newBuyer.instagram !== undefined
+          ? { instagram: instagramHandle(body.newBuyer.instagram) }
+          : {}),
+      }
+    : null;
   if (!["cash", "card", "bank_transfer", "other"].includes(body.paymentMethod))
     fail(400, "Choose a payment method.");
   if (body.paymentConfirmed !== true)
@@ -325,7 +337,14 @@ export async function checkout(db, user, body) {
     ),
   );
   try {
-    await db.batch(queries);
+    if (input.newBuyer)
+      await contactWrite(db, buyer, "", () =>
+        db.batch([
+          ...queries,
+          ...instagramStatement(db, buyer.id, buyer.instagram || ""),
+        ]),
+      );
+    else await db.batch(queries);
   } catch (error) {
     // A concurrent retry may have completed after the initial lookup. Every other
     // statement (including a staged buyer) rolls back with the unique request ID.

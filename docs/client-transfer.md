@@ -1,35 +1,42 @@
-# Client transfer (0.8.0)
+# Client transfer (0.9.0)
 
-Owner navigation: **Clients → Import clients** or **Clients → Export CSV**. Reception keeps its normal client/profile access; bulk transfer is owner-only at the API boundary. Therapists do not receive client transfer data.
+Owner navigation: **Clients → Import clients** or **Clients → Export CSV**. Reception keeps normal client/profile access; bulk transfer is owner-only at the API boundary. Therapists do not receive client transfer data.
 
-## Import
+## Import one file
 
-1. Select a UTF-8 CSV (up to 1 MiB and 1,000 client rows). Comma, semicolon and tab separators are supported, including quoted cells, escaped quotes, a BOM and multiline notes.
-2. Select Fresha, Rei Booking or Other. Use the same source on repeated imports. Other is a single source namespace; do not mix external IDs from unrelated systems under it.
-3. Review the proposed column mapping. Map Full name, or First name with optional Last name. Phone, email, client note and a stable source client ID are optional. Duplicate headers are distinguished by their column number. Unmapped columns are discarded.
-4. Preview normalized records. Nothing is added to the client list during preview. Ready rows start selected; name matches or rows without phone/email need an explicit identity check. Invalid/conflicting/duplicate/existing rows cannot be selected.
-5. Review the selection across all preview pages, tick the confirmation and click Import. A receipt reports added and skipped rows. Fix skipped conflicts in the source file and prepare a new preview if needed.
+1. Select one UTF-8 CSV up to **25 MiB and 50,000 client rows**. No manual splitting. Comma, semicolon and tab separators are supported, including quoted cells, escaped quotes, a BOM and multiline notes. Up to 40 columns are accepted.
+2. Select Fresha, Rei Booking or Other. Use the same source on repeated imports. Other is one source namespace; do not mix IDs from unrelated systems under it.
+3. Review column mapping. Map Full name, or First name with optional Last name. Phone, email, **Instagram**, client note and a stable source client ID are optional. Unmapped columns are discarded before upload.
+4. Choose **Preview import**. The browser automatically uploads bounded parts, with progress. Keep the page open. If a connection fails, retry Preview import to continue the same upload. No clients are created at this stage.
+5. Review the paginated preview. Ready rows start selected across all pages. Rows with only a name, or a name matching an existing client, require an explicit identity check. Invalid, conflicting, duplicate and existing rows cannot be selected. Existing contact matches include the client's name and an **Open** profile action.
+6. Tick the confirmation and choose Import. All selected profiles commit together; the receipt reports added and skipped rows. Retrying a lost confirmation response returns the original receipt without duplicate clients.
 
-Phone comparison uses the same normalization as normal client entry: a leading 0 uses Serbia (+381), and + or 00 retain an explicit country code. Email comparison is case-insensitive. Names alone never merge profiles. Shared phones/emails with different details are conflicts, including within one file. Identical rows with a shared contact or external ID are deduplicated. Two name-only rows cannot be assumed to represent the same person and require manual review.
+Phone comparison uses the same normalization as normal entry: a leading 0 uses Serbia (+381); + or 00 retain an explicit country code. Email and Instagram comparison are case-insensitive. Instagram accepts a username, @username or an Instagram profile URL, and stores a normalized username.
 
-Import creates new profiles; it does not edit existing profiles, merge contacts, upload portraits or infer visit history. Matching an existing profile leaves its name, contacts, notes and photos unchanged. Review/correct an existing client through its profile.
+Names alone never merge profiles. Shared contacts or source IDs with different details are conflicts, including across separate upload parts of the same file. Identical rows with a shared contact or external ID are deduplicated. Two contactless rows cannot be assumed to be one person and need manual review.
 
-Stable source IDs are remembered for newly imported clients. Without IDs, an exact parsed-file/row fingerprint makes repeating that file safe, including contactless clients. Altering/reordering a name-only file does not create a trustworthy identity: its matching names remain unchecked for manual review. Existing skipped profiles are not silently linked to external IDs.
+Import creates new profiles. Existing details, notes, photos and appointment history are not overwritten. Correct an existing client through its profile. Stable source IDs are remembered for newly imported clients. Without IDs, a parsed-file/row fingerprint makes repeating that exact file safe, including contactless clients. Reordering or changing a name-only file is not a reliable identity; matching names remain unchecked for review.
 
-Previews are private to the owner who prepared them, expire after one hour, and store only mapped values. Expired previews and excess old previews are removed when preparing a subsequent preview (up to ten active previews per owner). Applied previews discard their mapped plan, retaining an aggregate receipt and source identity keys linked to that import. A preview is invalidated by any intervening change to the client list. The confirmation claim, new profiles, identity keys and aggregate audit entry commit in one D1 batch; any write failure rolls all of them back. Retrying the same confirmation returns its original receipt. Changing the selection after a successful confirmation requires a new preview.
+Previews are private to their owner and expire after 24 hours. Expired and excess old previews are removed on a subsequent import (up to ten active previews per owner). A client-list change after upload starts invalidates confirmation: read the file again for an up-to-date duplicate check. Applied imports discard staged rows, contact indexes, upload chunks and column configuration, retaining the aggregate receipt and source identity keys. A D1 batch commits the confirmation claim, profiles, Instagram contacts, identity keys and audit entry atomically. Any failure rolls everything back.
 
-This release supports up to 10,000 clients in total and 40 columns per input file. It rejects overflow rather than truncating imports. Split larger CSVs into files with a repeated header, retaining stable source IDs. No undo/delete-import feature is included; review before confirming.
+The previous small-file API remains for already-open 0.8 pages. Refresh the application to use the new large-file workflow. It requires no manual schema setup.
+
+## Client notes and duplicate warnings
+
+Clients → New client / Edit client includes **Client note** and **Instagram**. Both also appear when adding a new client from Calendar or a new buyer in Sales. Notes remain distinct from appointment notes. Profiles show notes with line breaks and an Instagram profile link. Client search accepts names, phones, email and Instagram.
+
+While entering a phone, email or Instagram, the form checks for matches and displays the existing client's name and contact details. **Open profile** is available in Clients and Sales. **Use this client** selects the existing record in Calendar and Sales. Saving performs the same checks on the server; unique database constraints protect concurrent entries. There is no automatic merge or reassignment of booking history. Clearing an Instagram field releases that handle; saving an older client form without that field preserves it.
 
 ## Export
 
-Exports all clients, independent of the current 100-result search page, up to 10,000 records. The CSV includes Rei client ID, Full name, Phone and Email. Notes are excluded unless explicitly selected. Photos and appointments are excluded.
+Exports all clients independently of the 100-result search page, up to 50,000 records. The CSV includes Rei client ID, Full name, Phone, Email and Instagram. Notes are excluded unless selected. Photos and appointments are excluded.
 
-The download uses UTF-8 with BOM and quoted CSV cells. Spreadsheet formula-like cells receive a leading apostrophe. Selecting a recognized **Rei Booking** export on import reverses this escaping, preserving plus-prefixed phone numbers and literal notes. Exports above the 1,000-row import limit must be split before reimport. Export does not change records.
+Downloads use UTF-8 with BOM and quoted CSV cells. Formula-like cells receive a leading apostrophe. Importing a recognized Rei Booking export reverses this escaping, preserving plus-prefixed phones and literal notes. Export does not change records. The 25 MiB file-size limit still applies on reimport.
 
-## Deployment and acceptance
+## Deployment and validation
 
-The additive schema initializes on the first owner import action. `migrations/0008_client_transfer.sql` is the tracked equivalent; it is safe to apply after initialization. No manual console setup or credentials are needed for this feature.
+The additive schemas initialize automatically. `0009_client_contacts.sql` and `0010_large_client_import.sql` are the tracked equivalents and can be applied safely after initialization. Existing client IDs and appointment links are preserved.
 
-83 local tests and the deployment dry run pass. The actual Worker/D1 tests cover permissions/CSRF, CSV/mapping validation, normalization, duplicate and conflict handling, stale previews, repeated and concurrent confirmations, rollback, export escaping, a 1,000-row batch, persistence after restart and schema/migration parity. Data is fictional. Local browser execution was unavailable because the runtime has no Chromium executable; hosted visual/touch acceptance remains pending.
+Tests run the real Worker and D1 with fictional data. Coverage includes a **12,001-row CSV larger than 1 MiB through the actual browser upload helper**, a lost upload response and resume, concurrent confirmation, cross-part duplicates, named contact conflicts, stale previews, atomic rollback, export roundtrip, profile edits, Calendar/Sales entry, role restrictions, persistence after restart and migration parity. The parser is shared with the browser and tested at the 50,000-row boundary. Hosted visual/touch acceptance and a real salon CSV import remain pending.
 
-A real Fresha client CSV still needs its columns checked before importing salon data. Appointment-history migration is separate: the supplied historical appointment sample does not contain client contact IDs, requested flags or an explicit completed status. Timezone and status mapping must be agreed before that import. Loyalty rules remain undecided; email setup and remaining voucher work are deferred at the owner's request.
+Appointment-history migration is separate; source identity, timezone and status mapping still need agreement. Loyalty rules are undecided. Email setup and remaining voucher work stay deferred at the owner's request.

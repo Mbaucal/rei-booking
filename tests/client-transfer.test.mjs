@@ -47,7 +47,7 @@ test("client CSV parses quoted Unicode, multiline notes, BOM and separators; rej
   ])
     assert.throws(() => parseCSV(csv));
   assert.throws(() => parseCSV("Name\n" + "A".repeat(1048576)));
-  assert.throws(() => parseCSV("Name\n" + Array(1001).fill("Ana").join("\n")));
+  assert.throws(() => parseCSV("Name\n" + Array(50001).fill("Ana").join("\n")));
   for (const value of [
     "=1+1",
     " +123",
@@ -404,7 +404,11 @@ test("Client transfer Worker + D1: reviewed, atomic, repeat-safe imports and pri
       const csv = [parsed.headers, ...parsed.rows]
         .map((r) => r.map((v) => '"' + v.replaceAll('"', '""') + '"').join(","))
         .join("\r\n");
-      const p2 = await preview({ csv, source: "rei", mapping });
+      const p2 = await preview({
+        csv,
+        source: "rei",
+        mapping: { ...mapping, note: 5 },
+      });
       assert.equal(p2.status, 201);
       assert.ok(p2.data.rows.every((r) => r.status === "existing"));
       assert.equal(

@@ -1,3 +1,11 @@
+import { CSVError } from "./client-csv.mjs";
+import {
+  ensureClientContacts,
+  instagramHandle,
+  instagramStatement,
+  clientMatches,
+  contactWrite,
+} from "./client-contacts.mjs";
 import { clientTransferRoutes } from "./client-transfer.mjs";
 import { monthlyRoutes, runMonthly } from "./monthly-reports.mjs";
 import { ensurePhotoSchema } from "./photo-schema.mjs";
@@ -202,6 +210,7 @@ async function saveEntity(db, user, entity, body, id) {
     if (!before) fail(404, "Record not found.");
     integer(body.version, 1, 100000000, "record version");
   }
+  const instagram = entity === "clients" ? instagramHandle(body.instagram) : "";
   const recordId = id || randomUUID();
   const bonus =
     entity === "therapists" && body.bonus !== undefined
@@ -238,36 +247,53 @@ async function saveEntity(db, user, entity, body, id) {
     entity !== "services" && body.photo !== undefined
       ? photoInput(body.photo)
       : null;
-  await auditedWrite(
-    db,
-    query,
-    user,
-    entity,
-    recordId,
-    id ? "update" : "create",
-    before,
-    bonus ? { ...values, bonus } : values,
-    [
-      ...(bonus
-        ? [
-            stmt(
+  const write = () =>
+    auditedWrite(
+      db,
+      query,
+      user,
+      entity,
+      recordId,
+      id ? "update" : "create",
+      before,
+      bonus
+        ? { ...values, bonus }
+        : entity === "clients" && body.instagram !== undefined
+          ? { ...values, instagram }
+          : values,
+      [
+        ...(entity === "clients"
+          ? instagramStatement(
               db,
-              `INSERT INTO therapist_bonus_rules(therapist_id,mode,regular_rate,requested_rate,updated_at)
+              recordId,
+              instagram,
+              !id || body.instagram !== undefined,
+              true,
+            )
+          : []),
+        ...(bonus
+          ? [
+              stmt(
+                db,
+                `INSERT INTO therapist_bonus_rules(therapist_id,mode,regular_rate,requested_rate,updated_at)
 SELECT ?,?,?,?,? WHERE changes()=1
 ON CONFLICT(therapist_id) DO UPDATE SET mode=excluded.mode,regular_rate=excluded.regular_rate,requested_rate=excluded.requested_rate,updated_at=excluded.updated_at`,
-              recordId,
-              bonus.mode,
-              bonus.regular_rate,
-              bonus.requested_rate,
-              time,
-            ),
-          ]
-        : []),
-      ...(photo
-        ? [photoStatement(db, user, entity, recordId, photo, true)]
-        : []),
-    ],
-  );
+                recordId,
+                bonus.mode,
+                bonus.regular_rate,
+                bonus.requested_rate,
+                time,
+              ),
+            ]
+          : []),
+        ...(photo
+          ? [photoStatement(db, user, entity, recordId, photo, true)]
+          : []),
+      ],
+    );
+  if (entity === "clients")
+    await contactWrite(db, { ...values, instagram }, id || "", write);
+  else await write();
   return json({ id: recordId }, id ? 200 : 201);
 }
 async function saveAppointment(db, user, body, id) {
@@ -309,7 +335,11 @@ async function saveAppointment(db, user, body, id) {
       "Add a new client only to a new appointment without an existing client selected.",
     );
   const newClient = body.newClient
-    ? { id: randomUUID(), ...clientInput(body.newClient) }
+    ? {
+        id: randomUUID(),
+        ...clientInput(body.newClient),
+        instagram: instagramHandle(body.newClient.instagram),
+      }
     : null;
   const time = now(),
     values = {
@@ -384,32 +414,36 @@ ON CONFLICT(appointment_id) DO UPDATE SET mode=excluded.mode,regular_rate=exclud
   );
   let saved;
   if (newClient) {
-    const clientKeys = Object.keys(newClient);
-    const results = await db.batch([
-      stmt(
-        db,
-        `INSERT INTO clients(${clientKeys.join(",")},created_at,updated_at) VALUES(${Array(
-          clientKeys.length + 2,
-        )
-          .fill("?")
-          .join(",")})`,
-        ...Object.values(newClient),
-        time,
-        time,
-      ),
-      appointmentQuery,
-      ruleQuery,
-      stmt(
-        db,
-        "INSERT INTO audit_log(actor_id,action,entity,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?)",
-        user.id,
-        "create",
-        "clients",
-        newClient.id,
-        JSON.stringify(newClient),
-        time,
-      ),
-    ]);
+    const { instagram, ...clientFields } = newClient;
+    const clientKeys = Object.keys(clientFields);
+    const results = await contactWrite(db, newClient, "", () =>
+      db.batch([
+        stmt(
+          db,
+          `INSERT INTO clients(${clientKeys.join(",")},created_at,updated_at) VALUES(${Array(
+            clientKeys.length + 2,
+          )
+            .fill("?")
+            .join(",")})`,
+          ...Object.values(clientFields),
+          time,
+          time,
+        ),
+        appointmentQuery,
+        ruleQuery,
+        stmt(
+          db,
+          "INSERT INTO audit_log(actor_id,action,entity,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?)",
+          user.id,
+          "create",
+          "clients",
+          newClient.id,
+          JSON.stringify(newClient),
+          time,
+        ),
+        ...instagramStatement(db, newClient.id, instagram),
+      ]),
+    );
     saved = results[1].results[0];
   } else saved = (await db.batch([appointmentQuery, ruleQuery]))[0].results[0];
   if (!saved) fail(409, CONFLICT_MESSAGE);
@@ -432,7 +466,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.8.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.9.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -480,6 +514,7 @@ async function routes(request, env) {
     fail(403, "Change your temporary password before continuing.");
   await ensureReportSchema(db);
   await ensurePhotoSchema(db);
+  await ensureClientContacts(db);
   const photoMatch = path.match(
     /^\/api\/photos\/(clients|therapists)\/([^/]+)$/,
   );
@@ -572,6 +607,19 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
       comparison: previous ? comparison(report.totals, previous) : null,
     });
   }
+  if (path === "/api/clients/matches" && method === "GET") {
+    requireRole(user, "owner", "reception");
+    const phone = text(url.searchParams.get("phone") || "", 30, "phone", true),
+      instagram = instagramHandle(url.searchParams.get("instagram") || ""),
+      mail = email(url.searchParams.get("email") || "");
+    return json({
+      matches: await clientMatches(
+        db,
+        { phone, instagram, email: mail },
+        url.searchParams.get("exclude") || "",
+      ),
+    });
+  }
   const transfer = await clientTransferRoutes(request, db, user);
   if (transfer) return transfer;
   if (path === "/api/clients" && method === "GET") {
@@ -581,12 +629,18 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
     const normalized = /^[+\d\s().-]+$/.test(q) ? phoneKey(q) : null;
     const rows = await all(
       db,
-      "SELECT id,name,phone,email,note,version,created_at FROM clients WHERE name LIKE ? OR phone LIKE ? OR email LIKE ? OR (? IS NOT NULL AND phone_key LIKE ?) ORDER BY name LIMIT 100",
+      "SELECT c.id,c.name,c.phone,c.email,c.note,c.version,c.created_at,COALESCE(i.instagram,'') AS instagram FROM clients c LEFT JOIN client_instagram i ON i.client_id=c.id WHERE c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR (? IS NOT NULL AND c.phone_key LIKE ?) OR i.instagram LIKE ? ORDER BY c.name LIMIT 100",
       "%" + q + "%",
       "%" + q + "%",
       "%" + q + "%",
       normalized,
       normalized ? "%" + normalized + "%" : null,
+      "%" +
+        q
+          .replace(/^@/, "")
+          .replace(/^https?:\/\/(www\.)?instagram\.com\//i, "")
+          .replace(/\/$/, "") +
+        "%",
     );
     return json({ clients: await addPhotoMetadata(db, "clients", rows) });
   }
@@ -595,7 +649,7 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
     requireRole(user, "owner", "reception");
     const client = await one(
       db,
-      "SELECT id,name,phone,email,note,version,created_at FROM clients WHERE id=?",
+      "SELECT c.id,c.name,c.phone,c.email,c.note,c.version,c.created_at,COALESCE(i.instagram,'') AS instagram FROM clients c LEFT JOIN client_instagram i ON i.client_id=c.id WHERE c.id=?",
       clientMatch[1],
     );
     if (!client) fail(404, "Client not found.");
@@ -761,9 +815,12 @@ export default {
     try {
       return secureHeaders(await routes(request, env));
     } catch (error) {
-      let status = error instanceof HttpError ? error.status : 500,
+      let status =
+          error instanceof HttpError || error instanceof CSVError
+            ? error.status
+            : 500,
         message =
-          error instanceof HttpError
+          error instanceof HttpError || error instanceof CSVError
             ? error.message
             : "The request could not be completed.";
       const detail = String(error?.message || "");
@@ -800,7 +857,17 @@ export default {
         message =
           "A selected client, therapist, room or treatment no longer exists.";
       }
-      return secureHeaders(json({ error: message }, status));
+      return secureHeaders(
+        json(
+          {
+            error: message,
+            ...(error instanceof HttpError && error.matches
+              ? { matches: error.matches }
+              : {}),
+          },
+          status,
+        ),
+      );
     }
   },
 };

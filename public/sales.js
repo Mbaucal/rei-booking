@@ -1,3 +1,4 @@
+import { mountClientMatches } from "./client-matches.js";
 import {
   openVoucherRedemption,
   redemptionHistoryHTML,
@@ -25,11 +26,12 @@ export async function renderSales(ctx) {
     filters = { q: "", from: "", to: "", view: "net" },
     buyerMode = "walkin",
     buyer = null,
-    newBuyer = { name: "", phone: "", email: "" },
+    newBuyer = { name: "", phone: "", email: "", instagram: "", note: "" },
     paymentMethod = "cash",
     paymentReference = "",
     requestId = crypto.randomUUID(),
     checkoutPayload = null,
+    buyerMatches = null,
     busy = false,
     view = 0,
     drawerVersion = 0;
@@ -185,7 +187,7 @@ export async function renderSales(ctx) {
     cart = [];
     buyerMode = "walkin";
     buyer = null;
-    newBuyer = { name: "", phone: "", email: "" };
+    newBuyer = { name: "", phone: "", email: "", instagram: "", note: "" };
     requestId = crypto.randomUUID();
     checkoutPayload = null;
     paymentMethod = "cash";
@@ -193,13 +195,14 @@ export async function renderSales(ctx) {
     renderCart();
   }
   function renderCart() {
+    buyerMatches = null;
     root.innerHTML = `<div class="sales-heading"><div><p class="eyebrow">Sales / New sale</p><h2>A thoughtful gift</h2></div>${button("back-to-sales", "Back to vouchers")}</div>${errorHTML}
 <div class="sale-layout"><section class="sale-panel"><h3>Choose a gift</h3><p class="hint">Treatment prices come from your current menu.</p>${field("catalogueSearch", "Find a massage", "", "search", 'id="catalogue-search"')}
 <div class="voucher-catalogue" id="voucher-catalogue">${catalogue.map((s) => `<button class="voucher-option" type="button" data-service="${e(s.id)}"><span class="eyebrow">Massage voucher</span><strong>${e(s.name)}</strong><span>${s.duration} min · ${money(s.priceCents)}</span></button>`).join("")}<button type="button" class="voucher-option custom" id="custom-voucher"><span class="eyebrow">Any amount</span><strong>Custom gift value</strong><span>Choose an amount in RSD</span></button></div>${catalogue.length ? "" : '<p class="hint">Add priced treatments in Treatments to sell massage vouchers.</p>'}</section>
 <section class="sale-panel cart-panel"><h3>Your cart <span class="badge">${cart.length}</span></h3>
 <div class="cart-items">${cart.length ? cart.map((v, i) => `<article><div><strong>${e(v.serviceName)}</strong><small>${v.duration ? `${v.duration} min · ` : ""}${money(v.priceCents)}</small><small>For ${e(v.recipientName || "Gift recipient")}</small></div><div>${button("edit-cart-" + i, "Edit")}${button("remove-cart-" + i, "Remove")}</div></article>`).join("") : '<p class="hint">Select a massage or a custom amount to begin.</p>'}</div>
 <label>Buyer<select id="buyer-mode"><option value="walkin"${choice(buyerMode, "walkin")}>Walk-in / no client linked</option><option value="existing"${choice(buyerMode, "existing")}>Existing client</option><option value="new"${choice(buyerMode, "new")}>Add new client</option></select></label>
-<div id="buyer-fields">${buyerMode === "existing" ? `${field("buyerSearch", "Search client name, phone or email", "", "search", 'id="buyer-search"')}<div id="buyer-results"></div><p class="hint" id="buyer-selected">${buyer ? `Selected: ${e(buyer.name)}` : "Choose a client from the results."}</p>` : buyerMode === "new" ? `<div class="sales-form">${field("buyerName", "Buyer name", newBuyer.name, "text", 'id="buyer-name" maxlength="100"')}${field("buyerPhone", "Phone", newBuyer.phone, "tel", 'id="buyer-phone" maxlength="30"')}${field("buyerEmail", "Buyer email (optional)", newBuyer.email, "email", 'id="buyer-email" maxlength="254"')}</div>` : ""}</div>
+<div id="buyer-fields">${buyerMode === "existing" ? `${field("buyerSearch", "Search name, phone, email or Instagram", "", "search", 'id="buyer-search"')}<div id="buyer-results"></div><p class="hint" id="buyer-selected">${buyer ? `Selected: ${e(buyer.name)}` : "Choose a client from the results."}</p>` : buyerMode === "new" ? `<div class="sales-form">${field("buyerName", "Buyer name", newBuyer.name, "text", 'id="buyer-name" maxlength="100"')}${field("buyerPhone", "Phone", newBuyer.phone, "tel", 'id="buyer-phone" maxlength="30"')}${field("buyerEmail", "Buyer email (optional)", newBuyer.email, "email", 'id="buyer-email" maxlength="254"')}${field("buyerInstagram", "Instagram (optional)", newBuyer.instagram, "text", 'id="buyer-instagram" maxlength="250" placeholder="@username or profile URL"')}<label>Client note<textarea name="buyerNote" id="buyer-note" maxlength="2000">${e(newBuyer.note)}</textarea></label></div><div id="buyer-matches" class="client-matches" hidden></div>` : ""}</div>
 <p class="hint">The buyer is recorded on the sale. Choose a delivery email separately after issuing the voucher.</p>
 <label>Payment received by<select id="sale-payment"><option value="cash"${choice(paymentMethod, "cash")}>Cash</option><option value="card"${choice(paymentMethod, "card")}>Card</option><option value="bank_transfer"${choice(paymentMethod, "bank_transfer")}>Bank transfer</option><option value="other"${choice(paymentMethod, "other")}>Other</option></select></label>
 ${field("reference", "Payment reference (optional)", paymentReference, "text", 'id="sale-reference" maxlength="120"')}
@@ -262,10 +265,27 @@ ${button("complete-sale", "Complete sale & issue vouchers", true)}</section></di
       buyer = null;
       renderCart();
     };
-    if (buyerMode === "new")
-      for (const key of ["name", "phone", "email"])
+    if (buyerMode === "new") {
+      for (const key of ["name", "phone", "email", "instagram", "note"])
         $("buyer-" + key).oninput = (event) =>
           (newBuyer[key] = event.target.value);
+      buyerMatches = mountClientMatches({
+        form: $("buyer-fields"),
+        container: $("buyer-matches"),
+        api,
+        esc: e,
+        phone: "buyerPhone",
+        email: "buyerEmail",
+        instagram: "buyerInstagram",
+        current: isCurrent,
+        onOpen: ctx.openProfile,
+        onUse: (client) => {
+          buyer = client;
+          buyerMode = "existing";
+          renderCart();
+        },
+      });
+    }
     if (buyerMode === "existing") {
       let seq = 0;
       $("buyer-search").oninput = async (event) => {
@@ -413,6 +433,7 @@ ${v.kind === "amount" ? field("amount", "Gift value (RSD)", v.priceCents ? v.pri
       if (error.status && error.status < 500) {
         checkoutPayload = null;
         renderCart();
+        if (error.matches) buyerMatches?.show(error.matches);
       } else {
         $("complete-sale").disabled = false;
         $("complete-sale").textContent = "Retry same checkout";

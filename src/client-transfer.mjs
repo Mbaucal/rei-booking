@@ -1,3 +1,4 @@
+import { bulkRoutes } from "./client-bulk.mjs";
 import { randomUUID } from "node:crypto";
 import { fail, readJSON, requireRole, digest } from "./security.mjs";
 import { clientInput } from "./domain.mjs";
@@ -62,6 +63,11 @@ async function preview(db, user, body) {
     fail(400, "Choose the source of this file.");
   const parsed = parseCSV(body.csv, body.delimiter),
     { headers, rows } = parsed;
+  if (rows.length > 1000)
+    fail(
+      400,
+      "This page uses an older import workflow. Refresh the application to import one file with up to 50,000 clients.",
+    );
   validateMapping(body.mapping, headers);
   const rei = body.source === "rei" && isReiExport(headers);
   const fileHash = digest(JSON.stringify({ headers, rows }));
@@ -367,6 +373,8 @@ export async function clientTransferRoutes(request, db, user) {
   )
     return null;
   requireRole(user, "owner");
+  if (path.startsWith("/api/clients/import/bulk/"))
+    return bulkRoutes(request, db, user);
   if (path === "/api/clients/export.csv" && request.method === "GET") {
     if (
       url.searchParams.has("notes") &&
@@ -377,20 +385,21 @@ export async function clientTransferRoutes(request, db, user) {
     const records = (
       await db
         .prepare(
-          `SELECT id,name,phone,email${notes ? ",note" : ""} FROM clients ORDER BY name,id LIMIT 10001`,
+          `SELECT c.id,c.name,c.phone,c.email,COALESCE(g.instagram,'') AS instagram${notes ? ",c.note" : ""} FROM clients c LEFT JOIN client_instagram g ON g.client_id=c.id ORDER BY c.name,c.id LIMIT 50001`,
         )
         .all()
     ).results;
-    if (records.length > 10000)
+    if (records.length > 50000)
       fail(
         400,
-        "Export supports up to 10,000 clients. No partial export was produced.",
+        "Export supports up to 50,000 clients. No partial export was produced.",
       );
     const headers = [
       "Rei client ID",
       "Full name",
       "Phone",
       "Email",
+      "Instagram",
       ...(notes ? ["Notes"] : []),
     ];
     const csv =
@@ -398,7 +407,14 @@ export async function clientTransferRoutes(request, db, user) {
       [
         headers.map(csvCell).join(","),
         ...records.map((r) =>
-          [r.id, r.name, r.phone, r.email, ...(notes ? [r.note] : [])]
+          [
+            r.id,
+            r.name,
+            r.phone,
+            r.email,
+            r.instagram,
+            ...(notes ? [r.note] : []),
+          ]
             .map(csvCell)
             .join(","),
         ),

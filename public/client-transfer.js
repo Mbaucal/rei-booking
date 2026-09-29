@@ -1,9 +1,12 @@
+import { parseCSV, isReiExport, CSV_MAX_BYTES } from "./client-csv.js";
+import { uploadClientCSV } from "./client-upload.js";
 const labels = {
   name: "Full name",
   firstName: "First name",
   lastName: "Last name",
   phone: "Phone",
   email: "Email",
+  instagram: "Instagram",
   note: "Client note",
   sourceId: "Source client ID",
 };
@@ -13,11 +16,26 @@ const aliases = {
   lastName: ["last name", "lastname", "surname"],
   phone: ["phone", "phone number", "mobile", "mobile number"],
   email: ["email", "email address"],
+  instagram: [
+    "instagram",
+    "instagram account",
+    "instagram username",
+    "instagram handle",
+  ],
   note: ["note", "notes", "client note"],
   sourceId: ["rei client id", "client id", "customer id"],
 };
-export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
-  let csv = "",
+export function renderClientTransfer({
+  root,
+  api,
+  esc,
+  isCurrent,
+  back,
+  openProfile,
+}) {
+  const uploadState = {};
+  let readyRows = [],
+    csv = "",
     inspected = null,
     preview = null,
     page = 0,
@@ -28,7 +46,7 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
     <p>Upload a CSV, match its columns, then review the clients before adding them.</p>
     <p class="hint">Client profiles only. Photos and appointment history are not imported. Existing profiles are never overwritten.</p>
     <form id="transfer-file"><div class="fields">
-      <label class="wide"><span>CSV file · UTF-8 · up to 1 MiB / 1,000 clients</span><input id="transfer-csv" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" required></label>
+      <label class="wide"><span>CSV file · UTF-8 · up to 25 MiB / 50,000 clients · no manual splitting</span><input id="transfer-csv" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" required></label>
       <label><span>File source</span><select id="transfer-source"><option value="fresha">Fresha</option><option value="rei">Rei Booking</option><option value="other">Other</option></select></label>
       <label><span>Separator</span><select id="transfer-delimiter"><option value="auto">Detect automatically</option><option value=",">Comma</option><option value=";">Semicolon</option><option value="tab">Tab</option></select></label>
     </div><button class="btn primary" type="submit">Read columns</button></form></section>
@@ -46,6 +64,7 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
     },
     invalidate = () => {
       generation++;
+      for (const key of Object.keys(uploadState)) delete uploadState[key];
       inspected = null;
       preview = null;
       csv = "";
@@ -65,21 +84,23 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
     button.disabled = true;
     clearError();
     try {
-      if (file.size > 1048576)
-        throw new Error("Choose a CSV file of 1 MiB or smaller.");
+      if (file.size > CSV_MAX_BYTES)
+        throw new Error("Choose a CSV file of 25 MiB or smaller.");
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         await file.arrayBuffer(),
       );
       if (!current(version)) return;
       const separator = $("transfer-delimiter").value;
-      const data = await api("/clients/import/inspect", {
-        method: "POST",
-        body: { csv: text, delimiter: separator === "tab" ? "\t" : separator },
-      });
+      const data = parseCSV(text, separator === "tab" ? "\t" : separator);
       if (!current(version)) return;
-      csv = text;
-      inspected = data;
-      if (data.reiExport) $("transfer-source").value = "rei";
+      csv = "";
+      inspected = {
+        ...data,
+        total: data.rows.length,
+        sample: data.rows.slice(0, 3),
+        reiExport: isReiExport(data.headers),
+      };
+      if (inspected.reiExport) $("transfer-source").value = "rei";
       mappingView();
     } catch (e) {
       if (current(version))
@@ -121,7 +142,7 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
             `<label><span>${label}</span><select name="${field}"><option value="">Do not import</option>${inspected.headers.map((h, i) => `<option value="${i}" ${defaults[field] === i ? "selected" : ""}>${i + 1}. ${esc(h)}</option>`).join("")}</select><small data-sample="${field}" class="hint"></small></label>`,
         )
         .join("")}</div>
-      <button type="submit" class="btn primary">Preview import</button></form></section>`;
+      <button type="submit" class="btn primary">Preview import</button><p id="transfer-progress" class="hint" role="status"></p></form></section>`;
     const form = $("transfer-map");
     const sample = () =>
       form.querySelectorAll("select").forEach((select) => {
@@ -143,20 +164,23 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
         if (value !== "") mapping[key] = Number(value);
       button.disabled = true;
       try {
-        const data = await api("/clients/import/preview", {
-          method: "POST",
-          body: {
-            csv,
-            delimiter: inspected.delimiter,
-            source: $("transfer-source").value,
-            mapping,
+        const data = await uploadClientCSV({
+          api,
+          parsed: inspected,
+          mapping,
+          source: $("transfer-source").value,
+          current: () => current(version),
+          state: uploadState,
+          progress: (done, total) => {
+            if (current(version))
+              $("transfer-progress").textContent =
+                `Preparing preview: ${done.toLocaleString()} / ${total.toLocaleString()} rows. Keep this page open. No clients have been added yet.`;
           },
         });
         if (!current(version)) return;
         preview = data;
-        selected = new Set(
-          data.rows.filter((r) => r.selected).map((r) => r.row),
-        );
+        readyRows = data.readyRows;
+        selected = new Set(readyRows);
         page = 0;
         previewView();
       } catch (e) {
@@ -167,10 +191,8 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
     };
   }
   function previewView() {
-    const counts = {};
-    for (const r of preview.rows)
-      counts[r.status] = (counts[r.status] || 0) + 1;
-    const pages = Math.ceil(preview.rows.length / 50);
+    const counts = preview.counts;
+    const pages = Math.ceil(preview.total / 50);
     const names = {
       new: "Ready",
       review: "Check identity",
@@ -184,13 +206,12 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
       <div class="transfer-counts">${Object.entries(counts)
         .map(([s, n]) => `<span><strong>${n}</strong> ${names[s]}</span>`)
         .join("")}</div>
-      <p class="hint">Nothing has been added yet. Existing, invalid, duplicate and conflicting rows are skipped. Check identity rows start unselected. Correct problems in the CSV and create a new preview. Preview expires in one hour.</p>
+      <p class="hint">Nothing has been added yet. Existing, invalid, duplicate and conflicting rows are skipped. Check identity rows start unselected. Correct problems in the CSV and create a new preview. Preview expires in 24 hours.</p>
       <div class="toolbar"><button class="btn" id="transfer-remap">Back to columns</button><button class="btn" id="transfer-ready">Select ready rows</button><button class="btn" id="transfer-clear">Clear selection</button></div>
-      <div class="table-wrap"><table class="transfer-table"><caption class="hint">Showing rows ${page * 50 + 1}–${Math.min((page + 1) * 50, preview.rows.length)} of ${preview.rows.length}</caption><thead><tr><th>Select</th><th>Row</th><th>Client</th><th>Phone / email</th><th>Result</th></tr></thead><tbody>${preview.rows
-        .slice(page * 50, (page + 1) * 50)
+      <div class="table-wrap"><table class="transfer-table"><caption class="hint">Showing rows ${page * 50 + 1}–${Math.min((page + 1) * 50, preview.total)} of ${preview.total}</caption><thead><tr><th>Select</th><th>Row</th><th>Client</th><th>Contact details</th><th>Result</th></tr></thead><tbody>${preview.rows
         .map(
           (r) =>
-            `<tr><td>${["new", "review"].includes(r.status) ? `<input type="checkbox" data-row="${r.row}" aria-label="Import row ${r.row}: ${esc(r.client.name)}" ${selected.has(r.row) ? "checked" : ""}>` : "—"}</td><td>${r.row}</td><td><strong>${esc(r.client.name)}</strong>${r.client.note ? `<details><summary>Client note</summary><p>${esc(r.client.note)}</p></details>` : ""}</td><td>${esc(r.client.phone)}<br>${esc(r.client.email)}</td><td><strong>${names[r.status]}</strong><p class="hint">${esc(r.message)}</p></td></tr>`,
+            `<tr><td>${["new", "review"].includes(r.status) ? `<input type="checkbox" data-row="${r.row}" aria-label="Import row ${r.row}: ${esc(r.client.name)}" ${selected.has(r.row) ? "checked" : ""}>` : "—"}</td><td>${r.row}</td><td><strong>${esc(r.client.name)}</strong>${r.client.note ? `<details><summary>Client note</summary><p>${esc(r.client.note)}</p></details>` : ""}</td><td>${esc(r.client.phone)}<br>${esc(r.client.email)}${r.client.instagram ? `<br>@${esc(r.client.instagram)}` : ""}</td><td><strong>${names[r.status]}</strong><p class="hint">${esc(r.message)}</p>${(r.matches || []).map((c) => `<button type="button" class="btn link" data-import-profile="${esc(c.id)}">Open ${esc(c.name)}</button>`).join("")}</td></tr>`,
         )
         .join("")}</tbody></table></div>
       <div class="toolbar"><button class="btn" id="transfer-prev" ${page === 0 ? "disabled" : ""}>Previous</button><span>Page ${page + 1} of ${pages}</span><button class="btn" id="transfer-next" ${page + 1 === pages ? "disabled" : ""}>Next</button></div>
@@ -218,23 +239,36 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
       mappingView();
     };
     $("transfer-ready").onclick = () => {
-      selected = new Set(
-        preview.rows.filter((r) => r.status === "new").map((r) => r.row),
-      );
+      selected = new Set(readyRows);
       previewView();
     };
     $("transfer-clear").onclick = () => {
       selected.clear();
       previewView();
     };
-    $("transfer-prev").onclick = () => {
-      page--;
-      previewView();
+    root
+      .querySelectorAll("[data-import-profile]")
+      .forEach((b) => (b.onclick = () => openProfile(b.dataset.importProfile)));
+    const changePage = async (next) => {
+      const version = ++generation;
+      $("transfer-prev").disabled = $("transfer-next").disabled = true;
+      try {
+        const data = await api(
+          "/clients/import/bulk/" + preview.id + "/page?page=" + next,
+        );
+        if (!current(version)) return;
+        preview = data;
+        page = next;
+        previewView();
+      } catch (e) {
+        if (current(version)) {
+          previewView();
+          error(e);
+        }
+      }
     };
-    $("transfer-next").onclick = () => {
-      page++;
-      previewView();
-    };
+    $("transfer-prev").onclick = () => changePage(page - 1);
+    $("transfer-next").onclick = () => changePage(page + 1);
     $("transfer-confirm").onsubmit = async (event) => {
       event.preventDefault();
       clearError();
@@ -244,8 +278,9 @@ export function renderClientTransfer({ root, api, esc, isCurrent, back }) {
       root.querySelectorAll("button,input,select").forEach((el) => {
         el.disabled = true;
       });
+      $("transfer-commit").textContent = "Importing selected clients…";
       try {
-        const result = await api("/clients/import/" + id + "/commit", {
+        const result = await api("/clients/import/bulk/" + id + "/commit", {
           method: "POST",
           body: { rows: snapshot },
         });

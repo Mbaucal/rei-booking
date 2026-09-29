@@ -1,3 +1,4 @@
+import { mountClientMatches } from "./client-matches.js";
 import { renderClientTransfer } from "./client-transfer.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
@@ -132,6 +133,7 @@ async function api(path, { method = "GET", body } = {}) {
   if (!response.ok) {
     const error = new Error(data.error || "Something went wrong.");
     error.status = response.status;
+    error.matches = data.matches;
     throw error;
   }
   return data;
@@ -176,6 +178,10 @@ function errorBox(message) {
   return `<p class="error" id="form-error" role="alert" ${message ? "" : "hidden"}>${esc(message || "")}</p>`;
 }
 function formError(error) {
+  if (error.matches)
+    $("drawer-content")
+      .querySelector("form")
+      ?.clientMatches?.show(error.matches);
   if ($("form-error")) {
     $("form-error").textContent = error.message;
     $("form-error").hidden = false;
@@ -353,6 +359,7 @@ async function setPage(page, monthlyFilters = null) {
         showDrawer,
         closeDrawer,
         toast,
+        openProfile: clientProfile,
         download: (query) => downloadReport(query, "/api/sales/vouchers.csv?"),
       });
     } else if (page === "client-transfer") {
@@ -363,6 +370,7 @@ async function setPage(page, monthlyFilters = null) {
         esc,
         isCurrent: () => state.version === version && owner(),
         back: () => setPage("clients"),
+        openProfile: clientProfile,
       });
     } else if (page === "clients") await renderClients();
     else if (page === "team") await renderTeam();
@@ -751,7 +759,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
   showDrawer(
     existing ? "Appointment details" : "New appointment",
     prettyDate(a.date),
-    `<form id="appointment-form"><div id="booking-client-photo"></div><label><span>Client</span><input id="booking-client-search" type="search" placeholder="Search name, phone or email"><select name="clientId" id="booking-client">${opts(state.clients, a.clientId, "Walk-in · no client selected")}</select></label>${!existing ? '<label class="check"><input type="checkbox" id="new-client-check">Create a new client</label><fieldset id="new-client-fields" hidden><legend>New client</legend><div class="fields">' + input("newName", "Full name", "", "text", 'maxlength="100"') + input("newPhone", "Phone · optional", "", "tel") + input("newEmail", "Email · optional", "", "email") + "</div></fieldset>" : ""}${existing?.clientId ? '<button class="btn link" type="button" id="booking-open-profile">Open client profile</button>' : ""}<h3 class="form-section">Treatment</h3><div class="fields"><label class="wide"><span>Massage</span><select name="serviceId" id="booking-service">${state.catalogue.services
+    `<form id="appointment-form"><div id="booking-client-photo"></div><label><span>Client</span><input id="booking-client-search" type="search" placeholder="Search name, phone, email or Instagram"><select name="clientId" id="booking-client">${opts(state.clients, a.clientId, "Walk-in · no client selected")}</select></label>${!existing ? '<label class="check"><input type="checkbox" id="new-client-check">Create a new client</label><fieldset id="new-client-fields" hidden disabled><legend>New client</legend><div class="fields">' + input("newName", "Full name", "", "text", 'maxlength="100"') + input("newPhone", "Phone · optional", "", "tel") + input("newEmail", "Email · optional", "", "email") + input("newInstagram", "Instagram · optional", "", "text", 'maxlength="250" placeholder="@username or profile URL"') + '<label class="wide"><span>Client note</span><textarea name="newNote" maxlength="2000"></textarea></label><div id="booking-client-matches" class="client-matches wide" hidden></div>' + "</div></fieldset>" : ""}${existing?.clientId ? '<button class="btn link" type="button" id="booking-open-profile">Open client profile</button>' : ""}<h3 class="form-section">Treatment</h3><div class="fields"><label class="wide"><span>Massage</span><select name="serviceId" id="booking-service">${state.catalogue.services
       .filter((s) => s.active || s.id === a.serviceId)
       .map(
         (s) =>
@@ -809,6 +817,30 @@ async function appointmentDialog(existing = null, defaults = {}) {
       ).catch((error) => toast(error.message));
     };
   }
+  if (!existing) {
+    const epoch = drawerEpoch;
+    form.clientMatches = mountClientMatches({
+      form,
+      container: $("booking-client-matches"),
+      api,
+      esc,
+      phone: "newPhone",
+      instagram: "newInstagram",
+      email: "newEmail",
+      current: () => epoch === drawerEpoch && operator() && $("drawer").open,
+      onUse: (c) => {
+        if (!state.clients.some((x) => x.id === c.id)) state.clients.push(c);
+        $("booking-client").innerHTML = opts(
+          state.clients,
+          c.id,
+          "Walk-in · no client selected",
+        );
+        $("new-client-check").checked = false;
+        $("new-client-check").dispatchEvent(new Event("change"));
+        toast("Selected existing client: " + c.name);
+      },
+    });
+  }
   beds();
   $("booking-room").onchange = beds;
   $("booking-service").onchange = () => {
@@ -855,6 +887,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
     $("new-client-check").onchange = () => {
       const enabled = $("new-client-check").checked;
       $("new-client-fields").hidden = !enabled;
+      $("new-client-fields").disabled = !enabled;
       form.elements.newName.required = enabled;
       $("booking-client").disabled = enabled;
       showClientPhoto();
@@ -888,6 +921,8 @@ async function appointmentDialog(existing = null, defaults = {}) {
           name: fd.get("newName"),
           phone: fd.get("newPhone"),
           email: fd.get("newEmail"),
+          instagram: fd.get("newInstagram"),
+          note: fd.get("newNote"),
         };
       await api("/appointments" + (existing ? "/" + existing.id : ""), {
         method: existing ? "PUT" : "POST",
@@ -909,7 +944,7 @@ function appointmentDetails(a) {
 }
 async function renderClients() {
   $("page-content").innerHTML =
-    '<div class="toolbar"><input type="search" id="client-search" placeholder="Search name, phone or email" aria-label="Search clients"><button class="btn primary" id="client-add">+ New client</button></div><div id="client-results"></div>';
+    '<div class="toolbar"><input type="search" id="client-search" placeholder="Search name, phone, email or Instagram" aria-label="Search clients"><button class="btn primary" id="client-add">+ New client</button></div><div id="client-results"></div>';
   const version = state.version;
   if (owner()) {
     $("client-add").insertAdjacentHTML(
@@ -961,7 +996,7 @@ async function renderClients() {
         return;
       state.clients = data.clients;
       $("client-results").innerHTML = data.clients.length
-        ? `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Phone</th><th>Email</th><th></th></tr></thead><tbody>${data.clients.map((c) => `<tr><td><div class="name-cell">${avatar("clients", c, esc)}<strong>${esc(c.name)}</strong></div></td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><button class="btn" data-profile="${esc(c.id)}">Profile</button></td></tr>`).join("")}</tbody></table></div><p class="hint">Up to 100 matching clients. Use search to narrow the list.</p>`
+        ? `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Phone</th><th>Email / Instagram</th><th></th></tr></thead><tbody>${data.clients.map((c) => `<tr><td><div class="name-cell">${avatar("clients", c, esc)}<strong>${esc(c.name)}</strong></div></td><td>${esc(c.phone)}</td><td>${esc(c.email)}${c.instagram ? `<br>@${esc(c.instagram)}` : ""}</td><td><button class="btn" data-profile="${esc(c.id)}">Profile</button></td></tr>`).join("")}</tbody></table></div><p class="hint">Up to 100 matching clients. Use search to narrow the list.</p>`
         : '<div class="empty"><h2>No clients found</h2><p>Add a client or leave a booking as Walk-in.</p></div>';
       document
         .querySelectorAll("[data-profile]")
@@ -977,7 +1012,7 @@ function clientDialog(c = null) {
   showDrawer(
     c ? "Edit client" : "New client",
     "Clients",
-    `<form id="client-form"><div id="client-photo-editor"></div><div class="fields">${input("name", "Full name", c?.name, "text", 'required maxlength="100"')}${input("phone", "Phone · optional", c?.phone, "tel")}${input("email", "Email · optional", c?.email, "email")}<label class="wide"><span>Client note</span><textarea name="note" maxlength="2000">${esc(c?.note || "")}</textarea></label></div>${errorBox()}</form>`,
+    `<form id="client-form"><div id="client-photo-editor"></div><div class="fields">${input("name", "Full name", c?.name, "text", 'required maxlength="100"')}${input("phone", "Phone · optional", c?.phone, "tel")}${input("email", "Email · optional", c?.email, "email")}${input("instagram", "Instagram · optional", c?.instagram, "text", 'maxlength="250" placeholder="@username or profile URL"')}<label class="wide"><span>Client note</span><textarea name="note" maxlength="2000">${esc(c?.note || "")}</textarea></label></div><div id="client-matches" class="client-matches" hidden></div>${errorBox()}</form>`,
   );
   const epoch = sessionEpoch;
   const photo = mountPhotoEditor(
@@ -987,6 +1022,19 @@ function clientDialog(c = null) {
     esc,
     () => sessionEpoch === epoch && operator() && $("drawer").open,
   );
+  const clientForm = $("client-form");
+  clientForm.clientMatches = mountClientMatches({
+    form: clientForm,
+    container: $("client-matches"),
+    api,
+    esc,
+    phone: "phone",
+    instagram: "instagram",
+    email: "email",
+    exclude: c?.id || "",
+    current: () => sessionEpoch === epoch && operator() && $("drawer").open,
+    onOpen: clientProfile,
+  });
   bindForm(
     "client-form",
     async (fd, current) => {
@@ -1015,7 +1063,7 @@ async function clientProfile(id, back = null) {
     showDrawer(
       c.name,
       "Client profile",
-      `<div class="profile-top">${avatar("clients", c, esc)}<div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}</p></div></div>${c.note ? `<p class="hint">${esc(c.note)}</p>` : ""}<strong>${items.filter((a) => a.status === "done").length} completed visits</strong><h3 class="form-section">Appointment history</h3><div class="history">${items.map((a) => `<article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}</strong><p>${esc(a.serviceName)} · ${a.duration} min</p><p>${esc(therapist(a.therapistId)?.name)} · ${esc(room(a.roomId)?.name)}</p><p><span class="status ${a.status}">${statusName(a.status)}</span>${a.requestedTherapistId ? " · ♥ Requested" : ""}</p></article>`).join("") || '<p class="hint">No appointments yet.</p>'}</div>`,
+      `<div class="profile-top">${avatar("clients", c, esc)}<div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}${c.instagram ? `<br><a href="https://www.instagram.com/${encodeURIComponent(c.instagram)}/" target="_blank" rel="noopener noreferrer">@${esc(c.instagram)}</a>` : ""}</p></div></div><h3 class="form-section">Client note</h3><p class="client-note">${esc(c.note || "No client note yet.")}</p><strong>${items.filter((a) => a.status === "done").length} completed visits</strong><h3 class="form-section">Appointment history</h3><div class="history">${items.map((a) => `<article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}</strong><p>${esc(a.serviceName)} · ${a.duration} min</p><p>${esc(therapist(a.therapistId)?.name)} · ${esc(room(a.roomId)?.name)}</p><p><span class="status ${a.status}">${statusName(a.status)}</span>${a.requestedTherapistId ? " · ♥ Requested" : ""}</p></article>`).join("") || '<p class="hint">No appointments yet.</p>'}</div>`,
     );
     $("drawer-footer").innerHTML =
       `${back ? '<button class="btn" id="profile-back">Back to appointment</button>' : ""}<button class="btn" id="profile-photo">Upload / change photo</button><button class="btn primary" id="profile-edit">Edit client</button>`;
