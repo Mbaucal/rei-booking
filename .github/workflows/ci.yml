@@ -23,3 +23,19 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npx wrangler deploy --dry-run --outdir dist/default
+  calendar-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install isolated browser test tools
+        run: npm install --prefix "$RUNNER_TEMP/rei-browser-tools" --no-save --package-lock=false playwright@1.62.1
+      - name: Install Chromium headless shell
+        run: node "$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/cli.js" install --with-deps chromium --only-shell
+      - name: Check calendar in desktop, phone and tablet browsers
+        run: REI_PLAYWRIGHT_MODULE="$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/index.mjs" node scripts/test-calendar-browser.mjs

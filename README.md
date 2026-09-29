@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.9.0** — 29 September 2026.
+Current implementation release, **0.9.1** — 30 September 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -24,10 +24,13 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Treatment variants with duration, price and calendar colour.
 - Daily calendar by therapist, room or both; two-table couple rooms; current Belgrade time.
 - Click-to-book, add a new client while booking, appointment editing and a pointer-based drag handle with 5-minute snapping.
+- New-booking suggestions find an available therapist and room/table for the full treatment duration while keeping the clicked time and explicit resource choices. Availability messages remain advisory; the server authoritatively checks conflicts when saving.
 - Database-level prevention of simultaneous bookings for the same therapist or table, including concurrent requests.
 - Version checks against overwriting another user's edits, appointment creation timestamps, price/name snapshots and owner-only audit data.
 
 The browser interface is responsive in code but **desktop/tablet/mobile visual and touch acceptance checks are still pending**. This release uses 30-second calendar refresh and refresh on window focus; it is not a push-based realtime feed.
+
+The `calendar-browser` CI job checks new-booking resource suggestions in Chromium at desktop, phone and tablet viewport sizes using fictional API fixtures and the real application assets. It covers slot clicks/taps, duration changes, explicit selections, keyboard entry, failed saves and delayed responses. This is scoped browser emulation, not a full product visual review or physical-device certification. Run the same script locally with `REI_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/test-calendar-browser.mjs` when Chromium is installed. Browser test tools are installed separately from application dependencies.
 
 ## Local setup
 
@@ -90,9 +93,9 @@ The report update automatically creates two empty bonus-rule tables after authen
 ## Next implementation stages
 
 1. Confirm Reports/Team/Dashboard and Sales on the test URL and complete role/device acceptance.
-2. Finish [voucher email setup](docs/email-setup.md) and agree package, substitution and reception sales permissions. See [the implemented Sales scope](docs/sales.md).
-3. Complete hosted monthly report acceptance and add an authenticated Google Sheets integration.
-4. Add client/history import and approved loyalty rules.
+2. Prepare historical appointment migration using the [history import contract](docs/history-import-contract.md); client profile import is already implemented. Keep unknown identities, completion status and requested flags unresolved until supported by source data.
+3. Complete hosted monthly report acceptance and add an authenticated Google Sheets integration. Agree loyalty rules before implementing rewards.
+4. Last, finish [voucher email setup](docs/email-setup.md) and agree package, substitution and reception sales permissions, as requested by Marko. See [the implemented Sales scope](docs/sales.md).
 
 These requirements are preserved in [scope and decisions](docs/scope.md). An item being in the prototype does not mean it is implemented in this release.
 
