@@ -326,6 +326,7 @@ main {
   color: #705121;
 }
 .calendar-scroll {
+  --calendar-quarter-height: 30px;
   height: 70vh;
   min-height: 440px;
   overflow: auto;
@@ -354,6 +355,13 @@ main {
   border-right: 1px solid var(--line);
   font-size: 13px;
   color: var(--green);
+}
+.calendar-headers > div:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--panel);
+  box-shadow: 1px 0 0 var(--line);
 }
 .calendar-headers small {
   display: block;
@@ -386,8 +394,9 @@ main {
   position: sticky;
   left: 0;
   background: var(--panel);
-  z-index: 5;
+  z-index: 8;
   border-right: 1px solid var(--line);
+  box-shadow: 3px 0 8px #16302a08;
 }
 .time-axis span {
   position: absolute;
@@ -404,13 +413,9 @@ main {
   background: repeating-linear-gradient(
     to bottom,
     transparent 0px,
-    transparent 59px,
-    #eee8dc 59px,
-    #eee8dc 60px,
-    transparent 60px,
-    transparent 119px,
-    #ddd5c7 119px,
-    #ddd5c7 120px
+    transparent calc(var(--calendar-quarter-height, 30px) - 1px),
+    #e9e1d3 calc(var(--calendar-quarter-height, 30px) - 1px),
+    #e9e1d3 var(--calendar-quarter-height, 30px)
   );
 }
 .calendar-column.couple:after {
@@ -424,7 +429,7 @@ main {
 }
 .calendar-slot-hint {
   position: absolute;
-  height: 60px;
+  height: var(--calendar-quarter-height, 30px);
   z-index: 3;
   pointer-events: none;
   background: #a8863d12;
@@ -525,13 +530,17 @@ main {
   border-left: 4px solid var(--service);
   border-radius: 7px;
   background: color-mix(in srgb, var(--service) 17%, #fffdf8);
-  padding: 7px 8px;
+  padding: 6px 7px;
   font-size: 12px;
   color: var(--green-dark);
   cursor: pointer;
   user-select: none;
   touch-action: pan-y pan-x;
   line-height: 1.35;
+  transition:
+    box-shadow 130ms ease,
+    background-color 130ms ease,
+    opacity 130ms ease;
 }
 .calendar-event strong,
 .calendar-event span {
@@ -542,22 +551,43 @@ main {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 12px;
 }
 .calendar-event .event-time {
   font-size: 11px;
-  padding-right: 18px;
+  padding-right: 24px;
+  white-space: nowrap;
+  letter-spacing: -0.2px;
+  font-variant-numeric: tabular-nums;
+}
+.calendar-event .event-service {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.3;
 }
 .calendar-event .event-room {
   font-size: 10px;
   margin-top: 4px;
+  padding-right: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .calendar-event .request-heart {
   position: absolute;
   right: 7px;
   bottom: 4px;
   color: #b63d66;
-  font-size: 16px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fffdf8e8;
+  font-size: 14px;
+  line-height: 1;
 }
 .calendar-event.short .event-room {
   display: none;
@@ -569,13 +599,22 @@ main {
   font-size: 18px;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 27px;
-  touch-action: none;
+  width: 44px;
+  height: 44px;
+  padding-left: 18px;
+  padding-bottom: 16px;
+  touch-action: pan-x pan-y;
   cursor: grab;
 }
 .calendar-event:hover {
-  filter: brightness(0.98);
+  background: color-mix(in srgb, var(--service) 23%, #fffdf8);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--service) 55%, white),
+    0 3px 10px #16302a12;
+}
+.calendar-event:focus-visible {
+  outline-offset: -3px;
+  box-shadow: 0 3px 10px #16302a18;
 }
 .calendar-event.dragging {
   opacity: 0.35;
@@ -586,7 +625,7 @@ main {
   left: 0;
   right: 0;
   background: #c73549;
-  z-index: 6;
+  z-index: 9;
   pointer-events: none;
 }
 .now-line span {
@@ -756,6 +795,10 @@ tr:last-child td {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+.drawer > footer:empty {
+  display: none;
 }
 .fields {
   display: grid;
@@ -1483,4 +1526,421 @@ tr:last-child td {
 .client-note {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Appointment information uses the same cream, green and gold as the calendar. */
+.appointment-hover {
+  position: fixed;
+  z-index: 115;
+  width: 326px;
+  overflow: auto;
+  border: 1px solid #d9cbaa;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow:
+    0 16px 44px #16302a26,
+    0 2px 8px #16302a0d;
+  padding: 18px;
+}
+.appointment-summary {
+  display: grid;
+  gap: 20px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.appointment-summary-heading {
+  display: grid;
+  gap: 8px;
+}
+.appointment-summary-date {
+  color: var(--muted);
+  font-size: 13px;
+}
+.appointment-summary-heading > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.appointment-summary-heading h2 {
+  font:
+    600 27px/1.2 Arial,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--green-dark);
+  letter-spacing: -0.8px;
+}
+.appointment-summary-heading h2 span {
+  display: inline-block;
+  margin: 0 5px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.appointment-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  color: #526047;
+  background: #edf0e7;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.appointment-status.status-confirmed,
+.appointment-status.status-done {
+  color: #24543a;
+  background: #e7f0e3;
+}
+.appointment-status.status-cancelled,
+.appointment-status.status-no_show {
+  color: #8a4639;
+  background: #fae9e2;
+}
+.appointment-summary-client {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.appointment-client-symbol {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #eee5cf;
+  color: #7c622f;
+  font:
+    24px Georgia,
+    serif;
+}
+.appointment-detail-label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  margin-bottom: 5px;
+}
+.appointment-summary h3 {
+  font:
+    600 17px/1.35 Arial,
+    sans-serif;
+  color: var(--green-dark);
+}
+.appointment-summary-treatment {
+  border-left: 4px solid var(--service, var(--gold));
+  padding: 3px 0 3px 14px;
+}
+.appointment-treatment-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 7px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.appointment-treatment-price {
+  font-weight: 600;
+  color: var(--green-dark);
+}
+.appointment-treatment-price small {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.appointment-summary-resources {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 0;
+}
+.appointment-summary-resources dt {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.appointment-summary-resources dd {
+  margin: 0;
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+.appointment-request {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f7eee7;
+  border: 1px solid #eddad0;
+  border-radius: 9px;
+  padding: 11px 13px;
+  color: #934d65;
+  font-size: 12px;
+}
+.appointment-request > span:first-child {
+  font-size: 18px;
+}
+.appointment-request small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.appointment-request.is-reassigned {
+  background: #faf2e4;
+  border-color: #eadbbd;
+  color: #846429;
+}
+.appointment-no-request,
+.appointment-created {
+  color: var(--muted);
+  font-size: 11px;
+}
+.appointment-summary-note {
+  padding: 15px;
+  border-radius: 9px;
+  background: #f4f0e7;
+}
+.appointment-summary-note p {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.appointment-summary-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 6px;
+}
+.appointment-summary-actions > .btn:only-child,
+.appointment-profile-action {
+  grid-column: 1 / -1;
+}
+.appointment-summary-actions > .btn {
+  justify-content: center;
+  min-height: 46px;
+  font-size: 13px;
+}
+.appointment-summary.is-preview {
+  gap: 15px;
+}
+.is-preview .appointment-summary-heading h2 {
+  font-size: 23px;
+}
+.is-preview .appointment-summary-client {
+  padding: 12px 0;
+  gap: 10px;
+}
+.is-preview .appointment-client-symbol {
+  width: 36px;
+  height: 36px;
+  font-size: 19px;
+}
+.is-preview h3 {
+  font-size: 14px;
+}
+.is-preview .appointment-summary-resources {
+  gap: 12px;
+}
+.is-preview .appointment-summary-resources dd {
+  font-size: 12px;
+}
+.is-preview .appointment-request {
+  padding: 9px 11px;
+}
+
+/* Rescheduling is a visible draft until Save, with both resource copies linked. */
+.is-rescheduling .calendar-event:not(.is-reschedule-selected) {
+  opacity: 0.28;
+  filter: saturate(0.6);
+}
+.is-rescheduling .calendar-column {
+  cursor: crosshair;
+}
+.is-rescheduling .calendar-event.is-reschedule-selected {
+  opacity: 1;
+  z-index: 7;
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 4px #cbb67c80,
+    0 6px 18px #16302a22;
+  filter: none;
+}
+.calendar-event.calendar-reschedule-preview {
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+.calendar-reschedule-preview:active {
+  cursor: grabbing;
+}
+.is-rescheduling .calendar-scroll,
+.calendar-scroll.is-rescheduling {
+  scroll-padding-bottom: 120px;
+  padding-bottom: 170px;
+}
+.calendar-reschedule-bar {
+  position: fixed;
+  z-index: 110;
+  left: max(204px, env(safe-area-inset-left));
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) repeat(4, auto);
+  align-items: center;
+  gap: 12px 20px;
+  padding: 16px 18px;
+  border: 1px solid #cdb77f;
+  border-radius: 13px;
+  background: var(--panel);
+  box-shadow: 0 12px 38px #16302a2b;
+}
+#calendar-reschedule-time {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--green-dark);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+#calendar-reschedule-resource {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 12px;
+  color: var(--muted);
+}
+#calendar-reschedule-error {
+  grid-column: 1 / -1;
+  color: #973d33;
+  background: #fff0e9;
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.calendar-reschedule-bar button {
+  min-height: 44px;
+  min-width: 44px;
+}
+#calendar-reschedule-instruction {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  color: var(--muted);
+  font-size: 12px;
+}
+#calendar-reschedule-earlier {
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+#calendar-reschedule-later {
+  grid-column: 3;
+  grid-row: 1 / 3;
+}
+#calendar-reschedule-cancel {
+  grid-column: 4;
+  grid-row: 1 / 3;
+}
+#calendar-reschedule-save {
+  grid-column: 5;
+  grid-row: 1 / 3;
+}
+.calendar-reschedule-bar.is-saving {
+  cursor: progress;
+}
+.calendar-today-floating {
+  position: fixed;
+  z-index: 90;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  min-height: 48px;
+  border-radius: 24px;
+  padding: 10px 18px;
+  border-color: #cdb77f;
+  background: var(--panel);
+  box-shadow: 0 4px 20px #16302a22;
+  font-weight: 600;
+}
+.calendar-today-floating svg {
+  width: 18px;
+  height: 18px;
+}
+body:has(.is-rescheduling) .calendar-today-floating {
+  display: none;
+}
+@media (max-width: 1050px) {
+  .calendar-reschedule-bar {
+    left: 92px;
+  }
+}
+@media (max-width: 700px) {
+  .calendar-reschedule-bar {
+    left: 12px;
+    right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    padding: 13px 14px;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  #calendar-reschedule-time,
+  #calendar-reschedule-resource,
+  #calendar-reschedule-instruction {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+  #calendar-reschedule-earlier,
+  #calendar-reschedule-later,
+  #calendar-reschedule-cancel,
+  #calendar-reschedule-save {
+    grid-column: auto;
+    grid-row: auto;
+    padding: 8px 5px;
+    font-size: 12px;
+  }
+  #calendar-reschedule-time {
+    font-size: 18px;
+  }
+  .calendar-today-floating {
+    right: max(14px, env(safe-area-inset-right));
+    bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+}
+@media (max-width: 600px) {
+  .drawer {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    inset: 0;
+    border: 0;
+  }
+  .drawer > header {
+    padding-top: max(18px, env(safe-area-inset-top));
+  }
+  .drawer-content {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+  .appointment-summary {
+    gap: 18px;
+  }
+  .appointment-summary-heading h2 {
+    font-size: 25px;
+  }
+  .appointment-summary-actions > .btn {
+    min-height: 48px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .calendar-event {
+    transition: none;
+  }
 }

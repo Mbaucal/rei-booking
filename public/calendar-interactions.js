@@ -1,26 +1,15 @@
-const START = 600,
-  END = 1320,
-  SCALE = 2;
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const time = (minute) =>
-  `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
-
-export function calendarSlotAtPoint(rect, point, capacity = 1) {
-  const start = clamp(
-    Math.round(((point.y - rect.top) / SCALE + START) / 5) * 5,
-    START,
-    END - 5,
-  );
-  return {
-    start,
-    bandStart: Math.floor(start / 30) * 30,
-    bed: clamp(
-      Math.floor(((point.x - rect.left) / rect.width) * capacity),
-      0,
-      capacity - 1,
-    ),
-  };
-}
+import {
+  START,
+  END,
+  SCALE,
+  STEP,
+  BAND,
+  clamp,
+  calendarBandStart,
+  calendarTime as time,
+  calendarSlotAtPoint,
+} from "./calendar-geometry.js";
+export { calendarSlotAtPoint } from "./calendar-geometry.js";
 
 export function calendarMenuPosition(anchor, size, viewport) {
   const margin = 8,
@@ -121,6 +110,7 @@ export function mountCalendarInteractions({
     hint.style.top = `${(slot.bandStart - START) * SCALE}px`;
     hint.style.left = `${(slot.bed / r.capacity) * 100}%`;
     hint.style.width = `${100 / r.capacity}%`;
+    hint.style.height = `${BAND * SCALE}px`;
     marker.style.top = `${(slot.start - slot.bandStart) * SCALE}px`;
     marker.textContent = time(slot.start);
     column.append(hint);
@@ -247,17 +237,21 @@ export function mountCalendarInteractions({
       ) {
         event.preventDefault();
         const delta =
-          { ArrowUp: -5, ArrowDown: 5, PageUp: -30, PageDown: 30 }[event.key] ||
-          0;
+          {
+            ArrowUp: -STEP,
+            ArrowDown: STEP,
+            PageUp: -2 * BAND,
+            PageDown: 2 * BAND,
+          }[event.key] || 0;
         const start =
           event.key === "Home"
             ? START
             : event.key === "End"
-              ? END - 5
-              : clamp(slot.start + delta, START, END - 5);
+              ? END - STEP
+              : clamp(slot.start + delta, START, END - STEP);
         slot = {
           start,
-          bandStart: Math.floor(start / 30) * 30,
+          bandStart: calendarBandStart(start),
           bed:
             event.key === "ArrowLeft"
               ? 0

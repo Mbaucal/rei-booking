@@ -1,6 +1,19 @@
 import { mountClientMatches } from "./client-matches.js";
 import { mountBookingAvailability } from "./calendar-availability.js";
 import { mountCalendarInteractions } from "./calendar-interactions.js";
+import {
+  START,
+  END,
+  SCALE,
+  BAND,
+  calendarTop,
+  calendarHeight,
+} from "./calendar-geometry.js";
+import { mountCalendarReschedule } from "./calendar-reschedule.js";
+import {
+  mountAppointmentPreview,
+  appointmentDetailsHTML,
+} from "./appointment-preview.js";
 import { renderClientTransfer } from "./client-transfer.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
@@ -92,8 +105,11 @@ let state = {
   },
   toastTimer,
   refreshTimer,
-  drag = null,
   calendarInteractions = null,
+  calendarReschedule = null,
+  appointmentPreview = null,
+  calendarViewEpoch = 0,
+  calendarLoadEpoch = 0,
   sessionEpoch = 0;
 const owner = () => state.user?.role === "owner",
   operator = () => ["owner", "reception"].includes(state.user?.role);
@@ -141,9 +157,20 @@ async function api(path, { method = "GET", body } = {}) {
   }
   return data;
 }
-function signOutView() {
-  calendarInteractions?.dispose();
+function disposeCalendarUI() {
+  calendarViewEpoch++;
+  const interactions = calendarInteractions,
+    reschedule = calendarReschedule,
+    preview = appointmentPreview;
   calendarInteractions = null;
+  calendarReschedule = null;
+  appointmentPreview = null;
+  interactions?.dispose();
+  reschedule?.dispose();
+  preview?.dispose();
+}
+function signOutView() {
+  disposeCalendarUI();
   sessionEpoch++;
   state = {
     ...state,
@@ -172,6 +199,8 @@ function closeDrawer() {
   $("drawer-footer").textContent = "";
 }
 function showDrawer(title, kicker, html) {
+  calendarReschedule?.cancel();
+  appointmentPreview?.dismiss();
   calendarInteractions?.dismiss();
   drawerEpoch++;
   $("drawer-title").textContent = title;
@@ -263,7 +292,12 @@ async function enterApp(session) {
   );
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
-    if (state.user && state.page === "calendar" && !document.hidden && !drag)
+    if (
+      state.user &&
+      state.page === "calendar" &&
+      !document.hidden &&
+      !calendarReschedule?.isActive()
+    )
       loadCalendar().catch(showAppError);
   }, 30000);
 }
@@ -278,8 +312,7 @@ async function setPage(page, monthlyFilters = null) {
   if (!state.user) return;
   if (page !== "calendar" && (!operator() || (page !== "clients" && !owner())))
     return;
-  calendarInteractions?.dispose();
-  calendarInteractions = null;
+  disposeCalendarUI();
   state.page = page;
   if (page !== "monthly" && location.hash.startsWith("#report="))
     history.replaceState(null, "", location.pathname);
@@ -420,23 +453,22 @@ async function downloadReport(
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function resources() {
+function resources(mode = state.mode) {
   return [
-    ...(state.mode === "rooms"
+    ...(mode === "rooms"
       ? []
       : state.catalogue.therapists.map((t) => ({
           ...t,
           kind: "therapist",
           capacity: 1,
         }))),
-    ...(state.mode === "therapists"
+    ...(mode === "therapists"
       ? []
       : state.catalogue.rooms.map((r) => ({ ...r, kind: "room" }))),
   ];
 }
 function renderCalendarShell() {
-  calendarInteractions?.dispose();
-  calendarInteractions = null;
+  disposeCalendarUI();
   $("page-content").innerHTML =
     `<div class="toolbar"><div class="toolgroup"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button><div class="segments" aria-label="Calendar resources">${[
       ["all", "All resources"],
@@ -449,7 +481,7 @@ function renderCalendarShell() {
       )
       .join(
         "",
-      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div>${operator() ? '<button class="btn primary" id="appointment-add">+ Add appointment</button>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Click an empty slot to book · drag ⠿ to move · 5-minute steps" : "Full salon schedule · requested · read-only"}</span></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><div class="legend">${state.catalogue.services
+      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div>${operator() ? '<button class="btn primary" id="appointment-add">+ Add appointment</button>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Click to book · drag to move · hold on touch · 5-minute steps" : "Full salon schedule · requested · read-only"}</span></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><button class="btn calendar-today-floating" id="calendar-today-floating" aria-label="Return to today" ${state.date === today() ? "hidden" : ""}><svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15h6m-3-3v6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>Today</span></button><div class="legend">${state.catalogue.services
       .filter((s) => s.active)
       .map(
         (s) =>
@@ -457,10 +489,10 @@ function renderCalendarShell() {
       )
       .join("")}<span>♥ Requested therapist</span></div>`;
   const change = async (date) => {
-    calendarInteractions?.dispose();
-    calendarInteractions = null;
+    disposeCalendarUI();
     state.date = date;
     $("calendar-date").value = date;
+    updateClock();
     try {
       await loadCalendar();
     } catch (error) {
@@ -471,6 +503,7 @@ function renderCalendarShell() {
     if ($("calendar-date").value) change($("calendar-date").value);
   };
   $("calendar-today").onclick = () => change(today());
+  $("calendar-today-floating").onclick = () => change(today());
   for (const [id, delta] of [
     ["calendar-prev", -1],
     ["calendar-next", 1],
@@ -492,10 +525,14 @@ function renderCalendarShell() {
   );
 }
 async function loadCalendar() {
-  const date = state.date,
+  if (calendarReschedule?.isActive()) return;
+  const requestEpoch = ++calendarLoadEpoch,
+    date = state.date,
     version = state.version,
     data = await api(`/appointments?from=${date}&to=${date}`);
   if (
+    requestEpoch !== calendarLoadEpoch ||
+    calendarReschedule?.isActive() ||
     date !== state.date ||
     state.page !== "calendar" ||
     version !== state.version ||
@@ -507,8 +544,7 @@ async function loadCalendar() {
 }
 function renderCalendar() {
   if (!$("calendar-grid")) return;
-  calendarInteractions?.dispose();
-  calendarInteractions = null;
+  disposeCalendarUI();
   const list = resources(),
     scroll = $("calendar-scroll"),
     top = scroll.scrollTop,
@@ -516,6 +552,11 @@ function renderCalendar() {
   $("calendar-summary").textContent =
     `${prettyDate(state.date)} · ${state.appointments.filter((a) => !["cancelled", "no_show"].includes(a.status)).length} appointments`;
   const widths = list.map((r) => (r.capacity === 2 ? 280 : 180));
+  $("calendar-grid").style.setProperty(
+    "--calendar-quarter-height",
+    `${BAND * SCALE}px`,
+  );
+  $("calendar-body").style.height = `${calendarHeight(END - START)}px`;
   $("calendar-grid").style.setProperty(
     "--columns",
     widths.map((w) => w + "px").join(" "),
@@ -533,8 +574,8 @@ function renderCalendar() {
       )
       .join("");
   let ticks = "";
-  for (let m = 600; m < 1320; m += 30)
-    ticks += `<span style="top:${(m - 600) * 2}px">${clock(m)}</span>`;
+  for (let m = START; m < END; m += 30)
+    ticks += `<span style="top:${calendarTop(m)}px">${clock(m)}</span>`;
   $("calendar-body").innerHTML =
     '<div class="time-axis">' +
     ticks +
@@ -558,28 +599,48 @@ function renderCalendar() {
   scroll.scrollTop = top;
   scroll.scrollLeft = left;
   updateClock();
-  document.querySelectorAll("[data-appointment]").forEach((el) => {
-    const a = state.appointments.find((a) => a.id === el.dataset.appointment);
-    el.onclick = (event) => {
-      event.stopPropagation();
-      if (el.dataset.moved === "yes") {
-        delete el.dataset.moved;
-        return;
-      }
-      operator() ? appointmentDialog(a) : appointmentDetails(a);
-    };
-    el.onkeydown = (event) => {
-      if (["Enter", " "].includes(event.key)) {
-        event.preventDefault();
-        operator() ? appointmentDialog(a) : appointmentDetails(a);
-      }
-    };
-    const grip = el.querySelector(".drag-grip");
-    if (grip) grip.onpointerdown = (event) => startDrag(event, a, el);
-  });
+  const date = state.date,
+    version = state.version,
+    session = sessionEpoch,
+    view = calendarViewEpoch;
+  const current = () =>
+    !!state.user &&
+    state.page === "calendar" &&
+    state.date === date &&
+    state.version === version &&
+    sessionEpoch === session &&
+    calendarViewEpoch === view;
+  const eligible = (a) => ["booked", "confirmed"].includes(a.status);
   if (operator()) {
-    const date = state.date,
-      version = state.version;
+    calendarReschedule = mountCalendarReschedule({
+      root: scroll,
+      getContext: () => ({
+        date,
+        resources: resources("all"),
+        appointments: state.appointments.filter(eligible),
+      }),
+      isCurrent: () => current() && operator(),
+      onSave: (candidate) =>
+        api("/appointments/" + candidate.id, {
+          method: "PUT",
+          body: candidate,
+        }),
+      onRefresh: () => loadCalendar(),
+      onError: (error) => {
+        if (current()) toast(error.message || String(error));
+      },
+      onModeChange: (active) => {
+        calendarInteractions?.dismiss({ blockClick: active });
+        appointmentPreview?.dismiss();
+        if ($("calendar-today-floating"))
+          $("calendar-today-floating").hidden =
+            active || state.date === today();
+      },
+      confirmTherapistChange: () =>
+        confirm(
+          "Move this requested appointment to another therapist? The original request will stay recorded.",
+        ),
+    });
     calendarInteractions = mountCalendarInteractions({
       root: scroll,
       resources: list,
@@ -587,12 +648,35 @@ function renderCalendar() {
       onAdd: (defaults) =>
         appointmentDialog(null, defaults).catch(showAppError),
       isCurrent: () =>
-        operator() &&
-        state.page === "calendar" &&
-        state.date === date &&
-        state.version === version,
+        current() && operator() && !calendarReschedule?.isActive(),
     });
   }
+  appointmentPreview = mountAppointmentPreview({
+    root: scroll,
+    appointments: state.appointments,
+    role: state.user.role,
+    catalogue: state.catalogue,
+    isCurrent: current,
+    isBusy: () =>
+      !!calendarReschedule?.isActive() ||
+      $("drawer").open ||
+      (!!$("calendar-slot-menu") && !$("calendar-slot-menu").hidden),
+  });
+  scroll.querySelectorAll("[data-appointment]").forEach((el) => {
+    const a = state.appointments.find((a) => a.id === el.dataset.appointment);
+    el.onclick = (event) => {
+      event.stopPropagation();
+      if (!current() || calendarReschedule?.shouldSuppressClick(event)) return;
+      appointmentDetails(a);
+    };
+    el.onkeydown = (event) => {
+      if (["Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        if (!current() || calendarReschedule?.isActive()) return;
+        appointmentDetails(a);
+      }
+    };
+  });
 }
 function availability(r) {
   if (r.kind !== "therapist") return "";
@@ -600,121 +684,35 @@ function availability(r) {
     off = !r.active || !day.enabled || r.timeOff.includes(state.date);
   return (
     off
-      ? [[600, 1320]]
+      ? [[START, END]]
       : [
-          [600, day.start],
-          [day.end, 1320],
+          [START, day.start],
+          [day.end, END],
         ]
   )
     .filter(([a, b]) => b > a)
     .map(
       ([a, b]) =>
-        `<div class="unavailable" style="top:${(a - 600) * 2}px;height:${(b - a) * 2}px"><span>${off ? "Day off" : "Outside working hours"}</span></div>`,
+        `<div class="unavailable" style="top:${calendarTop(a)}px;height:${calendarHeight(b - a)}px"><span>${off ? "Day off" : "Outside working hours"}</span></div>`,
     )
     .join("");
 }
 function eventHTML(a, r) {
   const lane = r.kind === "room" ? a.bed : 0;
-  return `<div class="calendar-event ${a.duration <= 30 ? "short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${(a.start - 600) * 2}px;height:${a.duration * 2 - 3}px;left:calc(${(lane / r.capacity) * 100}% + 3px);width:calc(${100 / r.capacity}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time">${clock(a.start)}–${clock(a.start + a.duration)}</span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span>${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
+  return `<div class="calendar-event ${a.duration <= 30 ? "short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${(lane / r.capacity) * 100}% + 3px);width:calc(${100 / r.capacity}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time">${clock(a.start)}–${clock(a.start + a.duration)}</span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
 }
 function updateClock() {
   const p = dateParts();
   $("clock").textContent = `${p.hour}:${p.minute} · Belgrade`;
+  if ($("calendar-today-floating"))
+    $("calendar-today-floating").hidden =
+      state.date === today() || !!calendarReschedule?.isActive();
   if (!$("now-line")) return;
   const m = Number(p.hour) * 60 + Number(p.minute);
-  $("now-line").hidden = state.date !== today() || m < 600 || m >= 1320;
-  $("now-line").style.top = (m - 600) * 2 + "px";
+  $("now-line").hidden = state.date !== today() || m < START || m >= END;
+  $("now-line").style.top = calendarTop(m) + "px";
   $("now-time").textContent = clock(m);
 }
-function startDrag(event, a, element) {
-  if (!operator() || event.button !== 0) return;
-  calendarInteractions?.dismiss({ blockClick: true });
-  event.preventDefault();
-  event.stopPropagation();
-  drag = {
-    a,
-    element,
-    x: event.clientX,
-    y: event.clientY,
-    offset: event.clientY - element.getBoundingClientRect().top,
-    moved: false,
-  };
-  event.target.setPointerCapture(event.pointerId);
-}
-document.addEventListener("pointermove", (event) => {
-  if (!drag) return;
-  if (
-    Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5 &&
-    !drag.moved
-  )
-    return;
-  drag.moved = true;
-  drag.element.classList.add("dragging");
-  let ghost = $("drag-ghost");
-  if (!ghost) {
-    ghost = document.createElement("div");
-    ghost.id = "drag-ghost";
-    ghost.className = "drag-ghost";
-    document.body.append(ghost);
-  }
-  ghost.textContent = drag.a.serviceName;
-  ghost.style.left = event.clientX + 14 + "px";
-  ghost.style.top = event.clientY + 10 + "px";
-});
-document.addEventListener("pointerup", async (event) => {
-  if (!drag) return;
-  const move = drag;
-  drag = null;
-  $("drag-ghost")?.remove();
-  move.element.classList.remove("dragging");
-  if (!move.moved) return;
-  move.element.dataset.moved = "yes";
-  const col = document
-    .elementFromPoint(event.clientX, event.clientY)
-    ?.closest("[data-resource]");
-  if (!col) return;
-  const r = resources().find((r) => r.id === col.dataset.resource),
-    rect = col.getBoundingClientRect(),
-    start =
-      Math.round(((event.clientY - rect.top - move.offset) / 2 + 600) / 5) * 5,
-    candidate = { ...move.a, start };
-  if (r.kind === "therapist") candidate.therapistId = r.id;
-  else {
-    candidate.roomId = r.id;
-    candidate.bed = Math.min(
-      r.capacity - 1,
-      Math.max(
-        0,
-        Math.floor(((event.clientX - rect.left) / rect.width) * r.capacity),
-      ),
-    );
-  }
-  if (
-    candidate.requestedTherapistId &&
-    candidate.therapistId !== move.a.therapistId &&
-    !confirm(
-      "Move this requested appointment to another therapist? The original request will stay recorded.",
-    )
-  )
-    return;
-  try {
-    await api("/appointments/" + candidate.id, {
-      method: "PUT",
-      body: candidate,
-    });
-    await loadCalendar();
-    toast("Appointment moved.");
-  } catch (error) {
-    toast(error.message);
-    await loadCalendar().catch(showAppError);
-  }
-});
-document.addEventListener("pointercancel", () => {
-  if (drag) drag.element.classList.remove("dragging");
-  drag = null;
-  $("drag-ghost")?.remove();
-});
-
 async function appointmentDialog(existing = null, defaults = {}) {
   if (!operator()) return;
   if (
@@ -1019,11 +1017,27 @@ async function appointmentDialog(existing = null, defaults = {}) {
 }
 function appointmentDetails(a) {
   showDrawer(
-    a.serviceName,
-    "Treatment details",
-    `<div class="history"><article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}–${clock(a.start + a.duration)}</strong><p>${a.duration} minutes · ${esc(therapist(a.therapistId)?.name)}</p><p>${esc(room(a.roomId)?.name)} · Table ${a.bed + 1}</p><p>${a.requestedTherapistId ? "♥ Requested: " + esc(therapist(a.requestedTherapistId)?.name) : "No specific therapist request"}</p><p>${statusName(a.status)}</p></article></div>`,
+    "Appointment",
+    prettyDate(a.date),
+    appointmentDetailsHTML(a, {
+      role: state.user.role,
+      catalogue: state.catalogue,
+      variant: "summary",
+    }),
   );
+  if ($("appointment-summary-edit"))
+    $("appointment-summary-edit").onclick = () =>
+      appointmentDialog(a).catch(showAppError);
+  if ($("appointment-summary-client"))
+    $("appointment-summary-client").onclick = () =>
+      clientProfile(a.clientId, () => appointmentDetails(a));
+  if ($("appointment-summary-reschedule"))
+    $("appointment-summary-reschedule").onclick = () => {
+      closeDrawer();
+      calendarReschedule?.begin(a.id);
+    };
 }
+
 async function renderClients() {
   $("page-content").innerHTML =
     '<div class="toolbar"><input type="search" id="client-search" placeholder="Search name, phone, email or Instagram" aria-label="Search clients"><button class="btn primary" id="client-add">+ New client</button></div><div id="client-results"></div>';
@@ -1438,7 +1452,11 @@ document
   .querySelectorAll("[data-page]")
   .forEach((b) => (b.onclick = () => setPage(b.dataset.page)));
 window.addEventListener("focus", () => {
-  if (state.user && state.page === "calendar" && !drag)
+  if (
+    state.user &&
+    state.page === "calendar" &&
+    !calendarReschedule?.isActive()
+  )
     loadCalendar().catch(showAppError);
 });
 setInterval(updateClock, 15000);

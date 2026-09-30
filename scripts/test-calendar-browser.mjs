@@ -70,6 +70,7 @@ function fixture() {
     delayed: new Map(),
     failDates: new Set(),
     failNextWrite: false,
+    writeWait: null,
   };
 }
 function booking(
@@ -174,6 +175,7 @@ const server = createServer(async (req, res) => {
         const body = JSON.parse(raw);
         f.writes.push({ body, method: req.method, path: url.pathname });
         assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        if (f.writeWait) await f.writeWait.promise;
         if (f.failNextWrite) {
           f.failNextWrite = false;
           return json(
@@ -184,6 +186,13 @@ const server = createServer(async (req, res) => {
             409,
           );
         }
+        const existingIndex =
+          req.method === "PUT"
+            ? f.appointments.findIndex(
+                (a) => a.id === url.pathname.split("/").at(-1),
+              )
+            : -1;
+        const previous = f.appointments[existingIndex];
         const saved = {
           ...booking(
             "new-" + f.writes.length,
@@ -191,9 +200,12 @@ const server = createServer(async (req, res) => {
             body.roomId,
             body.bed,
           ),
+          ...previous,
           ...body,
+          version: (previous?.version || 0) + 1,
         };
-        f.appointments.push(saved);
+        if (existingIndex >= 0) f.appointments[existingIndex] = saved;
+        else f.appointments.push(saved);
         return json({ appointment: saved }, req.method === "POST" ? 201 : 200);
       }
       return json({ error: "Unimplemented fixture API: " + url.pathname }, 404);
@@ -275,6 +287,7 @@ async function scenario(name, device, run) {
     throw error;
   } finally {
     for (const delay of f.delayed.values()) delay.release();
+    f.writeWait?.release();
     await context.close();
     fixtures.delete(id);
   }
@@ -409,6 +422,116 @@ function deferred() {
     release = r;
   });
   return { promise, release };
+}
+function denseSchedule(f) {
+  f.catalogue.rooms = [
+    { id: "r1", name: "QA Garden Room", capacity: 2 },
+    { id: "r2", name: "QA Orchid Room", capacity: 2 },
+    { id: "r3", name: "QA Quiet Room", capacity: 1 },
+  ];
+  for (const letter of ["D", "E", "F"])
+    f.catalogue.therapists.push({
+      ...structuredClone(f.catalogue.therapists[0]),
+      id: "t" + letter,
+      name: "QA Therapist " + letter,
+    });
+  f.appointments = [];
+  for (const [therapistId, roomId, bed] of [
+    ["tB", "r1", 1],
+    ["tC", "r2", 0],
+    ["tD", "r2", 1],
+    ["tE", "r3", 0],
+  ]) {
+    for (let start = 1020; start < 1260; start += 60) {
+      const a = booking(
+        `dense-${therapistId}-${start}`,
+        therapistId,
+        roomId,
+        bed,
+        start,
+      );
+      Object.assign(a, {
+        clientName: `Fictional Guest ${therapistId.slice(1)} ${start}`,
+        serviceName:
+          start % 120
+            ? "Relaxing Aroma Oil Massage"
+            : "Traditional Thai Massage",
+        color: start % 120 ? "#ad7185" : "#6f9472",
+        requestedTherapistId: start === 1140 ? therapistId : null,
+      });
+      f.appointments.push(a);
+    }
+  }
+  f.appointments.push(booking("dense-before", "tA", "r1", 0, 1035));
+  const target = {
+    ...booking("dense-target", "tA", "r1", 0, 1140, 90),
+    serviceName: "QA Signature Thai and Aroma Massage",
+    clientName: "Fictional Long-Name Calendar Guest",
+    requestedTherapistId: "tA",
+    note: "PRIVATE QA appointment note",
+    grossCents: 680000,
+    netCents: 590000,
+    color: "#8c70a5",
+  };
+  f.appointments.push(target, booking("dense-after", "tA", "r1", 0, 1230));
+  return target;
+}
+async function denseView(page) {
+  await page.locator('[data-mode="rooms"]').click();
+  await page.locator("#calendar-scroll").evaluate((el) => {
+    el.scrollTop = 960;
+    el.scrollLeft = 0;
+  });
+  await page.locator('[data-appointment="dense-target"]').waitFor();
+}
+async function bodyPoint(locator) {
+  const box = await locator.boundingBox();
+  assert.ok(box, "Appointment is rendered");
+  return { x: box.x + Math.min(40, box.width / 2), y: box.y + 24 };
+}
+async function touchStart(page, point) {
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type, at = point) =>
+    cdp.send("Input.dispatchTouchEvent", {
+      type,
+      touchPoints:
+        type === "touchEnd" ? [] : [{ x: at.x, y: at.y, id: 1, force: 0.5 }],
+    });
+  await send("touchStart");
+  return {
+    move: (at) => send("touchMove", at),
+    end: async () => {
+      await send("touchEnd");
+      await cdp.detach();
+    },
+  };
+}
+async function longPress(page, locator) {
+  const touch = await touchStart(page, await bodyPoint(locator));
+  await new Promise((done) => setTimeout(done, 520));
+  await touch.end();
+  await page.locator("#calendar-reschedule-bar").waitFor();
+}
+async function shiftTouchDraft(page) {
+  const preview = page.locator(
+    '.calendar-reschedule-preview[data-appointment="dense-target"]',
+  );
+  const point = await bodyPoint(preview);
+  const touch = await touchStart(page, point);
+  await touch.move({ x: point.x, y: point.y - 10 });
+  await touch.end();
+  await page
+    .locator("#calendar-reschedule-time")
+    .filter({ hasText: "18:55–20:25 · 90 min" })
+    .waitFor();
+}
+async function renderedFrames(page) {
+  await page.evaluate(
+    () =>
+      new Promise((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(done)),
+      ),
+  );
 }
 
 try {
@@ -663,15 +786,18 @@ try {
         const hint = column.locator(".calendar-slot-hint");
         await hint.waitFor();
         assert.equal(await hint.getAttribute("data-start"), String(minute));
-        assert.equal(await hint.getAttribute("data-band-start"), "600");
+        assert.equal(
+          await hint.getAttribute("data-band-start"),
+          String(Math.floor(minute / 15) * 15),
+        );
         assert.equal(
           await hint.locator(".calendar-slot-time").textContent(),
           `10:${String(minute - 600).padStart(2, "0")}`,
         );
         const rect = await hint.boundingBox();
         assert.ok(
-          Math.abs(rect.height - 60) <= 3,
-          "The hover band spans 30 minutes at the calendar's 2px/minute scale",
+          Math.abs(rect.height - 30) <= 3,
+          "The hover band spans 15 minutes at the calendar's 2px/minute scale",
         );
         assert.ok(
           rect.x >= box.x + box.width / 2 - 3 &&
@@ -914,6 +1040,8 @@ try {
       await page.locator('[data-mode="rooms"]').click();
       const event = page.locator('[data-appointment="existing"]');
       await event.click();
+      await page.locator("#appointment-summary-edit").waitFor();
+      await page.locator("#appointment-summary-edit").click();
       await page.locator("#appointment-form").waitFor();
       assert.equal(
         await page.locator("#drawer-title").textContent(),
@@ -924,20 +1052,25 @@ try {
         false,
       );
       assert.equal(await page.locator("#booking-availability").count(), 0);
-      await page.locator("#form-cancel").click();
-      const grip = await event.locator(".drag-grip").boundingBox();
-      await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+      await control(page, "serviceId").selectOption("s90");
+      assert.equal((await selected(page)).duration, "90");
+      await page.locator("#form-save").click();
+      await page.locator("#drawer").waitFor({ state: "hidden" });
+      assert.equal(f.writes.at(-1).body.duration, 90);
+      const grip = await bodyPoint(event);
+      await page.mouse.move(grip.x, grip.y);
       await page.mouse.down();
-      await page.mouse.move(
-        grip.x + grip.width / 2,
-        grip.y + grip.height / 2 + 20,
-        { steps: 5 },
+      await page.mouse.move(grip.x, grip.y + 20, { steps: 5 });
+      const moved = page.waitForResponse(
+        (r) =>
+          r.request().method() === "PUT" &&
+          r.url().endsWith("/api/appointments/existing"),
       );
       await page.mouse.up();
+      await moved;
       await page
-        .locator("#toast")
-        .filter({ hasText: "Appointment moved" })
-        .waitFor();
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
       assert.equal(f.writes.at(-1).method, "PUT");
       assert.equal(f.writes.at(-1).body.start, 610);
       assert.equal(
@@ -977,6 +1110,563 @@ try {
         /Fictional QA Client/,
       );
       assert.equal(f.writes.length, 0);
+    },
+  );
+  for (const device of [desktop, tablet, phone]) {
+    await scenario(
+      "dense five-table schedule and readable appointment summary",
+      device,
+      async ({ page, f, open }) => {
+        const target = denseSchedule(f);
+        await open();
+        await denseView(page);
+        assert.equal(await page.locator(".calendar-column").count(), 3);
+        assert.equal(await page.locator(".calendar-column.couple").count(), 2);
+        assert.equal(
+          await page.locator("[data-appointment]").count(),
+          f.appointments.length,
+        );
+        const quarterHeight = await page
+          .locator("#calendar-grid")
+          .evaluate((el) =>
+            getComputedStyle(el)
+              .getPropertyValue("--calendar-quarter-height")
+              .trim(),
+          );
+        assert.equal(
+          quarterHeight,
+          "30px",
+          "Four 15-minute grid divisions fit one 120-pixel hour",
+        );
+        const event = page.locator('[data-appointment="dense-target"]');
+        const original = await event.boundingBox();
+        assert.ok(
+          Math.abs(original.height - 177) <= 1,
+          "90-minute card retains its duration scale",
+        );
+        await capture(page, `${device.name}-dense-five-table-calendar`);
+        if (!device.mobile) {
+          await event.hover();
+          const card = page.locator("#appointment-hover");
+          await card.waitFor();
+          const cardBox = await withinViewport(
+            page,
+            card,
+            "Appointment hover card",
+          );
+          const after = await event.boundingBox();
+          assert.deepEqual(
+            after,
+            original,
+            "Subtle hover does not expand the appointment geometry",
+          );
+          assert.ok(
+            Math.max(
+              cardBox.x - original.x - original.width,
+              original.x - cardBox.x - cardBox.width,
+              0,
+            ) <= 20,
+            "Hover information stays beside the appointment",
+          );
+          assert.match(
+            await card.textContent(),
+            /Fictional Long-Name Calendar Guest/,
+          );
+          assert.match(await card.textContent(), /90 minutes/);
+          assert.match(await card.textContent(), /QA Therapist A requested/);
+          assert.equal(
+            await card.locator(".appointment-treatment-price").count(),
+            1,
+          );
+          await page.mouse.move(cardBox.x + 25, cardBox.y + 25);
+          await page.waitForTimeout(220); // Cross the real 180 ms leave delay.
+          assert.equal(
+            await card.isVisible(),
+            true,
+            "Pointer can move into the information card",
+          );
+          await capture(page, "desktop-dense-appointment-hover");
+          await page.keyboard.press("Escape");
+          await card.waitFor({ state: "hidden" });
+        }
+        if (device.mobile) await event.tap();
+        else await event.click();
+        await page.locator("#appointment-summary-edit").waitFor();
+        await withinViewport(
+          page,
+          page.locator("#drawer"),
+          "Appointment summary dialog",
+        );
+        const summary = page.locator("#drawer .appointment-summary");
+        assert.match(
+          await summary.textContent(),
+          /QA Signature Thai and Aroma Massage/,
+        );
+        assert.match(
+          await summary.textContent(),
+          /PRIVATE QA appointment note/,
+        );
+        assert.match(await summary.textContent(), /QA Garden Room · Table 1/);
+        const labels = await summary
+          .locator("h3")
+          .evaluateAll((nodes) =>
+            nodes.map((el) => ({
+              text: el.textContent,
+              width: el.clientWidth,
+              contentWidth: el.scrollWidth,
+              whiteSpace: getComputedStyle(el).whiteSpace,
+              overflow: getComputedStyle(el).textOverflow,
+            })),
+          );
+        assert.ok(
+          labels.every(
+            (l) =>
+              l.contentWidth <= l.width + 1 &&
+              l.whiteSpace !== "nowrap" &&
+              l.overflow !== "ellipsis",
+          ),
+          "Full client and treatment names wrap without ellipsis: " +
+            JSON.stringify(labels),
+        );
+        assert.equal(
+          await page.locator("#appointment-form").count(),
+          0,
+          "Summary is separate from the editor",
+        );
+        await capture(page, `${device.name}-dense-appointment-details`);
+        await page.locator("#appointment-summary-edit").click();
+        await page.locator("#appointment-form").waitFor();
+        const values = await selected(page);
+        assert.equal(values.duration, "90");
+        assert.equal(values.note, target.note);
+        assert.equal(values.requestedTherapistId, "tA");
+        assert.equal(f.writes.length, 0);
+      },
+    );
+  }
+  for (const role of ["reception", "therapist"]) {
+    await scenario(
+      `${role} hover and summary enforce field privacy`,
+      desktop,
+      async ({ page, f, open }) => {
+        denseSchedule(f);
+        f.role = role;
+        await open();
+        await denseView(page);
+        const event = page.locator('[data-appointment="dense-target"]');
+        await event.hover();
+        const hover = page.locator("#appointment-hover");
+        await hover.waitFor();
+        assert.equal(
+          await hover.locator(".appointment-treatment-price").count(),
+          0,
+        );
+        assert.doesNotMatch(
+          await hover.textContent(),
+          /5,900|6,800|PRIVATE QA/,
+        );
+        if (role === "therapist")
+          assert.doesNotMatch(await hover.textContent(), /Fictional Long-Name/);
+        else assert.match(await hover.textContent(), /Fictional Long-Name/);
+        await event.click();
+        const summary = page.locator("#drawer .appointment-summary");
+        await summary.waitFor();
+        assert.equal(
+          await summary.locator(".appointment-treatment-price").count(),
+          0,
+        );
+        assert.match(await summary.textContent(), /90 minutes/);
+        assert.match(await summary.textContent(), /QA Therapist A requested/);
+        if (role === "therapist") {
+          assert.doesNotMatch(
+            await summary.textContent(),
+            /Fictional Long-Name|PRIVATE QA/,
+          );
+          assert.equal(
+            await page
+              .locator(
+                "#appointment-summary-edit, #appointment-summary-reschedule, #appointment-summary-client",
+              )
+              .count(),
+            0,
+          );
+        } else {
+          assert.match(await summary.textContent(), /PRIVATE QA/);
+          assert.equal(
+            await page.locator("#appointment-summary-edit").count(),
+            1,
+          );
+        }
+        assert.equal(f.writes.length, 0);
+      },
+    );
+  }
+  await scenario(
+    "whole-card mouse drag shows exact five-minute feedback and preserves 90 minutes",
+    desktop,
+    async ({ page, f, open }) => {
+      const target = denseSchedule(f);
+      await open();
+      await denseView(page);
+      const point = await bodyPoint(
+        page.locator('[data-appointment="dense-target"]'),
+      );
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.down();
+      await page.mouse.move(point.x, point.y - 10, { steps: 3 });
+      await page
+        .locator("#calendar-reschedule-time")
+        .filter({ hasText: "18:55–20:25 · 90 min" })
+        .waitFor();
+      assert.equal(
+        f.writes.length,
+        0,
+        "Live feedback precedes saving the drop",
+      );
+      assert.match(
+        await page
+          .locator(".calendar-reschedule-preview .event-time")
+          .textContent(),
+        /18:55–20:25/,
+      );
+      await capture(page, "desktop-live-five-minute-move");
+      const moved = page.waitForResponse(
+        (r) =>
+          r.request().method() === "PUT" &&
+          r.url().endsWith("/api/appointments/dense-target"),
+      );
+      await page.mouse.up();
+      assert.equal((await moved).status(), 200);
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(f.writes.length, 1);
+      const body = f.writes[0].body;
+      assert.equal(body.start, 1135);
+      assert.equal(body.duration, 90);
+      for (const key of [
+        "clientId",
+        "requestedTherapistId",
+        "grossCents",
+        "netCents",
+        "note",
+        "roomId",
+        "bed",
+        "therapistId",
+      ])
+        assert.equal(
+          body[key],
+          target[key],
+          `${key} survives a time-only move`,
+        );
+      assert.equal(await page.locator("#drawer").isVisible(), false);
+      assert.equal(
+        await page.locator("#calendar-slot-menu").isVisible(),
+        false,
+      );
+    },
+  );
+  await scenario(
+    "touch swipe scrolls; long press selects a cancellable draft with fixed feedback",
+    phone,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      const event = page.locator('[data-appointment="dense-target"]');
+      const point = await bodyPoint(event);
+      const scrollBefore = await page
+        .locator("#calendar-scroll")
+        .evaluate((el) => el.scrollTop);
+      const swipe = await touchStart(page, point);
+      await swipe.move({ x: point.x, y: point.y - 40 });
+      await swipe.move({ x: point.x, y: point.y - 100 });
+      await swipe.end();
+      await renderedFrames(page);
+      assert.equal(await page.locator("#calendar-reschedule-bar").count(), 0);
+      assert.equal(f.writes.length, 0);
+      assert.ok(
+        (await page
+          .locator("#calendar-scroll")
+          .evaluate((el) => el.scrollTop)) > scrollBefore,
+        "Ordinary touch swipe scrolls the calendar",
+      );
+      await denseView(page);
+      await longPress(page, event);
+      await withinViewport(
+        page,
+        page.locator("#calendar-reschedule-bar"),
+        "Reschedule footer",
+      );
+      assert.equal(
+        await page.locator("#calendar-scroll.is-rescheduling").count(),
+        1,
+      );
+      assert.ok(
+        (await page
+          .locator('[data-appointment="dense-tB-1140"]')
+          .evaluate((el) => Number(getComputedStyle(el).opacity))) < 1,
+        "Other bookings dim while a draft is selected",
+      );
+      assert.equal(
+        await page.locator("#drawer").isVisible(),
+        false,
+        "Long press must not open summary",
+      );
+      await shiftTouchDraft(page);
+      await capture(page, "phone-selected-draft-footer");
+      await page.locator("#calendar-reschedule-cancel").click();
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(
+        await page
+          .locator(".calendar-reschedule-preview, .is-reschedule-source")
+          .count(),
+        0,
+      );
+      assert.match(
+        await event.locator(".event-time").textContent(),
+        /19:00–20:30/,
+      );
+      assert.equal(
+        f.writes.length,
+        0,
+        "Cancel never sends an appointment mutation",
+      );
+    },
+  );
+  await scenario(
+    "touch draft save sends one PUT despite repeated activation",
+    tablet,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      await longPress(page, page.locator('[data-appointment="dense-target"]'));
+      await shiftTouchDraft(page);
+      const hold = deferred();
+      f.writeWait = hold;
+      const started = page.waitForRequest((r) => r.method() === "PUT");
+      await page.locator("#calendar-reschedule-save").click();
+      await started;
+      assert.equal(
+        await page.locator("#calendar-reschedule-save").isDisabled(),
+        true,
+      );
+      await page.locator("#calendar-reschedule-save").dispatchEvent("click");
+      assert.equal(
+        f.writes.length,
+        1,
+        "Repeated activation cannot duplicate a pending save",
+      );
+      const saved = page.waitForResponse((r) => r.request().method() === "PUT");
+      hold.release();
+      assert.equal((await saved).status(), 200);
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(f.writes.length, 1);
+      assert.equal(
+        f.appointments.find((a) => a.id === "dense-target").start,
+        1135,
+      );
+      assert.equal(f.writes[0].body.duration, 90);
+    },
+  );
+  await scenario(
+    "409 leaves a recoverable touch draft and retry preserves its move",
+    phone,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      await longPress(page, page.locator('[data-appointment="dense-target"]'));
+      await page.locator("#calendar-reschedule-earlier").click();
+      f.failNextWrite = true;
+      await page.locator("#calendar-reschedule-save").click();
+      await page
+        .locator("#calendar-reschedule-error")
+        .filter({ hasText: "already booked" })
+        .waitFor();
+      assert.equal(
+        await page.locator("#calendar-reschedule-save").isEnabled(),
+        true,
+      );
+      assert.equal(
+        await page.locator(".calendar-reschedule-preview").count(),
+        1,
+      );
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /18:55–20:25/,
+      );
+      assert.equal(
+        f.appointments.find((a) => a.id === "dense-target").start,
+        1140,
+      );
+      const saved = page.waitForResponse(
+        (r) => r.request().method() === "PUT" && r.status() === 200,
+      );
+      await page.locator("#calendar-reschedule-save").click();
+      await saved;
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(
+        f.writes.length,
+        2,
+        "One rejected attempt and one successful retry",
+      );
+      assert.equal(
+        f.appointments.find((a) => a.id === "dense-target").start,
+        1135,
+      );
+    },
+  );
+  await scenario(
+    "pending calendar refresh cannot discard selected draft; date change cancels without write",
+    phone,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      const hold = deferred();
+      f.delayed.set(date, hold);
+      const started = page.waitForRequest(
+        (r) => new URL(r.url()).pathname === "/api/appointments",
+      );
+      await page.locator("#calendar-refresh").click();
+      const request = await started;
+      await longPress(page, page.locator('[data-appointment="dense-target"]'));
+      await page.locator("#calendar-reschedule-earlier").click();
+      const finished = page.waitForResponse((r) => r.request() === request);
+      hold.release();
+      await finished;
+      await renderedFrames(page);
+      assert.equal(
+        await page.locator("#calendar-reschedule-bar").isVisible(),
+        true,
+      );
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /18:55–20:25/,
+      );
+      f.delayed.delete(date);
+      await page.locator("#calendar-date").fill(nextDate);
+      await page.locator("#calendar-date").dispatchEvent("change");
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(
+        await page.locator(".calendar-reschedule-preview").count(),
+        0,
+      );
+      assert.equal(f.writes.length, 0);
+    },
+  );
+  await scenario(
+    "late saved response after navigation cannot revive draft or replace the new page",
+    desktop,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      await page.locator('[data-appointment="dense-target"]').click();
+      await page.locator("#appointment-summary-reschedule").click();
+      await page.locator("#calendar-reschedule-earlier").click();
+      const hold = deferred();
+      f.writeWait = hold;
+      const started = page.waitForRequest((r) => r.method() === "PUT");
+      await page.locator("#calendar-reschedule-save").click();
+      const request = await started;
+      await page.locator('[data-page="clients"]').click();
+      await page.locator("#client-search").waitFor();
+      const finished = page.waitForResponse((r) => r.request() === request);
+      hold.release();
+      await finished;
+      await renderedFrames(page);
+      assert.equal(await page.locator("#client-search").isVisible(), true);
+      assert.equal(
+        await page
+          .locator("#calendar-reschedule-bar, .calendar-reschedule-preview")
+          .count(),
+        0,
+      );
+      assert.equal(await page.locator("#drawer").isVisible(), false);
+      assert.equal(
+        f.writes.length,
+        1,
+        "Already-authorized save finishes once, without new phantom writes",
+      );
+    },
+  );
+  await scenario(
+    "blur during a pending move blocks a second save and refreshes its eventual result",
+    desktop,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      const event = page.locator('[data-appointment="dense-target"]');
+      await event.click();
+      await page.locator("#appointment-summary-reschedule").click();
+      await page.locator("#calendar-reschedule-earlier").click();
+      const hold = deferred();
+      f.writeWait = hold;
+      const started = page.waitForRequest((r) => r.method() === "PUT");
+      await page.locator("#calendar-reschedule-save").click();
+      const request = await started;
+      // Exercise the lifecycle callback without opening an unrelated real browser tab.
+      await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      const point = await bodyPoint(event);
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.down();
+      await page.mouse.move(point.x, point.y - 20, { steps: 3 });
+      await page.mouse.up();
+      assert.equal(f.writes.length, 1);
+      assert.equal(await page.locator("#calendar-reschedule-bar").count(), 0);
+      const finished = page.waitForResponse((r) => r.request() === request);
+      hold.release();
+      await finished;
+      await event
+        .locator(".event-time")
+        .filter({ hasText: "18:55–20:25" })
+        .waitFor();
+      assert.equal(f.writes.length, 1);
+    },
+  );
+  await scenario(
+    "floating Today returns both past and future to the Belgrade date",
+    phone,
+    async ({ page, open }) => {
+      await open();
+      const today = await page.evaluate(() => {
+        const parts = Object.fromEntries(
+          new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Europe/Belgrade",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          })
+            .formatToParts(new Date())
+            .map((p) => [p.type, p.value]),
+        );
+        return `${parts.year}-${parts.month}-${parts.day}`;
+      });
+      for (const away of ["2025-01-03", "2027-12-24"]) {
+        await page.locator("#calendar-date").fill(away);
+        await page.locator("#calendar-date").dispatchEvent("change");
+        const button = page.locator("#calendar-today-floating");
+        await button.waitFor();
+        await withinViewport(page, button, "Floating Today button");
+        await button.click();
+        assert.equal(await page.locator("#calendar-date").inputValue(), today);
+        await button.waitFor({ state: "hidden" });
+      }
     },
   );
   assert.ok(passed > 0, "No browser acceptance scenarios ran");
