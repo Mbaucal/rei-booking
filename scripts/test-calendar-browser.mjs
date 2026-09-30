@@ -71,6 +71,8 @@ function fixture() {
     appointments: [],
     blocks: [],
     blockWrites: [],
+    photoWrites: [],
+    clientPhotos: new Map(),
     writes: [],
     requests: [],
     delayed: new Map(),
@@ -170,6 +172,45 @@ const server = createServer(async (req, res) => {
         return json({ clients: response?.clients || f.clients });
       }
       if (url.pathname === "/api/clients/matches") return json({ matches: [] });
+      if (
+        /^\/api\/clients\/[^/]+$/.test(url.pathname) &&
+        req.method === "GET"
+      ) {
+        const client = f.clients.find(
+          (c) => c.id === url.pathname.split("/").at(-1),
+        );
+        if (!client) return json({ error: "Fixture client not found" }, 404);
+        return json({
+          client,
+          appointments: f.appointments.filter((a) => a.clientId === client.id),
+        });
+      }
+      if (
+        url.pathname.startsWith("/api/photos/clients/") &&
+        req.method === "PUT"
+      ) {
+        let raw = "";
+        for await (const chunk of req) raw += chunk;
+        const body = JSON.parse(raw);
+        assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        f.photoWrites.push(body);
+        const id = url.pathname.split("/").at(-1);
+        f.clientPhotos.set(id, body.data);
+        const client = f.clients.find((c) => c.id === id);
+        client.hasPhoto = !!body.data;
+        client.photoVersion = (client.photoVersion || 0) + 1;
+        return json({ ok: true });
+      }
+
+      if (
+        url.pathname.startsWith("/api/photos/clients/") &&
+        req.method === "GET"
+      ) {
+        const data = f.clientPhotos.get(url.pathname.split("/").at(-1));
+        if (!data) return json({ error: "Fixture photo not found" }, 404);
+        res.writeHead(200, { "Content-Type": "image/jpeg" });
+        return res.end(Buffer.from(data, "base64"));
+      }
       if (url.pathname === "/api/reports/appointments")
         return json({
           options: { from: date, to: date },
@@ -264,6 +305,15 @@ const server = createServer(async (req, res) => {
           ...body,
           version: (previous?.version || 0) + 1,
         };
+        if (body.newClient) {
+          const client = {
+            ...body.newClient,
+            id: "inline-client-" + f.writes.length,
+          };
+          f.clients.push(client);
+          saved.clientId = client.id;
+          saved.clientName = client.name;
+        }
         if (existingIndex >= 0) f.appointments[existingIndex] = saved;
         else f.appointments.push(saved);
         return json({ appointment: saved }, req.method === "POST" ? 201 : 200);
@@ -322,7 +372,7 @@ async function scenario(name, device, run) {
     await page.goto(origin);
     if (f.role === "owner") {
       await page.locator("#report-metrics .report-metric").first().waitFor();
-      await page.locator('[data-page="calendar"]').click();
+      await page.locator('nav [data-page="calendar"]').click();
     } else await page.locator("#calendar-grid").waitFor();
     await page.locator("#calendar-date").fill(date);
     await page.locator("#calendar-date").dispatchEvent("change");
@@ -417,6 +467,68 @@ async function withinViewport(page, locator, description) {
     description + " fits the viewport: " + JSON.stringify({ rect, viewport }),
   );
   return rect;
+}
+async function bookingLayout(page, role = "owner") {
+  const headings = await page
+    .locator("#appointment-form .booking-section-heading")
+    .allTextContents();
+  assert.deepEqual(
+    headings.map((text) => text.trim()),
+    [
+      "Client",
+      "Treatment & time",
+      "Therapist & room",
+      ...(role === "owner" ? ["Pricing"] : []),
+      "Requests & notes",
+    ],
+  );
+  await withinViewport(
+    page,
+    page.locator("#drawer-footer"),
+    "Appointment save footer",
+  );
+  await withinViewport(
+    page,
+    page.locator("#form-save"),
+    "Appointment save action",
+  );
+  await withinViewport(
+    page,
+    page.locator("#form-cancel"),
+    "Appointment cancel action",
+  );
+  const overflow = await page
+    .locator("#drawer")
+    .evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
+  assert.ok(
+    overflow.scroll <= overflow.width + 1,
+    "Booking drawer has no horizontal overflow",
+  );
+}
+async function liveSummary(page, { time, duration, treatment, resources }) {
+  const summary = page.locator("#booking-summary");
+  await summary.waitFor();
+  assert.match(
+    await summary.locator(".booking-summary-time").textContent(),
+    time,
+  );
+  assert.match(
+    await summary.locator(".booking-summary-duration").textContent(),
+    duration,
+  );
+  assert.match(
+    await summary.locator(".booking-summary-treatment").textContent(),
+    treatment,
+  );
+  for (const resource of resources)
+    assert.match(
+      await summary.locator(".booking-summary-resources").textContent(),
+      resource,
+    );
+  assert.doesNotMatch(
+    await summary.textContent(),
+    /Fictional QA Client|4700|5900|RSD|Private QA/,
+  );
 }
 async function menuAt(page, point) {
   const menu = page.locator("#calendar-slot-menu");
@@ -652,6 +764,17 @@ try {
           "Changing treatment must preserve the clicked table",
         );
         assert.equal(values.grossCents, "5900.00");
+        await bookingLayout(page);
+        await liveSummary(page, {
+          time: /10:00.*11:30/,
+          duration: /90/,
+          treatment: /QA Longer Massage/,
+          resources: [/QA Therapist C/, /QA Couple/, /Table 2/],
+        });
+        await page.locator("#drawer-content").evaluate((el) => {
+          el.scrollTop = 0;
+        });
+        await capture(page, `${device.name}-booking-sections-live-summary`);
         await control(page, "clientId").selectOption("c1");
         await control(page, "requestedTherapistId").selectOption("tC");
         await control(page, "note").fill("Fictional QA appointment note");
@@ -1165,7 +1288,7 @@ try {
       const abandonedRequest = await abandonedStarted;
       await page.locator("#booking-opening").waitFor();
       await page.locator("#form-cancel").click();
-      await page.locator('[data-page="clients"]').click();
+      await page.locator('nav [data-page="clients"]').click();
       await page
         .locator("#page-title")
         .filter({ hasText: "Clients" })
@@ -1800,7 +1923,7 @@ try {
       const started = page.waitForRequest((r) => r.method() === "PUT");
       await page.locator("#calendar-reschedule-save").click();
       const request = await started;
-      await page.locator('[data-page="clients"]').click();
+      await page.locator('nav [data-page="clients"]').click();
       await page.locator("#client-search").waitFor();
       const finished = page.waitForResponse((r) => r.request() === request);
       hold.release();
@@ -2277,6 +2400,291 @@ try {
         await capture(page, `${device.name}-therapist-block-details`);
       },
     );
+  for (const device of [phone, tablet])
+    await scenario(
+      "compact calendar keeps controls usable and keyboard bands below resource headers",
+      device,
+      async ({ page, open }) => {
+        await open();
+        const header = await page.locator("#calendar-headers").boundingBox();
+        if (device.name === "phone")
+          assert.ok(
+            header.y + header.height <= 407,
+            "Visible phone grid gains at least 80px over its previous 487px top: " +
+              JSON.stringify(header),
+          );
+        const overflow = await page.evaluate(() => ({
+          actual: document.documentElement.scrollWidth,
+          viewport: innerWidth,
+        }));
+        assert.ok(
+          overflow.actual <= overflow.viewport + 1,
+          "Calendar width stays inside the outer page; resources scroll within their own grid",
+        );
+        for (const selector of [
+          "#calendar-today",
+          "#calendar-prev",
+          "#calendar-date",
+          "#calendar-next",
+          "#calendar-refresh",
+          "#calendar-block-add",
+          "#appointment-add",
+          '[data-mode="all"]',
+          '[data-mode="therapists"]',
+          '[data-mode="rooms"]',
+        ])
+          await withinViewport(
+            page,
+            page.locator(selector),
+            "Available calendar control " + selector,
+          );
+        await capture(page, `${device.name}-compact-calendar-toolbar`);
+        await page.locator('[data-mode="rooms"]').click();
+        const column = page.locator('[data-resource="r1"]');
+        await column.evaluate((el) => el.focus({ preventScroll: true }));
+        const initial = await page.evaluate(() => {
+          const box = document
+            .querySelector('[data-resource="r1"]')
+            .getBoundingClientRect();
+          const header = document
+            .querySelector("#calendar-headers")
+            .getBoundingClientRect();
+          return (
+            Math.floor((Math.max(header.bottom, 0) + 10 - box.top) / 2 / 15) *
+            15
+          );
+        });
+        await page.keyboard.press("ArrowRight");
+        await renderedFrames(page);
+        const hint = column.locator(".calendar-slot-hint");
+        assert.equal(await hint.getAttribute("data-start"), String(initial));
+        assert.equal(await hint.getAttribute("data-bed"), "1");
+        for (const key of ["ArrowDown", "End", "Home", "PageDown"]) {
+          await page.keyboard.press(key);
+          await renderedFrames(page);
+          const band = await withinViewport(
+            page,
+            hint,
+            "Keyboard-selected quarter-hour band",
+          );
+          const currentHeader = await page
+            .locator("#calendar-headers")
+            .boundingBox();
+          assert.ok(
+            band.y >= currentHeader.y + currentHeader.height - 1,
+            "Selected band remains below the actual compact header",
+          );
+          assert.ok(Math.abs(band.height - 30) <= 1);
+          assert.equal(Number(await hint.getAttribute("data-start")) % 15, 0);
+        }
+        assert.equal(await hint.getAttribute("data-start"), "30");
+        assert.equal(await hint.getAttribute("data-bed"), "1");
+        await page.keyboard.press("Enter");
+        await page.locator("#calendar-slot-menu").waitFor();
+        assert.equal(
+          await page.locator("#calendar-slot-menu-time").textContent(),
+          "00:30",
+        );
+        assert.match(
+          await page.locator("#calendar-slot-menu-resource").textContent(),
+          /Table 2/,
+        );
+        await withinViewport(
+          page,
+          page.locator("#calendar-slot-menu"),
+          "Keyboard quick actions after compact-header scrolling",
+        );
+      },
+    );
+  await scenario(
+    "live booking summary follows explicit resources and never fabricates an invalid end time",
+    desktop,
+    async ({ page, f, open }) => {
+      await open();
+      await add(page);
+      await stateIs(page, "available");
+      await control(page, "serviceId").selectOption("s90");
+      await control(page, "therapistId").selectOption("tC");
+      await control(page, "roomId").selectOption("r1");
+      await control(page, "bed").selectOption("1");
+      await stateIs(page, "available");
+      await liveSummary(page, {
+        time: /10:00.*11:30/,
+        duration: /90/,
+        treatment: /QA Longer Massage/,
+        resources: [/QA Therapist C/, /QA Couple/, /Table 2/],
+      });
+      await control(page, "duration").fill("");
+      assert.doesNotMatch(
+        await page.locator("#booking-summary").textContent(),
+        /11:30|NaN|undefined/,
+      );
+      await page.locator("#form-save").click();
+      assert.equal(
+        f.writes.length,
+        0,
+        "Native validation prevents saving an empty duration",
+      );
+      await control(page, "duration").fill("7");
+      assert.doesNotMatch(
+        await page.locator("#booking-summary").textContent(),
+        /10:07|NaN|undefined/,
+      );
+      await page.locator("#form-save").click();
+      assert.equal(f.writes.length, 0, "Off-step duration cannot be submitted");
+      await control(page, "duration").fill("90");
+      await control(page, "start").fill("23:30");
+      await control(page, "start").press("Tab");
+      assert.match(
+        await page.locator("#booking-summary").textContent(),
+        /end time exceeds this day/,
+      );
+      assert.doesNotMatch(
+        await page.locator("#booking-summary").textContent(),
+        /25:00|NaN/,
+      );
+      await control(page, "date").fill(nextDate);
+      await control(page, "date").press("Tab");
+      assert.match(
+        await page.locator(".booking-summary-date").textContent(),
+        /2 Oct 2026/,
+      );
+      await control(page, "start").fill("11:15");
+      await control(page, "start").press("Tab");
+      await stateIs(page, "available");
+      await liveSummary(page, {
+        time: /11:15.*12:45/,
+        duration: /90/,
+        treatment: /QA Longer Massage/,
+        resources: [/QA Therapist C/, /QA Couple/, /Table 2/],
+      });
+      await page.locator("#form-save").click();
+      await page.locator("#drawer").waitFor({ state: "hidden" });
+      assert.equal(f.writes.length, 1);
+      assert.equal(f.writes[0].body.date, nextDate);
+      assert.equal(f.writes[0].body.start, 675);
+      assert.equal(f.writes[0].body.duration, 90);
+    },
+  );
+  for (const role of ["owner", "reception"])
+    await scenario(
+      `${role} booking sections preserve inline clients and the walk-in toggle`,
+      phone,
+      async ({ page, f, open }) => {
+        f.role = role;
+        await open();
+        await add(page);
+        await stateIs(page, "available");
+        await bookingLayout(page, role);
+        await liveSummary(page, {
+          time: /10:00.*11:00/,
+          duration: /60/,
+          treatment: /QA Massage/,
+          resources: [/QA Therapist A/, /QA Couple/, /Table 1/],
+        });
+        assert.equal(
+          await page.locator('[name="grossCents"]').count(),
+          role === "owner" ? 1 : 0,
+        );
+        assert.equal(
+          await page.locator('[name="netCents"]').count(),
+          role === "owner" ? 1 : 0,
+        );
+        await page.locator("#new-client-check").check();
+        await control(page, "newName").fill("Inline QA Guest");
+        await control(page, "newPhone").fill("+381600000099");
+        await control(page, "newInstagram").fill("qa_example");
+        await control(page, "newNote").fill("Fictional inline note");
+        assert.equal(await control(page, "clientId").isDisabled(), true);
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.deepEqual(f.writes[0].body.newClient, {
+          name: "Inline QA Guest",
+          phone: "+381600000099",
+          email: "",
+          instagram: "qa_example",
+          note: "Fictional inline note",
+        });
+        assert.equal(f.writes[0].body.clientId, null);
+        assert.equal(
+          Object.hasOwn(f.writes[0].body, "grossCents"),
+          role === "owner",
+        );
+        await add(page);
+        await stateIs(page, "available");
+        await page.locator("#new-client-check").check();
+        await control(page, "newName").fill("Discard this unsaved name");
+        await page.locator("#new-client-check").uncheck();
+        assert.equal(
+          await page.locator("#new-client-fields").isVisible(),
+          false,
+        );
+        assert.equal(await control(page, "clientId").isEnabled(), true);
+        assert.equal(await control(page, "clientId").inputValue(), "");
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(f.writes[1].body.clientId, null);
+        assert.equal(Object.hasOwn(f.writes[1].body, "newClient"), false);
+      },
+    );
+  await scenario(
+    "edited booking still reaches client profile and saves a fictional photo preview",
+    phone,
+    async ({ page, f, open }) => {
+      f.appointments = [booking("profile-flow", "tA", "r1", 0)];
+      await open();
+      await page.locator('[data-mode="rooms"]').click();
+      await page.locator('[data-appointment="profile-flow"]').click();
+      await page.locator("#appointment-summary-edit").click();
+      await page.locator("#appointment-form").waitFor();
+      await bookingLayout(page);
+      assert.equal(
+        await page.locator("#booking-client-photo .avatar").count(),
+        1,
+      );
+      await page.locator("#booking-open-profile").click();
+      await page.locator("#profile-back").waitFor();
+      await page.locator("#profile-back").click();
+      await page.locator("#appointment-form").waitFor();
+      assert.equal((await selected(page)).clientId, "c1");
+      await page.locator("#booking-open-profile").click();
+      await page.locator("#profile-photo").click();
+      const png = await page.evaluate(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 8;
+        canvas.getContext("2d").fillRect(0, 0, 8, 8);
+        return canvas.toDataURL("image/png").split(",")[1];
+      });
+      await page.getByLabel("Choose profile photo").setInputFiles({
+        name: "fictional-qa.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(png, "base64"),
+      });
+      await page
+        .locator("[data-photo-status]")
+        .filter({ hasText: "Preview ready" })
+        .waitFor();
+      await withinViewport(
+        page,
+        page.locator("#form-save"),
+        "Photo save remains usable",
+      );
+      await page.locator("#form-save").click();
+      await page.locator("#profile-back").waitFor();
+      assert.equal(f.photoWrites.length, 1);
+      assert.ok(f.photoWrites[0].data.length > 0);
+      await page.locator("#profile-back").click();
+      await page.locator("#appointment-form").waitFor();
+      const image = page.locator("#booking-client-photo img");
+      await image.waitFor();
+      await page.waitForFunction(() => {
+        const image = document.querySelector("#booking-client-photo img");
+        return image.complete && image.naturalWidth > 0;
+      });
+      assert.equal((await selected(page)).clientId, "c1");
+      assert.equal(f.writes.length, 0);
+    },
+  );
   assert.ok(passed > 0, "No browser acceptance scenarios ran");
   assert.deepEqual(
     failures,

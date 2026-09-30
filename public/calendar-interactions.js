@@ -162,14 +162,22 @@ export function mountCalendarInteractions({
     );
   }
   function initialKeyboardSlot(column) {
-    const box = column.getBoundingClientRect(),
-      scrollBox = root.getBoundingClientRect();
-    const top = Math.max(box.top, scrollBox.top + 76, 0);
+    const box = column.getBoundingClientRect();
+    const top = Math.max(box.top, visibleGridBounds().top);
     return calendarSlotAtPoint(
       box,
       { x: box.left + 8, y: top + 10 },
       resource(column).capacity,
     );
+  }
+  function visibleGridBounds() {
+    const frame = root.getBoundingClientRect(),
+      header = root.querySelector(".calendar-headers")?.getBoundingClientRect(),
+      visible = viewport();
+    return {
+      top: Math.max(frame.top, header?.bottom ?? frame.top, visible.top),
+      bottom: Math.min(frame.bottom, visible.top + visible.height),
+    };
   }
   for (const column of columns) {
     column.tabIndex = 0;
@@ -272,12 +280,11 @@ export function mountCalendarInteractions({
         showHint(column, slot);
         const bandTop =
           column.getBoundingClientRect().top + (start - START) * SCALE;
-        const frame = root.getBoundingClientRect();
+        const frame = visibleGridBounds();
         const previousScroll = root.scrollTop;
-        if (bandTop < frame.top + 82)
-          root.scrollTop -= frame.top + 82 - bandTop;
-        else if (bandTop > frame.bottom - 28)
-          root.scrollTop += bandTop - frame.bottom + 28;
+        if (bandTop < frame.top + 6) root.scrollTop -= frame.top + 6 - bandTop;
+        else if (bandTop + BAND * SCALE > frame.bottom)
+          root.scrollTop += bandTop + BAND * SCALE - frame.bottom;
         if (previousScroll !== root.scrollTop)
           keyboardScroll = { column, top: root.scrollTop };
       } else if (event.key === "Escape") {
