@@ -165,12 +165,15 @@ export function mountCalendarReschedule({
     root.classList.remove("is-rescheduling");
     if (current()) onModeChange(false);
   }
-  function cancel() {
+  function cancel({ restoreFocus = false } = {}) {
+    const returnFocus =
+      restoreFocus && current() ? draft?.originals[0]?.[0] : null;
     ++generation;
     releaseGesture();
     if (draft) suppressClick();
     clearDraft();
     saving = false;
+    if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   }
   function button(label, id, action) {
     const el = doc.createElement("button");
@@ -312,7 +315,7 @@ export function mountCalendarReschedule({
       shift(STEP),
     );
     const cancelButton = button("Cancel", "calendar-reschedule-cancel", () => {
-      if (!saving) cancel();
+      if (!saving) cancel({ restoreFocus: true });
     });
     const save = button(
       "Save move",
@@ -551,7 +554,7 @@ export function mountCalendarReschedule({
   listen(doc, "keydown", (event) => {
     if (event.key === "Escape" && draft && !saving) {
       event.preventDefault();
-      cancel();
+      cancel({ restoreFocus: true });
     }
   });
   listen(root, "contextmenu", (event) => {

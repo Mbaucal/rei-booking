@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   appointmentDetailsHTML,
   appointmentPreviewPosition,
+  mountAppointmentPreview,
 } from "../public/appointment-preview.js";
 
 const catalogue = {
@@ -179,5 +180,102 @@ test("floating previews stay within desktop/tablet/offset viewport bounds near e
             (viewport.top || 0) + viewport.height - 10,
         );
       }
+  }
+});
+
+// Exercise the mounted controller with real EventTarget listeners; geometry is
+// fixed so this checks focus lifecycle independently of browser layout.
+function previewFixture() {
+  class Element extends EventTarget {
+    attributes = new Map();
+    style = {};
+    dataset = {};
+    children = [];
+    isConnected = true;
+    scrollTop = 0;
+    scrollLeft = 0;
+    append(child) {
+      child.parentElement = this;
+      this.children.push(child);
+    }
+    remove() {
+      this.isConnected = false;
+    }
+    contains(node) {
+      for (; node; node = node.parentElement) if (node === this) return true;
+      return false;
+    }
+    closest() {
+      return this.dataset.appointment ? this : null;
+    }
+    setAttribute(name, value) {
+      this.attributes.set(name, value);
+    }
+    getAttribute(name) {
+      return this.attributes.get(name) ?? null;
+    }
+    removeAttribute(name) {
+      this.attributes.delete(name);
+    }
+    getBoundingClientRect() {
+      return { top: 100, left: 100, right: 280, width: 326, height: 430 };
+    }
+  }
+  const doc = new EventTarget();
+  doc.defaultView = new EventTarget();
+  doc.defaultView.innerHeight = 900;
+  doc.documentElement = { clientWidth: 1440 };
+  doc.body = new Element();
+  doc.createElement = () => new Element();
+  const root = new Element(),
+    item = new Element(),
+    other = new Element();
+  root.ownerDocument = doc;
+  item.dataset.appointment = appointment.id;
+  doc.body.append(root);
+  root.append(item);
+  root.append(other);
+  const controller = mountAppointmentPreview({
+    root,
+    appointments: [appointment],
+    role: "owner",
+    catalogue,
+    isCurrent: () => true,
+  });
+  const card = doc.body.children.at(-1);
+  const emit = (surface, type, properties) => {
+    const event = new Event(type);
+    for (const [key, value] of Object.entries(properties))
+      Object.defineProperty(event, key, { value });
+    surface.dispatchEvent(event);
+  };
+  return { root, item, other, doc, card, controller, emit };
+}
+
+test("Escape and Enter dismiss a focused preview until a fresh keyboard visit", () => {
+  for (const key of ["Escape", "Enter"]) {
+    const { root, item, other, doc, card, controller, emit } = previewFixture();
+    try {
+      emit(root, "focusin", { target: item });
+      assert.equal(card.hidden, false);
+      assert.equal(item.getAttribute("aria-describedby"), "appointment-hover");
+      emit(key === "Escape" ? doc : root, "keydown", { target: item, key });
+      assert.equal(card.hidden, true);
+      assert.equal(item.getAttribute("aria-describedby"), null);
+      emit(root, "focusin", { target: item });
+      assert.equal(card.hidden, true, "same interaction stays dismissed");
+      emit(root, "focusout", { target: item, relatedTarget: other });
+      emit(root, "focusin", { target: other });
+      emit(root, "focusout", { target: other, relatedTarget: item });
+      emit(root, "focusin", { target: item });
+      assert.equal(
+        card.hidden,
+        false,
+        "returning by keyboard opens the preview again",
+      );
+      assert.equal(item.getAttribute("aria-describedby"), "appointment-hover");
+    } finally {
+      controller.dispose();
+    }
   }
 });

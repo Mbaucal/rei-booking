@@ -206,7 +206,12 @@ export function mountAppointmentPreview({
     if (item) show(item);
   });
   listen(root, "focusout", (event) => {
-    if (eventAt(event.target) && !card.contains(event.relatedTarget)) leave();
+    const item = eventAt(event.target);
+    // Dismissal suppresses only the current interaction. A fresh keyboard visit
+    // must show details again, just as leaving and re-entering with a pointer.
+    if (item && eventAt(event.relatedTarget) !== item && suppressed === item)
+      suppressed = null;
+    if (item && !card.contains(event.relatedTarget)) leave();
   });
   listen(
     doc,

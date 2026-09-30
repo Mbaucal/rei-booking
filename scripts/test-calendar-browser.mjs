@@ -861,7 +861,7 @@ try {
           ),
           y: Math.min(area.y + area.height - 15, viewport.height - 15),
         };
-        const expectedStart = Math.round(((point.y - box.y) / 2 + 600) / 5) * 5;
+        const expectedStart = Math.floor(((point.y - box.y) / 2 + 600) / 5) * 5;
         if (device.mobile) await page.touchscreen.tap(point.x, point.y);
         else await page.mouse.click(point.x, point.y);
         await menuAt(page, point);
@@ -1186,6 +1186,12 @@ try {
             "Pointer can move into the information card",
           );
           await capture(page, "desktop-dense-appointment-hover");
+          await event.focus();
+          await page.keyboard.press("Escape");
+          await card.waitFor({ state: "hidden" });
+          await page.locator("#calendar-refresh").focus();
+          await event.focus();
+          await card.waitFor();
           await page.keyboard.press("Escape");
           await card.waitFor({ state: "hidden" });
         }
@@ -1207,17 +1213,15 @@ try {
           /PRIVATE QA appointment note/,
         );
         assert.match(await summary.textContent(), /QA Garden Room · Table 1/);
-        const labels = await summary
-          .locator("h3")
-          .evaluateAll((nodes) =>
-            nodes.map((el) => ({
-              text: el.textContent,
-              width: el.clientWidth,
-              contentWidth: el.scrollWidth,
-              whiteSpace: getComputedStyle(el).whiteSpace,
-              overflow: getComputedStyle(el).textOverflow,
-            })),
-          );
+        const labels = await summary.locator("h3").evaluateAll((nodes) =>
+          nodes.map((el) => ({
+            text: el.textContent,
+            width: el.clientWidth,
+            contentWidth: el.scrollWidth,
+            whiteSpace: getComputedStyle(el).whiteSpace,
+            overflow: getComputedStyle(el).textOverflow,
+          })),
+        );
         assert.ok(
           labels.every(
             (l) =>
@@ -1438,13 +1442,24 @@ try {
   );
   await scenario(
     "touch draft save sends one PUT despite repeated activation",
-    tablet,
+    { ...tablet, viewport: { width: 768, height: 1024 } },
     async ({ page, f, open }) => {
       denseSchedule(f);
       await open();
       await denseView(page);
       await longPress(page, page.locator('[data-appointment="dense-target"]'));
       await shiftTouchDraft(page);
+      await withinViewport(
+        page,
+        page.locator("#calendar-reschedule-bar"),
+        "Tablet reschedule footer",
+      );
+      await withinViewport(
+        page,
+        page.locator("#calendar-reschedule-save"),
+        "Tablet Save move action",
+      );
+      await capture(page, "tablet-768-selected-draft-footer");
       const hold = deferred();
       f.writeWait = hold;
       const started = page.waitForRequest((r) => r.method() === "PUT");
@@ -1637,6 +1652,133 @@ try {
         .filter({ hasText: "18:55–20:25" })
         .waitFor();
       assert.equal(f.writes.length, 1);
+    },
+  );
+  await scenario(
+    "All resources mirrors room-half moves and preserves a declined then accepted therapist request",
+    desktop,
+    async ({ page, f, open }) => {
+      f.appointments = [
+        {
+          ...booking("linked", "tA", "r1", 0, 1140, 90),
+          requestedTherapistId: "tA",
+        },
+      ];
+      await open();
+      await page.locator('[data-mode="all"]').click();
+      await page.locator("#calendar-scroll").evaluate((el) => {
+        el.scrollTop = 960;
+        el.scrollLeft = 0;
+      });
+      const roomColumn = page.locator('[data-kind="room"][data-resource="r1"]');
+      await roomColumn.locator('[data-appointment="linked"]').click();
+      await page.locator("#appointment-summary-reschedule").click();
+      assert.equal(
+        await page
+          .locator('.calendar-reschedule-preview[data-appointment="linked"]')
+          .count(),
+        2,
+        "Therapist and room share one selected draft",
+      );
+      const source = await bodyPoint(
+        roomColumn.locator(".calendar-reschedule-preview"),
+      );
+      const roomBox = await roomColumn.boundingBox();
+      await page.mouse.move(source.x, source.y);
+      await page.mouse.down();
+      await page.mouse.move(roomBox.x + roomBox.width * 0.75, source.y - 10, {
+        steps: 8,
+      });
+      await page.mouse.up();
+      const mirrored = await page
+        .locator(".calendar-reschedule-preview .event-time")
+        .allTextContents();
+      assert.deepEqual(mirrored, ["18:55–20:25", "18:55–20:25"]);
+      const previewBox = await roomColumn
+        .locator(".calendar-reschedule-preview")
+        .boundingBox();
+      assert.ok(
+        previewBox.x >= roomBox.x + roomBox.width / 2,
+        "Room copy moves into the second table half",
+      );
+      assert.match(
+        await page.locator("#calendar-reschedule-resource").textContent(),
+        /Table 2/,
+      );
+      assert.equal(
+        f.writes.length,
+        0,
+        "Explicit draft waits for Save even when moved using a mouse",
+      );
+      const firstSave = page.waitForResponse(
+        (r) => r.request().method() === "PUT",
+      );
+      await page.locator("#calendar-reschedule-save").click();
+      await firstSave;
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(f.writes[0].body.bed, 1);
+      assert.equal(f.writes[0].body.start, 1135);
+      assert.equal(f.writes[0].body.therapistId, "tA");
+      await page
+        .locator(
+          '[data-kind="therapist"][data-resource="tA"] [data-appointment="linked"]',
+        )
+        .click();
+      await page.locator("#appointment-summary-reschedule").click();
+      const therapistColumn = page.locator(
+        '[data-kind="therapist"][data-resource="tB"]',
+      );
+      const oldPoint = await bodyPoint(
+        page.locator(
+          '[data-kind="therapist"][data-resource="tA"] .calendar-reschedule-preview',
+        ),
+      );
+      const nextBox = await therapistColumn.boundingBox();
+      await page.mouse.move(oldPoint.x, oldPoint.y);
+      await page.mouse.down();
+      await page.mouse.move(nextBox.x + nextBox.width / 2, oldPoint.y, {
+        steps: 8,
+      });
+      await page.mouse.up();
+      assert.equal(
+        await therapistColumn.locator(".calendar-reschedule-preview").count(),
+        1,
+      );
+      let confirmation;
+      page.once("dialog", async (dialog) => {
+        confirmation = dialog.message();
+        await dialog.dismiss();
+      });
+      await page.locator("#calendar-reschedule-save").click();
+      await page.waitForFunction(
+        () => !document.querySelector("#calendar-reschedule-save").disabled,
+      );
+      assert.match(confirmation, /another therapist/i);
+      assert.equal(
+        f.writes.length,
+        1,
+        "Declining therapist reassignment adds no mutation",
+      );
+      assert.equal(
+        await page.locator("#calendar-reschedule-bar").isVisible(),
+        true,
+      );
+      page.once("dialog", (dialog) => dialog.accept());
+      const secondSave = page.waitForResponse(
+        (r) => r.request().method() === "PUT",
+      );
+      await page.locator("#calendar-reschedule-save").click();
+      await secondSave;
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(f.writes.length, 2);
+      assert.equal(f.writes[1].body.therapistId, "tB");
+      assert.equal(f.writes[1].body.requestedTherapistId, "tA");
+      assert.equal(f.writes[1].body.bed, 1);
+      assert.equal(f.writes[1].body.duration, 90);
     },
   );
   await scenario(

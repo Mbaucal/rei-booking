@@ -1879,13 +1879,11 @@ body:has(.is-rescheduling) .calendar-today-floating {
 }
 @media (max-width: 1050px) {
   .calendar-reschedule-bar {
-    left: 92px;
+    left: 173px;
   }
 }
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .calendar-reschedule-bar {
-    left: 12px;
-    right: 12px;
     bottom: max(12px, env(safe-area-inset-bottom));
     padding: 13px 14px;
     gap: 10px;
@@ -1908,6 +1906,12 @@ body:has(.is-rescheduling) .calendar-today-floating {
   }
   #calendar-reschedule-time {
     font-size: 18px;
+  }
+}
+@media (max-width: 700px) {
+  .calendar-reschedule-bar {
+    left: 12px;
+    right: 12px;
   }
   .calendar-today-floating {
     right: max(14px, env(safe-area-inset-right));
