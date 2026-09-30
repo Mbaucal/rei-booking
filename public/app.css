@@ -523,6 +523,7 @@ main {
   background: #edf1e9;
 }
 .calendar-event {
+  -webkit-tap-highlight-color: transparent;
   position: absolute;
   z-index: 2;
   overflow: hidden;
