@@ -2133,9 +2133,14 @@ try {
         await entry.waitFor({ state: "detached" });
         assert.equal(f.blockWrites[2].method, "DELETE");
         assert.equal(f.blockWrites[2].body.version, 2);
+        // Phone toolbars make the calendar taller than the remaining page
+        // viewport. Bring its outer page container into view before inspecting
+        // the last inner-scroll interval, as in the full-day axis scenario.
+        await page.locator("#calendar-scroll").scrollIntoViewIfNeeded();
         await page.locator("#calendar-scroll").evaluate((el) => {
           el.scrollTop = el.scrollHeight;
         });
+        await renderedFrames(page);
         const late = page.locator('[data-calendar-block="late-note"]');
         await withinViewport(
           page,
