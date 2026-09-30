@@ -2,6 +2,11 @@ import { mountClientMatches } from "./client-matches.js";
 import { mountBookingAvailability } from "./calendar-availability.js";
 import { mountCalendarInteractions } from "./calendar-interactions.js";
 import {
+  calendarResourceItems,
+  calendarBlockHTML,
+  calendarBlockDetailsHTML,
+} from "./calendar-blocks.js";
+import {
   START,
   END,
   SCALE,
@@ -100,6 +105,7 @@ let state = {
     mode: "all",
     catalogue: { therapists: [], rooms: [], services: [] },
     appointments: [],
+    blocks: [],
     clients: [],
     version: 0,
   },
@@ -177,6 +183,7 @@ function signOutView() {
     user: null,
     csrf: "",
     appointments: [],
+    blocks: [],
     clients: [],
     catalogue: { therapists: [], rooms: [], services: [] },
     version: state.version + 1,
@@ -468,6 +475,12 @@ function resources(mode = state.mode) {
   ];
 }
 function renderCalendarShell() {
+  const previousScroll = $("calendar-scroll")?.dataset.initialized
+    ? {
+        top: $("calendar-scroll").scrollTop,
+        left: $("calendar-scroll").scrollLeft,
+      }
+    : null;
   disposeCalendarUI();
   $("page-content").innerHTML =
     `<div class="toolbar"><div class="toolgroup"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button><div class="segments" aria-label="Calendar resources">${[
@@ -481,13 +494,21 @@ function renderCalendarShell() {
       )
       .join(
         "",
-      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div>${operator() ? '<button class="btn primary" id="appointment-add">+ Add appointment</button>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Book in 15-minute steps · move in 5-minute steps · hold on touch" : "Full salon schedule · requested · read-only"}</span></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><button class="btn calendar-today-floating" id="calendar-today-floating" aria-label="Return to today" ${state.date === today() ? "hidden" : ""}><svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15h6m-3-3v6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>Today</span></button><div class="legend">${state.catalogue.services
+      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div>${operator() ? '<div class="calendar-add-actions"><button class="btn" id="calendar-block-add">Add blocked time</button><button class="btn primary" id="appointment-add">+ Add appointment</button></div>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Book in 15-minute steps · move in 5-minute steps · hold on touch" : "Full salon schedule · requested · read-only"}</span></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><button class="btn calendar-today-floating" id="calendar-today-floating" aria-label="Return to today" ${state.date === today() ? "hidden" : ""}><svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15h6m-3-3v6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>Today</span></button><div class="legend">${state.catalogue.services
       .filter((s) => s.active)
       .map(
         (s) =>
           `<span><i style="background:${esc(s.color)}"></i>${esc(s.name)} · ${s.duration} min</span>`,
       )
-      .join("")}<span>♥ Requested therapist</span></div>`;
+      .join(
+        "",
+      )}<span>♥ Requested therapist</span><span>▧ Blocked time</span><span>✎ Note only</span></div>`;
+  if (previousScroll) {
+    $("calendar-scroll").dataset.initialized = "true";
+    // The full grid has not been rendered yet; restore once its height exists.
+    $("calendar-scroll").dataset.restoreTop = String(previousScroll.top);
+    $("calendar-scroll").dataset.restoreLeft = String(previousScroll.left);
+  }
   const change = async (date) => {
     disposeCalendarUI();
     state.date = date;
@@ -514,7 +535,10 @@ function renderCalendarShell() {
       change(d.toISOString().slice(0, 10));
     };
   $("calendar-refresh").onclick = () => loadCalendar().catch(showAppError);
-  if (operator()) $("appointment-add").onclick = () => appointmentDialog();
+  if (operator()) {
+    $("appointment-add").onclick = () => appointmentDialog();
+    $("calendar-block-add").onclick = () => calendarBlockDialog();
+  }
   document.querySelectorAll("[data-mode]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -540,6 +564,7 @@ async function loadCalendar() {
   )
     return;
   state.appointments = data.appointments;
+  state.blocks = data.blocks || [];
   renderCalendar();
 }
 function renderCalendar() {
@@ -547,8 +572,19 @@ function renderCalendar() {
   disposeCalendarUI();
   const list = resources(),
     scroll = $("calendar-scroll"),
-    top = scroll.scrollTop,
-    left = scroll.scrollLeft;
+    top =
+      scroll.dataset.restoreTop !== undefined
+        ? Number(scroll.dataset.restoreTop)
+        : scroll.dataset.initialized
+          ? scroll.scrollTop
+          : calendarTop(540),
+    left =
+      scroll.dataset.restoreLeft !== undefined
+        ? Number(scroll.dataset.restoreLeft)
+        : scroll.scrollLeft;
+  delete scroll.dataset.restoreTop;
+  delete scroll.dataset.restoreLeft;
+  scroll.dataset.initialized = "true";
   $("calendar-summary").textContent =
     `${prettyDate(state.date)} · ${state.appointments.filter((a) => !["cancelled", "no_show"].includes(a.status)).length} appointments`;
   const widths = list.map((r) => (r.capacity === 2 ? 280 : 180));
@@ -574,7 +610,7 @@ function renderCalendar() {
       )
       .join("");
   let ticks = "";
-  for (let m = START; m < END; m += 30)
+  for (let m = START; m <= END; m += 30)
     ticks += `<span style="top:${calendarTop(m)}px">${clock(m)}</span>`;
   $("calendar-body").innerHTML =
     '<div class="time-axis">' +
@@ -583,15 +619,16 @@ function renderCalendar() {
     list
       .map(
         (r) =>
-          `<div class="calendar-column ${r.capacity === 2 ? "couple" : ""}" data-resource="${esc(r.id)}" data-kind="${r.kind}" aria-label="${esc(r.name)}">${availability(r)}${state.appointments
-            .filter(
-              (a) =>
-                !["cancelled", "no_show"].includes(a.status) &&
-                (r.kind === "therapist"
-                  ? a.therapistId === r.id
-                  : a.roomId === r.id),
+          `<div class="calendar-column ${r.capacity === 2 ? "couple" : ""}" data-resource="${esc(r.id)}" data-kind="${r.kind}" aria-label="${esc(r.name)}">${availability(r)}${calendarResourceItems(
+            r,
+            state.appointments,
+            state.blocks,
+          )
+            .map((item) =>
+              item.kind === "block"
+                ? calendarBlockHTML(item, state.user.role)
+                : eventHTML(item.record, r, item),
             )
-            .map((a) => eventHTML(a, r))
             .join("")}</div>`,
       )
       .join("") +
@@ -647,6 +684,7 @@ function renderCalendar() {
       date,
       onAdd: (defaults) =>
         appointmentDialog(null, defaults).catch(showAppError),
+      onAddBlock: (defaults) => calendarBlockDialog(null, defaults),
       isCurrent: () =>
         current() && operator() && !calendarReschedule?.isActive(),
     });
@@ -661,6 +699,14 @@ function renderCalendar() {
       !!calendarReschedule?.isActive() ||
       $("drawer").open ||
       (!!$("calendar-slot-menu") && !$("calendar-slot-menu").hidden),
+  });
+  scroll.querySelectorAll("[data-calendar-block]").forEach((el) => {
+    el.onclick = (event) => {
+      event.stopPropagation();
+      if (!current() || calendarReschedule?.isActive()) return;
+      const block = state.blocks.find((b) => b.id === el.dataset.calendarBlock);
+      if (block) calendarBlockDetails(block);
+    };
   });
   scroll.querySelectorAll("[data-appointment]").forEach((el) => {
     const a = state.appointments.find((a) => a.id === el.dataset.appointment);
@@ -697,9 +743,11 @@ function availability(r) {
     )
     .join("");
 }
-function eventHTML(a, r) {
+function eventHTML(a, r, layout = null) {
   const lane = r.kind === "room" ? a.bed : 0;
-  return `<div class="calendar-event ${a.duration <= 30 ? "short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${(lane / r.capacity) * 100}% + 3px);width:calc(${100 / r.capacity}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time">${clock(a.start)}–${clock(a.start + a.duration)}</span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
+  const left = layout?.left ?? (lane / r.capacity) * 100;
+  const width = layout?.width ?? 100 / r.capacity;
+  return `<div class="calendar-event ${a.duration <= 30 ? "short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time">${clock(a.start)}–${clock(a.start + a.duration)}</span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
 }
 function updateClock() {
   const p = dateParts();
@@ -1000,8 +1048,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
       feedback: $("booking-availability"),
       catalogue: state.catalogue,
       defaults,
-      loadAppointments: async (date) =>
-        (await api(`/appointments?from=${date}&to=${date}`)).appointments,
+      loadAppointments: (date) => api(`/appointments?from=${date}&to=${date}`),
       applyResources: (selected) => {
         form.elements.therapistId.value = selected.therapistId;
         form.elements.roomId.value = selected.roomId;
@@ -1014,6 +1061,192 @@ async function appointmentDialog(existing = null, defaults = {}) {
         availabilityVersion === state.version &&
         operator(),
     });
+}
+function calendarBlockDetails(block) {
+  showDrawer(
+    block.blocksAvailability ? "Blocked time" : "Calendar note",
+    prettyDate(block.date),
+    calendarBlockDetailsHTML(block, {
+      role: state.user.role,
+      catalogue: state.catalogue,
+    }),
+  );
+  if (!operator()) return;
+  const epoch = drawerEpoch,
+    session = sessionEpoch,
+    version = state.version;
+  const current = () =>
+    $("drawer").open &&
+    drawerEpoch === epoch &&
+    sessionEpoch === session &&
+    state.version === version &&
+    state.page === "calendar" &&
+    operator();
+  $("calendar-block-edit").onclick = () => {
+    if (current()) calendarBlockDialog(block);
+  };
+  $("calendar-block-remove").onclick = async () => {
+    const remove = $("calendar-block-remove"),
+      edit = $("calendar-block-edit");
+    if (
+      !current() ||
+      remove.disabled ||
+      !confirm("Remove this calendar entry?")
+    )
+      return;
+    remove.disabled = edit.disabled = true;
+    $("calendar-block-error").hidden = true;
+    try {
+      await api("/calendar-blocks/" + encodeURIComponent(block.id), {
+        method: "DELETE",
+        body: { version: block.version },
+      });
+      if (!current()) return;
+      closeDrawer();
+      try {
+        await loadCalendar();
+      } catch (error) {
+        if (sessionEpoch === session && state.page === "calendar")
+          showAppError(error);
+      }
+      if (sessionEpoch === session) toast("Calendar entry removed.");
+    } catch (error) {
+      if (!current()) return;
+      $("calendar-block-error").textContent = error.message;
+      $("calendar-block-error").hidden = false;
+      remove.disabled = edit.disabled = false;
+    }
+  };
+}
+function calendarBlockDialog(existing = null, defaults = {}) {
+  if (!operator()) return;
+  const groups = {
+    therapist: state.catalogue.therapists,
+    room: state.catalogue.rooms,
+  };
+  const types = Object.keys(groups).filter((type) => groups[type].length);
+  if (!types.length) {
+    toast("Add a team member or a room before adding blocked time.");
+    return;
+  }
+  const preferredType = defaults.therapistId
+    ? "therapist"
+    : defaults.roomId
+      ? "room"
+      : types[0];
+  const initialType = existing?.resourceType || preferredType;
+  const type = types.includes(initialType) ? initialType : types[0];
+  const initialId =
+    existing?.resourceId || defaults.therapistId || defaults.roomId;
+  const resourceId = groups[type].some((r) => r.id === initialId)
+    ? initialId
+    : groups[type][0].id;
+  const b = existing || {
+    date: defaults.date || state.date,
+    start: defaults.start ?? 600,
+    duration: Math.min(60, END - (defaults.start ?? 600)),
+    resourceType: type,
+    resourceId,
+    bed: type === "room" ? (defaults.bed ?? null) : null,
+    title: "Blocked time",
+    note: "",
+    blocksAvailability: true,
+  };
+  showDrawer(
+    existing ? "Edit blocked time" : "Add blocked time",
+    prettyDate(b.date),
+    `<form id="calendar-block-form"><div class="fields"><label class="wide"><span>Title</span><input name="title" value="${esc(b.title)}" maxlength="120" required></label>${input("date", "Date", b.date, "date", "required")}${input("start", "Start time", clock(b.start), "time", 'step="300" required')}${input("duration", "Duration (minutes)", b.duration, "number", 'min="5" max="1440" step="5" required')}<label><span>Resource type</span><select name="resourceType" id="block-resource-type">${types.map((t) => `<option value="${t}" ${t === type ? "selected" : ""}>${t === "room" ? "Room" : "Therapist"}</option>`).join("")}</select></label><label class="wide"><span>Resource</span><select name="resourceId" id="block-resource"></select></label><label id="block-table-field"><span>Table</span><select name="bed" id="block-table"></select></label><label class="wide"><span>Note · optional</span><textarea name="note" rows="4" maxlength="2000">${esc(b.note || "")}</textarea></label></div><label class="check"><input name="blocksAvailability" type="checkbox" ${b.blocksAvailability ? "checked" : ""}>Block availability</label><p class="hint" id="block-availability-help">Turn this off for a reminder or call note. Notes stay on the calendar without preventing appointments.</p><p class="hint">Calendar entries can run from 00:00 to 24:00 on one day, in 5-minute steps.</p>${errorBox()}</form>`,
+  );
+  const form = $("calendar-block-form"),
+    epoch = drawerEpoch,
+    version = state.version,
+    session = sessionEpoch;
+  const current = () =>
+    form.isConnected &&
+    $("drawer").open &&
+    drawerEpoch === epoch &&
+    state.version === version &&
+    sessionEpoch === session &&
+    state.page === "calendar" &&
+    operator();
+  form.elements.blocksAvailability.setAttribute(
+    "aria-describedby",
+    "block-availability-help",
+  );
+  const tables = (selected = null) => {
+    const isRoom = form.elements.resourceType.value === "room";
+    $("block-table-field").hidden = !isRoom;
+    form.elements.bed.disabled = !isRoom;
+    const room = groups.room.find(
+      (r) => r.id === form.elements.resourceId.value,
+    );
+    form.elements.bed.innerHTML =
+      '<option value="">All tables</option>' +
+      Array.from(
+        { length: isRoom ? room?.capacity || 0 : 0 },
+        (_, bed) =>
+          `<option value="${bed}" ${selected === bed ? "selected" : ""}>Table ${bed + 1}</option>`,
+      ).join("");
+  };
+  const populate = (selectedId = null, selectedBed = null) => {
+    const entries = groups[form.elements.resourceType.value];
+    form.elements.resourceId.innerHTML = opts(
+      entries,
+      selectedId || entries[0].id,
+    );
+    tables(selectedBed);
+  };
+  populate(resourceId, b.bed);
+  form.elements.resourceType.onchange = () => populate();
+  form.elements.resourceId.onchange = () => tables();
+  bindForm(
+    "calendar-block-form",
+    async (data, formCurrent) => {
+      if (!current() || !formCurrent()) return;
+      const start = minutes(data.get("start")),
+        duration = Number(data.get("duration"));
+      if (
+        !Number.isInteger(start) ||
+        !Number.isInteger(duration) ||
+        start % 5 ||
+        duration % 5 ||
+        start < 0 ||
+        duration < 5 ||
+        start + duration > END
+      )
+        throw new Error(
+          "Choose a time and duration in 5-minute steps ending by 24:00 on the same day.",
+        );
+      const resourceType = data.get("resourceType");
+      await api(
+        "/calendar-blocks" +
+          (existing ? "/" + encodeURIComponent(existing.id) : ""),
+        {
+          method: existing ? "PUT" : "POST",
+          body: {
+            date: data.get("date"),
+            start,
+            duration,
+            resourceType,
+            resourceId: data.get("resourceId"),
+            bed:
+              resourceType === "room" && data.get("bed") !== ""
+                ? Number(data.get("bed"))
+                : null,
+            title: data.get("title").trim(),
+            note: data.get("note").trim(),
+            blocksAvailability: data.has("blocksAvailability"),
+            ...(existing ? { version: existing.version } : {}),
+          },
+        },
+      );
+      if (!current() || !formCurrent()) return;
+      closeDrawer();
+      await loadCalendar();
+      toast("Calendar entry saved.");
+    },
+    "Save calendar entry",
+  );
 }
 function appointmentDetails(a) {
   showDrawer(

@@ -45,8 +45,12 @@ const deferred = () => {
 };
 
 test("shared geometry selects quarter-hour booking starts while dragging still resolves every five minutes", () => {
-  assert.deepEqual([START, END, SCALE, STEP, BAND], [600, 1320, 2, 5, 15]);
-  assert.deepEqual([600, 615, 630, 645].map(calendarTop), [0, 30, 60, 90]);
+  assert.deepEqual([START, END, SCALE, STEP, BAND], [0, 1440, 2, 5, 15]);
+  assert.deepEqual([0, 15, 30, 45].map(calendarTop), [0, 30, 60, 90]);
+  assert.deepEqual(
+    [600, 615, 630, 645].map(calendarTop),
+    [1200, 1230, 1260, 1290],
+  );
   assert.equal(calendarHeight(60), 120);
   assert.equal(calendarHeight(90, 3), 177);
   const rect = { top: -400, left: 80, width: 240 };

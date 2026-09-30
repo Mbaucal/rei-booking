@@ -13,6 +13,7 @@ function validDate(value) {
 export function suggestBookingResources({
   catalogue,
   appointments,
+  blocks = [],
   selection,
   fixed = {},
 }) {
@@ -63,6 +64,13 @@ export function suggestBookingResources({
       a.start < start + duration &&
       a.start + a.duration > start,
   );
+  const blocking = blocks.filter(
+    (b) =>
+      b.blocksAvailability &&
+      b.date === date &&
+      b.start < start + duration &&
+      b.start + b.duration > start,
+  );
   const availableTherapists = catalogue.therapists.filter((t) => {
     const hours = t.weekly[day];
     return (
@@ -71,7 +79,10 @@ export function suggestBookingResources({
       !t.timeOff.includes(date) &&
       hours.start <= start &&
       hours.end >= start + duration &&
-      !overlaps.some((a) => a.therapistId === t.id)
+      !overlaps.some((a) => a.therapistId === t.id) &&
+      !blocking.some(
+        (b) => b.resourceType === "therapist" && b.resourceId === t.id,
+      )
     );
   });
   const therapists = availableTherapists.filter(
@@ -91,7 +102,15 @@ export function suggestBookingResources({
       (table) =>
         (!fixed.roomId || table.roomId === selection.roomId) &&
         (!fixed.bed || table.bed === selection.bed) &&
-        !overlaps.some((a) => a.roomId === table.roomId && a.bed === table.bed),
+        !overlaps.some(
+          (a) => a.roomId === table.roomId && a.bed === table.bed,
+        ) &&
+        !blocking.some(
+          (b) =>
+            b.resourceType === "room" &&
+            b.resourceId === table.roomId &&
+            (b.bed === null || b.bed === table.bed),
+        ),
     );
   if (!tables.length)
     return unchanged(
@@ -158,11 +177,12 @@ export function mountBookingAvailability({
     }
     show("Checking availability…", "loading");
     try {
-      const appointments = await loadAppointments(selection.date);
+      const data = await loadAppointments(selection.date);
       if (!current(request)) return;
       const result = suggestBookingResources({
         catalogue,
-        appointments,
+        appointments: Array.isArray(data) ? data : data.appointments,
+        blocks: Array.isArray(data) ? [] : data.blocks || [],
         selection,
         fixed: preserve
           ? { therapistId: true, roomId: true, bed: true }
