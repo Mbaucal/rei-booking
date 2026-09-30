@@ -43,6 +43,8 @@ import {
   projectTherapist,
 } from "./domain.mjs";
 import { ensureReportSchema } from "./report-schema.mjs";
+import { ensureCalendarBlockSchema } from "./calendar-block-schema.mjs";
+import { calendarBlockRoutes, listCalendarBlocks } from "./calendar-blocks.mjs";
 import { salesRoutes } from "./sales.mjs";
 import { emailWebhook } from "./voucher-email.mjs";
 import {
@@ -466,7 +468,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.10.1", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.11.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -515,6 +517,9 @@ async function routes(request, env) {
   await ensureReportSchema(db);
   await ensurePhotoSchema(db);
   await ensureClientContacts(db);
+  await ensureCalendarBlockSchema(db);
+  const blockResponse = await calendarBlockRoutes(request, db, user);
+  if (blockResponse) return blockResponse;
   const photoMatch = path.match(
     /^\/api\/photos\/(clients|therapists)\/([^/]+)$/,
   );
@@ -678,6 +683,7 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
     );
     return json({
       appointments: rows.map((a) => projectAppointment(a, user.role)),
+      blocks: await listCalendarBlocks(db, user.role, from, to),
     });
   }
   if (path === "/api/appointments" && method === "POST")
@@ -830,6 +836,20 @@ export default {
       } else if (detail.includes("photo_missing_profile")) {
         status = 404;
         message = "Profile not found.";
+      } else if (detail.includes("calendar_block_conflict")) {
+        status = 409;
+        message =
+          "This time conflicts with an appointment or blocked time. Choose another time or resource.";
+      } else if (detail.includes("calendar_block_resource")) {
+        status = 400;
+        message = "Choose an existing therapist or room.";
+      } else if (
+        detail.includes("calendar_block_deleted") ||
+        detail.includes("calendar_block_immutable")
+      ) {
+        status = 409;
+        message =
+          "This block changed. Refresh the calendar before saving again.";
       } else if (detail.includes("booking_slots.")) {
         status = 409;
         message =

@@ -42,6 +42,7 @@ export function mountCalendarInteractions({
   resources,
   date,
   onAdd,
+  onAddBlock,
   isCurrent,
 }) {
   const doc = root.ownerDocument,
@@ -59,7 +60,10 @@ export function mountCalendarInteractions({
   menu.setAttribute("aria-label", "Calendar quick actions");
   menu.hidden = true;
   menu.innerHTML =
-    '<div class="slot-menu-heading"><div><strong id="calendar-slot-menu-time"></strong><span id="calendar-slot-menu-resource"></span></div><button type="button" id="calendar-slot-close" aria-label="Close quick actions">×</button></div><button type="button" id="calendar-slot-add"><span aria-hidden="true">＋</span>Add appointment</button>';
+    '<div class="slot-menu-heading"><div><strong id="calendar-slot-menu-time"></strong><span id="calendar-slot-menu-resource"></span></div><button type="button" id="calendar-slot-close" aria-label="Close quick actions">×</button></div><button type="button" id="calendar-slot-add"><span aria-hidden="true">＋</span>Add appointment</button>' +
+    (onAddBlock
+      ? '<button type="button" id="calendar-slot-add-block"><span aria-hidden="true">▧</span>Add blocked time</button>'
+      : "");
   doc.body.append(menu);
   const add = menu.querySelector("#calendar-slot-add");
   const hint = doc.createElement("div");
@@ -174,7 +178,10 @@ export function mountCalendarInteractions({
       `${resource(column).name}. Use up and down arrows to choose a time in 15-minute steps, then Enter for booking options.`,
     );
     listen(column, "pointerdown", (event) => {
-      if (event.target.closest("[data-appointment]") || event.button !== 0)
+      if (
+        event.target.closest("[data-appointment], [data-calendar-block]") ||
+        event.button !== 0
+      )
         return;
       blockClick = false;
       gesture = {
@@ -197,7 +204,7 @@ export function mountCalendarInteractions({
         !isCurrent()
       )
         return;
-      if (event.target.closest("[data-appointment]")) {
+      if (event.target.closest("[data-appointment], [data-calendar-block]")) {
         hint.remove();
         return;
       }
@@ -207,7 +214,11 @@ export function mountCalendarInteractions({
       if (menu.hidden) hint.remove();
     });
     listen(column, "click", (event) => {
-      if (blockClick || event.target.closest("[data-appointment]")) return;
+      if (
+        blockClick ||
+        event.target.closest("[data-appointment], [data-calendar-block]")
+      )
+        return;
       if (!isCurrent()) return;
       const slot = fromPointer(column, event);
       open(column, slot, { x: event.clientX, y: event.clientY });
@@ -352,6 +363,16 @@ export function mountCalendarInteractions({
     dismiss();
     onAdd(defaults);
   });
+  if (onAddBlock)
+    listen(menu.querySelector("#calendar-slot-add-block"), "click", () => {
+      if (!selected || !isCurrent()) {
+        dismiss();
+        return;
+      }
+      const defaults = selected;
+      dismiss();
+      onAddBlock(defaults);
+    });
   return {
     dismiss,
     dispose() {

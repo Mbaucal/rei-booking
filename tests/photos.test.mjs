@@ -33,6 +33,8 @@ test("Private profile photos: processing, transactional storage and role boundar
   const options = convertV4MiniflareOptions({
     modules: [
       "worker.mjs",
+      "calendar-blocks.mjs",
+      "calendar-block-schema.mjs",
       "client-contacts.mjs",
       "client-bulk.mjs",
       "client-bulk-schema.mjs",

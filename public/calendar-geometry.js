@@ -1,5 +1,5 @@
-export const START = 600;
-export const END = 1320;
+export const START = 0;
+export const END = 1440;
 export const SCALE = 2;
 export const STEP = 5;
 export const BAND = 15;

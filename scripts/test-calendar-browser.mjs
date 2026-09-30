@@ -15,6 +15,10 @@ const root = resolve("public"),
   fixtures = new Map();
 const date = "2026-10-01",
   nextDate = "2026-10-02";
+// Independent display oracle: 24 hours, 120 pixels per hour.
+const displayStart = 0,
+  displayScale = 2;
+const pixelAt = (minute) => (minute - displayStart) * displayScale;
 const week = () =>
   Array.from({ length: 7 }, () => ({ enabled: true, start: 600, end: 1320 }));
 function fixture() {
@@ -65,6 +69,8 @@ function fixture() {
       },
     ],
     appointments: [],
+    blocks: [],
+    blockWrites: [],
     writes: [],
     requests: [],
     delayed: new Map(),
@@ -102,6 +108,24 @@ function booking(
     netCents: 470000,
     version: 1,
     createdAt: "2026-09-01T10:00:00Z",
+  };
+}
+function calendarBlock(id, extra = {}) {
+  return {
+    id,
+    date,
+    start: 495,
+    duration: 45,
+    resourceType: "room",
+    resourceId: "r1",
+    bed: 1,
+    title: "QA room preparation",
+    note: "Fictional calendar note",
+    blocksAvailability: true,
+    version: 1,
+    createdAt: "2026-10-01T07:00:00Z",
+    updatedAt: "2026-10-01T07:00:00Z",
+    ...extra,
   };
 }
 const mime = {
@@ -164,7 +188,43 @@ const server = createServer(async (req, res) => {
         if (delay) await delay.promise;
         if (f.failDates.has(from))
           return json({ error: "Fictional availability outage" }, 503);
-        return json({ appointments: result });
+        return json({
+          appointments: result,
+          blocks: f.blocks.filter(
+            (b) => (!from || b.date >= from) && (!to || b.date <= to),
+          ),
+        });
+      }
+      if (
+        url.pathname.startsWith("/api/calendar-blocks") &&
+        ["POST", "PUT", "DELETE"].includes(req.method)
+      ) {
+        let raw = "";
+        for await (const chunk of req) raw += chunk;
+        const body = raw ? JSON.parse(raw) : {};
+        assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        f.blockWrites.push({ body, method: req.method, path: url.pathname });
+        const id = url.pathname.split("/").at(-1);
+        const index = f.blocks.findIndex((b) => b.id === id);
+        if (req.method !== "POST" && index < 0)
+          return json({ error: "Fixture block not found" }, 404);
+        if (req.method !== "POST" && body.version !== f.blocks[index].version)
+          return json({ error: "Fixture block version changed" }, 409);
+        if (req.method === "DELETE") {
+          f.blocks.splice(index, 1);
+          return json({ ok: true });
+        }
+        const previous = f.blocks[index];
+        const saved = {
+          ...body,
+          id: previous?.id || "block-" + f.blockWrites.length,
+          version: (previous?.version || 0) + 1,
+          createdAt: previous?.createdAt || "2026-10-01T08:00:00Z",
+          updatedAt: "2026-10-01T08:01:00Z",
+        };
+        if (index >= 0) f.blocks[index] = saved;
+        else f.blocks.push(saved);
+        return json({ block: saved }, req.method === "POST" ? 201 : 200);
       }
       if (
         url.pathname.startsWith("/api/appointments") &&
@@ -394,25 +454,48 @@ async function formAtTop(page) {
 async function roomSlot(page, device, id = "r1", lane = 1) {
   await page.locator('[data-mode="rooms"]').click();
   const column = page.locator(`[data-resource="${id}"]`);
-  await column.evaluate((el) => {
+  await column.evaluate((el, top) => {
     const scroller = el.closest(".calendar-scroll");
-    scroller.scrollTop = 0;
+    scroller.scrollTop = top;
     scroller.scrollLeft = el.offsetLeft - 60;
-  });
-  const width = await column.evaluate((el) => el.clientWidth);
-  const position = {
-    x: width * (id === "r1" ? (lane === 1 ? 0.75 : 0.25) : 0.5),
-    y: 4,
-  };
-  if (device.mobile) await column.tap({ position });
-  else await column.click({ position });
+  }, pixelAt(540));
+  await renderedFrames(page);
   const box = await column.boundingBox();
-  await menuAt(page, { x: box.x + position.x, y: box.y + position.y });
+  const point = {
+    x: box.x + box.width * (id === "r1" ? (lane === 1 ? 0.75 : 0.25) : 0.5),
+    y: box.y + pixelAt(600) + 4,
+  };
+  if (device.mobile) await page.touchscreen.tap(point.x, point.y);
+  else await page.mouse.click(point.x, point.y);
+  await menuAt(page, point);
   await capture(page, `${device.name}-calendar-popup`);
   await page.locator("#calendar-slot-add").click();
   await page.locator("#appointment-form").waitFor();
   await formAtTop(page);
   if (device.name === "desktop") await capture(page, "desktop-opened-booking");
+}
+const blockControl = (page, name) =>
+  page.locator(`#calendar-block-form [name="${name}"]`);
+async function roomPoint(page, device, minute, roomId = "r1", lane = 1) {
+  await page.locator('[data-mode="rooms"]').click();
+  const column = page.locator(`[data-resource="${roomId}"]`);
+  await column.evaluate(
+    (el, top) => {
+      const scroller = el.closest(".calendar-scroll");
+      scroller.scrollTop = top;
+      scroller.scrollLeft = el.offsetLeft - 60;
+    },
+    pixelAt(Math.max(0, minute - 60)),
+  );
+  await renderedFrames(page);
+  const box = await column.boundingBox();
+  const point = {
+    x: box.x + box.width * (roomId === "r1" ? (lane ? 0.75 : 0.25) : 0.5),
+    y: box.y + pixelAt(minute) + 1,
+  };
+  if (device.mobile) await page.touchscreen.tap(point.x, point.y);
+  else await page.mouse.click(point.x, point.y);
+  await menuAt(page, point);
 }
 async function add(page) {
   await page.locator("#appointment-add").click();
@@ -481,7 +564,7 @@ function denseSchedule(f) {
 async function denseView(page) {
   await page.locator('[data-mode="rooms"]').click();
   await page.locator("#calendar-scroll").evaluate((el) => {
-    el.scrollTop = 960;
+    el.scrollTop = 2160; // 18:00 in a midnight-origin grid.
     el.scrollLeft = 0;
   });
   await page.locator('[data-appointment="dense-target"]').waitFor();
@@ -771,13 +854,21 @@ try {
   );
   for (const device of [desktop, phone, tablet])
     await scenario(
-      "populated first hour shows 10:00 and selects only quarter-hour empty slots",
+      "full-day labels stay visible and populated workday slots select quarter hours",
       device,
       async ({ page, f, open }) => {
         f.appointments = [booking("first-hour", "tA", "r1", 0, 600, 90)];
         await open();
         await page.locator('[data-mode="rooms"]').click();
         const column = page.locator('[data-resource="r1"]');
+        assert.ok(
+          Math.abs(
+            (await page
+              .locator("#calendar-scroll")
+              .evaluate((el) => el.scrollTop)) - pixelAt(540),
+          ) <= 2,
+          "A new full-day calendar initially opens near 09:00",
+        );
         await column.evaluate((el) => {
           el.closest(".calendar-scroll").scrollTop = 0;
           el.closest(".calendar-scroll").scrollLeft = 0;
@@ -785,11 +876,11 @@ try {
         await page.locator("#calendar-scroll").scrollIntoViewIfNeeded();
         await renderedFrames(page);
         const firstLabel = page.locator(".time-axis span").first();
-        assert.equal(await firstLabel.textContent(), "10:00");
+        assert.equal(await firstLabel.textContent(), "00:00");
         const label = await withinViewport(
           page,
           firstLabel,
-          "Complete first 10:00 label",
+          "Complete first 00:00 label",
         );
         const header = await page.locator("#calendar-headers").boundingBox();
         assert.ok(
@@ -807,7 +898,23 @@ try {
             );
           }),
           true,
-          "The top of 10:00 is not covered by the sticky header",
+          "The top of 00:00 is not covered by the sticky header",
+        );
+        await page.locator("#calendar-scroll").evaluate((el) => {
+          el.scrollTop = el.scrollHeight;
+        });
+        await renderedFrames(page);
+        const lastLabel = page.locator(".time-axis span").last();
+        assert.equal(await lastLabel.textContent(), "24:00");
+        await withinViewport(page, lastLabel, "Complete last 24:00 label");
+        await page.locator("#calendar-scroll").evaluate((el) => {
+          el.scrollTop = 1080;
+        });
+        await renderedFrames(page);
+        await withinViewport(
+          page,
+          page.locator(".time-axis span").filter({ hasText: /^10:00$/ }),
+          "Complete 10:00 workday label",
         );
         const appointment = page.locator('[data-appointment="first-hour"]');
         assert.match(
@@ -817,7 +924,8 @@ try {
         assert.ok(
           Math.abs(
             (await appointment.boundingBox()).y -
-              (await column.boundingBox()).y,
+              (await column.boundingBox()).y -
+              pixelAt(600),
           ) <= 1,
           "Label repair must not shift the 10:00 appointment off its time origin",
         );
@@ -835,7 +943,7 @@ try {
           const box = await column.boundingBox();
           const point = {
             x: box.x + box.width * 0.75,
-            y: box.y + (minute - 600) * 2 + 1,
+            y: box.y + pixelAt(minute) + 1,
           };
           const expected = `10:${String(quarter - 600).padStart(2, "0")}`;
           if (!device.mobile) {
@@ -902,7 +1010,7 @@ try {
         await page.locator("#calendar-slot-menu").waitFor();
         assert.match(
           await page.locator("#calendar-slot-menu-time").textContent(),
-          /10:45/,
+          /00:45/,
         );
         assert.match(
           await page.locator("#calendar-slot-menu-resource").textContent(),
@@ -931,7 +1039,7 @@ try {
         await page.locator('[data-mode="rooms"]').click();
         const scroller = page.locator("#calendar-scroll");
         await scroller.evaluate((el) => {
-          el.scrollTop = 420;
+          el.scrollTop = 1620; // 13:30 in a midnight-origin grid.
           el.scrollLeft = el.scrollWidth - el.clientWidth;
         });
         await scroller.scrollIntoViewIfNeeded();
@@ -951,7 +1059,8 @@ try {
           y: Math.min(area.y + area.height - 15, viewport.height - 15),
         };
         const expectedStart =
-          Math.floor(((point.y - box.y) / 2 + 600) / 15) * 15;
+          Math.floor(((point.y - box.y) / displayScale + displayStart) / 15) *
+          15;
         if (device.mobile) await page.touchscreen.tap(point.x, point.y);
         else await page.mouse.click(point.x, point.y);
         await menuAt(page, point);
@@ -1180,8 +1289,14 @@ try {
       await page.locator('[data-mode="rooms"]').click();
       const column = page.locator('[data-resource="r1"]'),
         box = await column.boundingBox();
-      await page.mouse.move(box.x + box.width * 0.75, box.y + 20);
-      await page.mouse.click(box.x + box.width * 0.75, box.y + 20);
+      await page.mouse.move(
+        box.x + box.width * 0.75,
+        box.y + pixelAt(600) + 20,
+      );
+      await page.mouse.click(
+        box.x + box.width * 0.75,
+        box.y + pixelAt(600) + 20,
+      );
       assert.equal(
         await page.locator("#calendar-slot-menu").isVisible(),
         false,
@@ -1757,7 +1872,7 @@ try {
       await open();
       await page.locator('[data-mode="all"]').click();
       await page.locator("#calendar-scroll").evaluate((el) => {
-        el.scrollTop = 960;
+        el.scrollTop = 2160; // 18:00 in a midnight-origin grid.
         el.scrollLeft = 0;
       });
       const roomColumn = page.locator('[data-kind="room"][data-resource="r1"]');
@@ -1901,6 +2016,262 @@ try {
       }
     },
   );
+  for (const device of [desktop, phone, tablet])
+    await scenario(
+      "grey full-day entries support selected-table create, edit, remove and reload",
+      device,
+      async ({ page, f, open }) => {
+        if (device.name === "tablet") f.role = "reception";
+        f.appointments = [booking("workday", "tA", "r1", 0)];
+        f.blocks = [
+          calendarBlock("late-note", {
+            start: 1380,
+            duration: 60,
+            bed: 0,
+            title: "QA late call",
+            blocksAvailability: false,
+          }),
+        ];
+        await open();
+        await roomPoint(page, device, 495);
+        assert.equal(
+          await page.locator("#calendar-slot-menu-time").textContent(),
+          "08:15",
+        );
+        await page.locator("#calendar-slot-add-block").click();
+        await page.locator("#calendar-block-form").waitFor();
+        await withinViewport(
+          page,
+          page.locator("#drawer"),
+          "Blocked-time editor",
+        );
+        assert.equal(await blockControl(page, "start").inputValue(), "08:15");
+        assert.equal(
+          await blockControl(page, "resourceType").inputValue(),
+          "room",
+        );
+        assert.equal(await blockControl(page, "resourceId").inputValue(), "r1");
+        assert.equal(await blockControl(page, "bed").inputValue(), "1");
+        assert.equal(
+          await blockControl(page, "blocksAvailability").isChecked(),
+          true,
+        );
+        await blockControl(page, "title").fill("QA preparation <img src=x>");
+        await blockControl(page, "note").fill(
+          "Call reminder <script>window.qaInjected=true</script>",
+        );
+        await blockControl(page, "duration").fill("45");
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(f.blockWrites.length, 1);
+        assert.deepEqual(f.blockWrites[0].body, {
+          date,
+          start: 495,
+          duration: 45,
+          resourceType: "room",
+          resourceId: "r1",
+          bed: 1,
+          title: "QA preparation <img src=x>",
+          note: "Call reminder <script>window.qaInjected=true</script>",
+          blocksAvailability: true,
+        });
+        const entry = page.locator('[data-calendar-block="block-1"]');
+        await entry.waitFor();
+        assert.equal(await entry.locator("img,script").count(), 0);
+        assert.equal(await page.evaluate(() => window.qaInjected), undefined);
+        assert.match(await entry.getAttribute("class"), /is-blocking/);
+        const grey = await entry.evaluate(
+          (el) => getComputedStyle(el).backgroundColor,
+        );
+        const rgb = grey.match(/\d+/g).slice(0, 3).map(Number);
+        assert.ok(
+          Math.max(...rgb) - Math.min(...rgb) < 28,
+          "Blocked-time card has a neutral grey surface",
+        );
+        const box = await entry.boundingBox(),
+          column = await page.locator('[data-resource="r1"]').boundingBox();
+        assert.ok(Math.abs(box.y - column.y - pixelAt(495)) <= 1);
+        assert.ok(
+          box.x >= column.x + column.width / 2,
+          "Room block stays inside its selected second table",
+        );
+        await capture(page, `${device.name}-early-grey-block`);
+        await entry.click();
+        assert.equal(
+          await page.locator("#calendar-slot-menu").isVisible(),
+          false,
+          "A block click opens its details, not empty-slot quick actions",
+        );
+        assert.match(
+          await page.locator("#drawer").textContent(),
+          /QA preparation <img src=x>/,
+        );
+        assert.equal(
+          await page.locator("#drawer img,#drawer script").count(),
+          0,
+        );
+        await page.locator("#calendar-block-edit").click();
+        await blockControl(page, "blocksAvailability").uncheck();
+        await blockControl(page, "title").fill("QA edited reminder");
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(f.blockWrites[1].method, "PUT");
+        assert.equal(f.blockWrites[1].body.version, 1);
+        assert.equal(f.blockWrites[1].body.blocksAvailability, false);
+        await open();
+        await page.locator('[data-mode="rooms"]').click();
+        await page.locator("#calendar-scroll").evaluate((el) => {
+          el.scrollTop = 900;
+        });
+        await entry.waitFor();
+        assert.match(await entry.textContent(), /QA edited reminder/);
+        assert.match(await entry.getAttribute("class"), /is-note-only/);
+        await entry.click();
+        page.once("dialog", (dialog) => dialog.accept());
+        await page.locator("#calendar-block-remove").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        await entry.waitFor({ state: "detached" });
+        assert.equal(f.blockWrites[2].method, "DELETE");
+        assert.equal(f.blockWrites[2].body.version, 2);
+        await page.locator("#calendar-scroll").evaluate((el) => {
+          el.scrollTop = el.scrollHeight;
+        });
+        const late = page.locator('[data-calendar-block="late-note"]');
+        await withinViewport(
+          page,
+          late,
+          "23:00–24:00 note outside appointment working hours",
+        );
+        assert.match(await late.textContent(), /23:00–24:00/);
+        await capture(page, `${device.name}-late-calendar-note`);
+        assert.equal(
+          f.writes.length,
+          0,
+          "Calendar-entry CRUD never creates or modifies appointments",
+        );
+      },
+    );
+  await scenario(
+    "overlapping note and appointment remain visible without hiding either lane",
+    desktop,
+    async ({ page, f, open }) => {
+      f.appointments = [booking("with-note", "tA", "r1", 0)];
+      f.blocks = [
+        calendarBlock("overlap", {
+          start: 600,
+          duration: 60,
+          bed: 0,
+          blocksAvailability: false,
+          title: "QA call reminder",
+        }),
+      ];
+      await open();
+      await page.locator('[data-mode="rooms"]').click();
+      const appointment = page.locator('[data-appointment="with-note"]'),
+        note = page.locator('[data-calendar-block="overlap"]');
+      const a = await withinViewport(
+          page,
+          appointment,
+          "Appointment beside note",
+        ),
+        b = await withinViewport(page, note, "Note beside appointment");
+      assert.ok(Math.abs(a.y - b.y) <= 1);
+      assert.ok(
+        a.x + a.width <= b.x + 1 || b.x + b.width <= a.x + 1,
+        "Visual overlap is split into usable lanes",
+      );
+      await appointment.click();
+      await page.locator("#appointment-summary-edit").waitFor();
+      await page.locator("#drawer-close").click();
+      await note.click();
+      await page.locator("#calendar-block-edit").waitFor();
+      await capture(page, "desktop-overlapping-note-details");
+    },
+  );
+  await scenario(
+    "booking suggestions ignore notes but honor whole-room and therapist blocking entries",
+    desktop,
+    async ({ page, f, open }) => {
+      f.blocks = [
+        calendarBlock("room-note", {
+          start: 600,
+          duration: 60,
+          bed: null,
+          blocksAvailability: false,
+        }),
+      ];
+      await open();
+      await add(page);
+      await stateIs(page, "available");
+      assert.equal((await selected(page)).roomId, "r1");
+      await page.locator("#form-cancel").click();
+      f.blocks[0].blocksAvailability = true;
+      f.blocks.push(
+        calendarBlock("staff-block", {
+          start: 600,
+          duration: 60,
+          resourceType: "therapist",
+          resourceId: "tA",
+          bed: null,
+        }),
+      );
+      await add(page);
+      await stateIs(page, "available");
+      const values = await selected(page);
+      assert.equal(values.roomId, "r2");
+      assert.equal(values.therapistId, "tB");
+      await control(page, "roomId").selectOption("r1");
+      await stateIs(page, "warning");
+      assert.equal(
+        (await selected(page)).roomId,
+        "r1",
+        "Explicit blocked choice stays visible with a warning",
+      );
+      assert.equal(f.writes.length, 0);
+    },
+  );
+  for (const device of [desktop, phone])
+    await scenario(
+      "therapist block projection is read-only and hides over-broad free text",
+      device,
+      async ({ page, f, open }) => {
+        f.role = "therapist";
+        f.blocks = [
+          calendarBlock("private-block", {
+            start: 600,
+            title: "Private QA client identity",
+            note: "Private QA phone 060123456",
+          }),
+        ];
+        await open();
+        await page.locator('[data-mode="rooms"]').click();
+        const block = page.locator('[data-calendar-block="private-block"]');
+        await block.waitFor();
+        assert.doesNotMatch(
+          await block.evaluate((el) => el.outerHTML),
+          /Private QA|060123456/,
+        );
+        assert.match(await block.textContent(), /Blocked time/);
+        assert.equal(await page.locator("#calendar-block-add").count(), 0);
+        if (device.mobile) await block.tap();
+        else await block.click();
+        await page.locator(".calendar-block-details").waitFor();
+        assert.doesNotMatch(
+          await page.locator("#drawer").evaluate((el) => el.outerHTML),
+          /Private QA|060123456/,
+        );
+        assert.equal(
+          await page
+            .locator(
+              "#calendar-block-edit,#calendar-block-remove,#calendar-block-form",
+            )
+            .count(),
+          0,
+        );
+        assert.equal(f.blockWrites.length, 0);
+        await capture(page, `${device.name}-therapist-block-details`);
+      },
+    );
   assert.ok(passed > 0, "No browser acceptance scenarios ran");
   assert.deepEqual(
     failures,

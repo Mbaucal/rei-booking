@@ -345,3 +345,106 @@ test("submit suspension prevents resource changes; conflict recovery refreshes w
   assert.equal(h.elements.note.value, "Keep this note");
   assert.ok(Object.values(h.elements).every((el) => el.disabled));
 });
+
+test("calendar notes preserve availability; blocking entries reserve the complete therapist or table interval", () => {
+  const block = (extra = {}) => ({
+    id: "block",
+    date,
+    start: 890,
+    duration: 30,
+    resourceType: "room",
+    resourceId: "r1",
+    bed: 0,
+    blocksAvailability: true,
+    ...extra,
+  });
+  const choose = (blocks, fixed = {}, extra = {}) =>
+    suggestBookingResources({
+      catalogue: catalogue(),
+      appointments: [],
+      blocks,
+      selection: selection(extra),
+      fixed,
+    });
+  assert.deepEqual(
+    choose([block({ blocksAvailability: false })]).selection,
+    selection(),
+  );
+  assert.deepEqual(choose([block()]).selection, selection({ bed: 1 }));
+  assert.equal(choose([block()], { roomId: true, bed: true }).available, false);
+  assert.deepEqual(
+    choose([block({ bed: null })]).selection,
+    selection({ roomId: "r2" }),
+  );
+  assert.deepEqual(
+    choose([block({ resourceType: "therapist", resourceId: "t1", bed: null })])
+      .selection,
+    selection({ therapistId: "t2" }),
+  );
+  assert.equal(
+    choose(
+      [block({ resourceType: "therapist", resourceId: "t1", bed: null })],
+      { therapistId: true },
+    ).available,
+    false,
+  );
+  for (const extra of [
+    { start: 900 },
+    { start: 810, duration: 30 },
+    { date: "2026-09-30" },
+  ])
+    assert.deepEqual(
+      choose([block(extra)]).selection,
+      selection(),
+      "Adjacent intervals and another day remain available",
+    );
+  assert.equal(
+    choose([], {}, { start: 0 }).available,
+    false,
+    "Full-day display does not silently extend appointment working hours",
+  );
+  assert.equal(choose([], {}, { start: 1320 }).available, false);
+});
+
+test("availability controller consumes block metadata and stale block responses cannot reset a newer date", async () => {
+  const h = harness();
+  h.requests[0].resolve({
+    appointments: [],
+    blocks: [
+      {
+        date,
+        start: 840,
+        duration: 60,
+        resourceType: "room",
+        resourceId: "r1",
+        bed: null,
+        blocksAvailability: true,
+      },
+    ],
+  });
+  await flush();
+  assert.equal(h.feedback.dataset.state, "available");
+  assert.equal(h.elements.roomId.value, "r2");
+  h.change("date", "2026-09-30", "input");
+  h.change("date", "2026-10-01", "input");
+  h.requests[2].resolve({ appointments: [], blocks: [] });
+  await flush();
+  h.requests[1].resolve({
+    appointments: [],
+    blocks: [
+      {
+        date: "2026-09-30",
+        start: 840,
+        duration: 60,
+        resourceType: "therapist",
+        resourceId: "t1",
+        bed: null,
+        blocksAvailability: true,
+      },
+    ],
+  });
+  await flush();
+  assert.equal(h.applied.at(-1).date, "2026-10-01");
+  assert.equal(h.elements.therapistId.value, "t1");
+  assert.equal(h.applied.length, 2);
+});
