@@ -32,9 +32,9 @@ export function calendarSlotAtPoint(rect, point, capacity = 1) {
   // Empty-slot hover stays inside the physical quarter under the pointer.
   // Dragging uses nearest-five-minute snapping separately.
   const start = clamp(
-    Math.floor(((point.y - rect.top) / SCALE + START) / STEP) * STEP,
+    calendarBandStart((point.y - rect.top) / SCALE + START),
     START,
-    END - STEP,
+    END - BAND,
   );
   return {
     start,

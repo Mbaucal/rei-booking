@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.10.0** — 30 September 2026.
+Current implementation release, **0.10.1** — 30 September 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -23,11 +23,11 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Therapist profiles, weekly hours and dated time off, independent of login accounts.
 - Treatment variants with duration, price and calendar colour.
 - Daily calendar by therapist, room or both; two-table couple rooms; current Belgrade time.
-- Calendar uses four 15-minute divisions per hour. Appointment movement and exact time selection stay in independent 5-minute steps.
+- Calendar uses four 15-minute divisions per hour. Empty-slot selection uses 15-minute starts; existing appointment movement uses independent 5-minute steps. The opening 10:00 label stays fully below the sticky resource header.
 - Desktop appointment cards offer a hover/focus information preview. Click or tap opens the appointment summary, with edit and reschedule actions for authorized roles. Therapist summaries exclude client identity, notes and financial data; reception excludes prices.
 - Mouse dragging moves appointments in 5-minute steps. On touch, hold an appointment to select a reschedule draft, then move the selected appointment. The draft dims other appointments and remains unsaved until Save; Cancel restores the original placement. The Reschedule action and 5-minute adjustment controls provide an alternative to dragging. Server conflict errors retain the draft for correction.
 - A floating Today button on narrow screens returns other dates to today in Europe/Belgrade.
-- Calendar hover shows the quarter-hour band and exact 5-minute start; clicking an empty slot opens quick actions next to that slot. Add appointment retains the selected time, therapist or room/table. The popover stays in the viewport and closes on Escape, outside interaction, scrolling or navigation.
+- Calendar hover and keyboard selection show the containing quarter-hour start; clicking an empty slot opens quick actions next to that slot. Add appointment retains the selected time, therapist or room/table. The popover stays in the viewport and closes on Escape, outside interaction, scrolling or navigation.
 - Booking forms give immediate loading and retry feedback, open at the top, and ignore stale responses after closing or navigation. Add a new client while booking, edit appointments and move bookings with a pointer-based drag handle using 5-minute snapping.
 - New-booking suggestions find an available therapist and room/table for the full treatment duration while keeping the clicked time and explicit resource choices. Availability messages remain advisory; the server authoritatively checks conflicts when saving.
 - Database-level prevention of simultaneous bookings for the same therapist or table, including concurrent requests.

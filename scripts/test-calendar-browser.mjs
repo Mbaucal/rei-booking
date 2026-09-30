@@ -769,72 +769,159 @@ try {
       assert.equal(f.writes.length, 0);
     },
   );
-  await scenario(
-    "hover band and exact time respect room halves; keyboard quick actions work",
-    desktop,
-    async ({ page, open }) => {
-      await open();
-      await page.locator('[data-mode="rooms"]').click();
-      const column = page.locator('[data-resource="r1"]');
-      await column.evaluate((el) => {
-        el.closest(".calendar-scroll").scrollTop = 0;
-      });
-      const box = await column.boundingBox();
-      for (const minute of [605, 610, 625]) {
-        await page.mouse.move(
-          box.x + box.width * 0.75,
-          box.y + (minute - 600) * 2 + 1,
+  for (const device of [desktop, phone, tablet])
+    await scenario(
+      "populated first hour shows 10:00 and selects only quarter-hour empty slots",
+      device,
+      async ({ page, f, open }) => {
+        f.appointments = [booking("first-hour", "tA", "r1", 0, 600, 90)];
+        await open();
+        await page.locator('[data-mode="rooms"]').click();
+        const column = page.locator('[data-resource="r1"]');
+        await column.evaluate((el) => {
+          el.closest(".calendar-scroll").scrollTop = 0;
+          el.closest(".calendar-scroll").scrollLeft = 0;
+        });
+        await page.locator("#calendar-scroll").scrollIntoViewIfNeeded();
+        await renderedFrames(page);
+        const firstLabel = page.locator(".time-axis span").first();
+        assert.equal(await firstLabel.textContent(), "10:00");
+        const label = await withinViewport(
+          page,
+          firstLabel,
+          "Complete first 10:00 label",
         );
-        const hint = column.locator(".calendar-slot-hint");
-        await hint.waitFor();
-        assert.equal(await hint.getAttribute("data-start"), String(minute));
-        assert.equal(
-          await hint.getAttribute("data-band-start"),
-          String(Math.floor(minute / 15) * 15),
-        );
-        assert.equal(
-          await hint.locator(".calendar-slot-time").textContent(),
-          `10:${String(minute - 600).padStart(2, "0")}`,
-        );
-        const rect = await hint.boundingBox();
+        const header = await page.locator("#calendar-headers").boundingBox();
         assert.ok(
-          Math.abs(rect.height - 30) <= 3,
-          "The hover band spans 15 minutes at the calendar's 2px/minute scale",
+          label.y >= header.y + header.height - 1,
+          "The first label must sit completely below the sticky resource header",
+        );
+        assert.equal(
+          await firstLabel.evaluate((el) => {
+            const box = el.getBoundingClientRect();
+            return (
+              document.elementFromPoint(
+                box.left + box.width / 2,
+                box.top + 2,
+              ) === el
+            );
+          }),
+          true,
+          "The top of 10:00 is not covered by the sticky header",
+        );
+        const appointment = page.locator('[data-appointment="first-hour"]');
+        assert.match(
+          await appointment.locator(".event-time").textContent(),
+          /10:00–11:30/,
         );
         assert.ok(
-          rect.x >= box.x + box.width / 2 - 3 &&
-            rect.x + rect.width <= box.x + box.width + 1,
-          "Hover stays in the selected room table half",
+          Math.abs(
+            (await appointment.boundingBox()).y -
+              (await column.boundingBox()).y,
+          ) <= 1,
+          "Label repair must not shift the 10:00 appointment off its time origin",
         );
-      }
-      await column.focus();
-      await page.keyboard.press("Home");
-      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
-      await page.keyboard.press("ArrowRight");
-      await page.keyboard.press("Enter");
-      await page.locator("#calendar-slot-menu").waitFor();
-      assert.match(
-        await page.locator("#calendar-slot-menu-time").textContent(),
-        /10:15/,
-      );
-      assert.match(
-        await page.locator("#calendar-slot-menu-resource").textContent(),
-        /Table 2/,
-      );
-      await page.keyboard.press("Escape");
-      await page.locator("#calendar-slot-menu").waitFor({ state: "hidden" });
-      assert.equal(
-        await column.evaluate((el) => document.activeElement === el),
-        true,
-      );
-      await page.keyboard.press("Enter");
-      await page.locator("#calendar-slot-menu").waitFor();
-      await page.locator("#calendar-scroll").evaluate((el) => {
-        el.scrollTop += 20;
-      });
-      await page.locator("#calendar-slot-menu").waitFor({ state: "hidden" });
-    },
-  );
+        await capture(page, `${device.name}-populated-first-hour`);
+        for (const [minute, quarter] of [
+          [601, 600],
+          [614, 600],
+          [615, 615],
+          [629, 615],
+          [630, 630],
+          [640, 630],
+          [644, 630],
+          [645, 645],
+        ]) {
+          const box = await column.boundingBox();
+          const point = {
+            x: box.x + box.width * 0.75,
+            y: box.y + (minute - 600) * 2 + 1,
+          };
+          const expected = `10:${String(quarter - 600).padStart(2, "0")}`;
+          if (!device.mobile) {
+            await page.mouse.move(point.x, point.y);
+            const hint = column.locator(".calendar-slot-hint");
+            await hint.waitFor();
+            assert.equal(
+              await hint.getAttribute("data-start"),
+              String(quarter),
+            );
+            assert.equal(
+              await hint.getAttribute("data-band-start"),
+              String(quarter),
+            );
+            assert.equal(
+              await hint.locator(".calendar-slot-time").textContent(),
+              expected,
+            );
+            const rect = await hint.boundingBox();
+            assert.ok(
+              Math.abs(rect.height - 30) <= 3,
+              "The selected quarter spans 15 minutes",
+            );
+            assert.ok(
+              rect.x >= box.x + box.width / 2 - 3 &&
+                rect.x + rect.width <= box.x + box.width + 1,
+              "Hover stays in the empty second table half",
+            );
+            if (minute === 640)
+              await capture(page, "desktop-1040-selects1030-hover");
+            await page.mouse.click(point.x, point.y);
+          } else await page.touchscreen.tap(point.x, point.y);
+          await menuAt(page, point);
+          assert.equal(
+            await page.locator("#calendar-slot-menu-time").textContent(),
+            expected,
+          );
+          assert.match(
+            await page.locator("#calendar-slot-menu-resource").textContent(),
+            /Table 2/,
+          );
+          if (minute === 640) {
+            await page.locator("#calendar-slot-add").click();
+            await page.locator("#appointment-form").waitFor();
+            await stateIs(page, "available");
+            const values = await selected(page);
+            assert.equal(
+              values.start,
+              "10:30",
+              "Pointer at 10:40 prefills a 10:30 booking",
+            );
+            assert.equal(values.bed, "1");
+            assert.equal(values.roomId, "r1");
+            await page.locator("#form-cancel").click();
+          } else await page.locator("#calendar-slot-close").click();
+        }
+        assert.equal(f.writes.length, 0);
+        if (device.mobile) return;
+        await column.focus();
+        await page.keyboard.press("Home");
+        for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.press("Enter");
+        await page.locator("#calendar-slot-menu").waitFor();
+        assert.match(
+          await page.locator("#calendar-slot-menu-time").textContent(),
+          /10:45/,
+        );
+        assert.match(
+          await page.locator("#calendar-slot-menu-resource").textContent(),
+          /Table 2/,
+        );
+        await page.keyboard.press("Escape");
+        await page.locator("#calendar-slot-menu").waitFor({ state: "hidden" });
+        assert.equal(
+          await column.evaluate((el) => document.activeElement === el),
+          true,
+        );
+        await page.keyboard.press("Enter");
+        await page.locator("#calendar-slot-menu").waitFor();
+        await page.locator("#calendar-scroll").evaluate((el) => {
+          el.scrollTop += 20;
+        });
+        await page.locator("#calendar-slot-menu").waitFor({ state: "hidden" });
+      },
+    );
   for (const device of [desktop, phone])
     await scenario(
       "quick actions remain anchored inside a scrolled viewport edge",
@@ -863,7 +950,8 @@ try {
           ),
           y: Math.min(area.y + area.height - 15, viewport.height - 15),
         };
-        const expectedStart = Math.floor(((point.y - box.y) / 2 + 600) / 5) * 5;
+        const expectedStart =
+          Math.floor(((point.y - box.y) / 2 + 600) / 15) * 15;
         if (device.mobile) await page.touchscreen.tap(point.x, point.y);
         else await page.mouse.click(point.x, point.y);
         await menuAt(page, point);

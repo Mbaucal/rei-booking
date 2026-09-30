@@ -407,6 +407,10 @@ main {
   color: var(--muted);
   transform: translateY(-50%);
 }
+.time-axis span:first-child {
+  /* Keep the opening label below the sticky header; grid coordinates stay put. */
+  transform: translateY(2px);
+}
 .calendar-column {
   position: relative;
   border-right: 1px solid var(--line);
