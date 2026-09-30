@@ -5,16 +5,16 @@ import {
   calendarMenuPosition,
 } from "../public/calendar-interactions.js";
 
-test("hover uses exact five-minute start within a fixed half-hour band, including a vertically scrolled column", () => {
+test("hover uses exact five-minute start within a fixed quarter-hour band, including a vertically scrolled column", () => {
   const rect = { top: -160, left: 60, width: 180 };
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 350 }), {
     start: 855,
-    bandStart: 840,
+    bandStart: 855,
     bed: 0,
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 364 }), {
     start: 860,
-    bandStart: 840,
+    bandStart: 855,
     bed: 0,
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 380 }), {
@@ -41,7 +41,7 @@ test("calendar boundaries never produce an off-grid start or a non-existent tabl
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 1000, y: 2000 }, 2), {
     start: 1315,
-    bandStart: 1290,
+    bandStart: 1305,
     bed: 1,
   });
 });
@@ -85,5 +85,23 @@ test("popup stays inside desktop, phone, tablet and offset visual viewports at a
             (viewport.top || 0) + viewport.height - 8,
         );
       }
+  }
+});
+
+test("hover keeps the final pixels of each quarter in that quarter", () => {
+  const rect = { top: 100, left: 0, width: 180 };
+  for (const [y, start, bandStart] of [
+    [129.9, 610, 600],
+    [130, 615, 615],
+    [159.9, 625, 615],
+    [160, 630, 630],
+    [219.9, 655, 645],
+    [220, 660, 660],
+  ]) {
+    assert.deepEqual(calendarSlotAtPoint(rect, { x: 50, y }), {
+      start,
+      bandStart,
+      bed: 0,
+    });
   }
 });
