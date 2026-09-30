@@ -1,5 +1,6 @@
 import { mountClientMatches } from "./client-matches.js";
 import { mountBookingAvailability } from "./calendar-availability.js";
+import { bookingSummaryHTML } from "./booking-presentation.js";
 import { mountCalendarInteractions } from "./calendar-interactions.js";
 import {
   calendarResourceItems,
@@ -196,6 +197,7 @@ function signOutView() {
   $("signed-name").textContent = "";
   $("signed-role").textContent = "";
   $("app").hidden = true;
+  delete $("app").dataset.page;
   $("login-screen").hidden = false;
 }
 let drawerEpoch = 0;
@@ -273,7 +275,7 @@ async function enterApp(session) {
     therapist: "Therapist",
   }[session.user.role];
   document
-    .querySelectorAll("[data-page]")
+    .querySelectorAll("nav [data-page]")
     .forEach(
       (b) =>
         (b.hidden =
@@ -321,6 +323,14 @@ async function setPage(page, monthlyFilters = null) {
     return;
   disposeCalendarUI();
   state.page = page;
+  $("app").dataset.page = page;
+  $("page-title")
+    .closest(".page-top")
+    .classList.toggle("calendar-page-top", page === "calendar");
+  $("page-title").parentElement.classList.toggle(
+    "calendar-page-heading",
+    page === "calendar",
+  );
   if (page !== "monthly" && location.hash.startsWith("#report="))
     history.replaceState(null, "", location.pathname);
   closeDrawer();
@@ -339,7 +349,7 @@ async function setPage(page, monthlyFilters = null) {
     users: "Accounts",
   }[page];
   document
-    .querySelectorAll("[data-page]")
+    .querySelectorAll("nav [data-page]")
     .forEach((b) =>
       b.classList.toggle(
         "active",
@@ -483,7 +493,7 @@ function renderCalendarShell() {
     : null;
   disposeCalendarUI();
   $("page-content").innerHTML =
-    `<div class="toolbar"><div class="toolgroup"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button><div class="segments" aria-label="Calendar resources">${[
+    `<div class="toolbar calendar-toolbar"><div class="toolgroup calendar-primary-tools"><div class="calendar-date-controls"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button></div><div class="calendar-resource-controls"><div class="segments" aria-label="Calendar resources">${[
       ["all", "All resources"],
       ["therapists", "Therapists"],
       ["rooms", "Rooms"],
@@ -494,7 +504,7 @@ function renderCalendarShell() {
       )
       .join(
         "",
-      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div>${operator() ? '<div class="calendar-add-actions"><button class="btn" id="calendar-block-add">Add blocked time</button><button class="btn primary" id="appointment-add">+ Add appointment</button></div>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Book in 15-minute steps · move in 5-minute steps · hold on touch" : "Full salon schedule · requested · read-only"}</span></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><button class="btn calendar-today-floating" id="calendar-today-floating" aria-label="Return to today" ${state.date === today() ? "hidden" : ""}><svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15h6m-3-3v6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>Today</span></button><div class="legend">${state.catalogue.services
+      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div></div>${operator() ? '<div class="calendar-add-actions"><button class="btn" id="calendar-block-add">Add blocked time</button><button class="btn primary" id="appointment-add">+ Add appointment</button></div>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Book in 15-minute steps · move in 5-minute steps · hold on touch" : "Full salon schedule · requested · read-only"}</span></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><button class="btn calendar-today-floating" id="calendar-today-floating" aria-label="Return to today" ${state.date === today() ? "hidden" : ""}><svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15h6m-3-3v6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>Today</span></button><div class="legend">${state.catalogue.services
       .filter((s) => s.active)
       .map(
         (s) =>
@@ -838,20 +848,56 @@ async function appointmentDialog(existing = null, defaults = {}) {
   showDrawer(
     existing ? "Appointment details" : "New appointment",
     prettyDate(a.date),
-    `<form id="appointment-form"><div id="booking-client-photo"></div><label><span>Client</span><input id="booking-client-search" type="search" placeholder="Search name, phone, email or Instagram"><select name="clientId" id="booking-client">${opts(state.clients, a.clientId, "Walk-in · no client selected")}</select></label>${!existing ? '<label class="check"><input type="checkbox" id="new-client-check">Create a new client</label><fieldset id="new-client-fields" hidden disabled><legend>New client</legend><div class="fields">' + input("newName", "Full name", "", "text", 'maxlength="100"') + input("newPhone", "Phone · optional", "", "tel") + input("newEmail", "Email · optional", "", "email") + input("newInstagram", "Instagram · optional", "", "text", 'maxlength="250" placeholder="@username or profile URL"') + '<label class="wide"><span>Client note</span><textarea name="newNote" maxlength="2000"></textarea></label><div id="booking-client-matches" class="client-matches wide" hidden></div>' + "</div></fieldset>" : ""}${existing?.clientId ? '<button class="btn link" type="button" id="booking-open-profile">Open client profile</button>' : ""}<h3 class="form-section">Treatment</h3><div class="fields"><label class="wide"><span>Massage</span><select name="serviceId" id="booking-service">${state.catalogue.services
-      .filter((s) => s.active || s.id === a.serviceId)
-      .map(
-        (s) =>
-          `<option value="${esc(s.id)}" ${s.id === a.serviceId ? "selected" : ""}>${esc(s.name)} · ${s.duration} min</option>`,
-      )
-      .join(
-        "",
-      )}</select></label>${input("date", "Date", a.date, "date", "required")}${input("start", "Start time", clock(a.start), "time", 'step="300" required')}${input("duration", "Duration (minutes)", a.duration, "number", 'min="5" max="720" step="5" required')}<label><span>Status</span><select name="status">${["booked", "confirmed", "done", "cancelled", "no_show"].map((s) => `<option value="${s}" ${s === a.status ? "selected" : ""}>${statusName(s)}</option>`).join("")}</select></label><label class="wide"><span>Therapist</span><select name="therapistId">${opts(
-      state.catalogue.therapists.filter(
-        (t) => t.active || t.id === a.therapistId,
-      ),
-      a.therapistId,
-    )}</select></label><label><span>Room</span><select name="roomId" id="booking-room">${opts(state.catalogue.rooms, a.roomId)}</select></label><label><span>Table</span><select name="bed" id="booking-bed"></select></label>${owner() ? input("grossCents", "Full price (RSD)", (a.grossCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') + input("netCents", "After discount (RSD)", (a.netCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') : ""}<label class="wide"><span>Requested therapist · optional</span><select name="requestedTherapistId">${opts(state.catalogue.therapists, a.requestedTherapistId, "No specific request")}</select></label><label class="wide"><span>Appointment note</span><textarea name="note" rows="3" maxlength="2000">${esc(a.note)}</textarea></label></div>${existing ? `<p class="hint">Booked on ${esc(stamp(a.createdAt))}</p>` : ""}${errorBox()}</form>`,
+    `<form id="appointment-form" class="booking-form">
+      <aside id="booking-summary" class="booking-summary" role="status" aria-live="polite" aria-atomic="true"></aside>
+      <section class="booking-form-section" aria-labelledby="booking-client-heading">
+        <h3 id="booking-client-heading" class="booking-section-heading">Client</h3>
+        <div class="booking-client-controls"><div id="booking-client-photo"></div>
+          <label><span>Find a client</span><input id="booking-client-search" type="search" placeholder="Search name, phone, email or Instagram"></label>
+          <label><span>Selected client</span><select name="clientId" id="booking-client">${opts(state.clients, a.clientId, "Walk-in · no client selected")}</select></label>
+          ${!existing ? '<label class="check"><input type="checkbox" id="new-client-check">Create a new client</label><fieldset id="new-client-fields" hidden disabled><legend>New client</legend><div class="fields booking-section-fields">' + input("newName", "Full name", "", "text", 'maxlength="100"') + input("newPhone", "Phone · optional", "", "tel") + input("newEmail", "Email · optional", "", "email") + input("newInstagram", "Instagram · optional", "", "text", 'maxlength="250" placeholder="@username or profile URL"') + '<label class="wide"><span>Client note</span><textarea name="newNote" maxlength="2000"></textarea></label><div id="booking-client-matches" class="client-matches wide" hidden></div>' + "</div></fieldset>" : ""}
+          ${existing?.clientId ? '<button class="btn link" type="button" id="booking-open-profile">Open client profile</button>' : ""}
+        </div>
+      </section>
+      <section class="booking-form-section" aria-labelledby="booking-treatment-heading">
+        <h3 id="booking-treatment-heading" class="booking-section-heading">Treatment &amp; time</h3>
+        <div class="fields booking-section-fields">
+          <label class="wide"><span>Massage</span><select name="serviceId" id="booking-service">${state.catalogue.services
+            .filter((s) => s.active || s.id === a.serviceId)
+            .map(
+              (s) =>
+                `<option value="${esc(s.id)}" ${s.id === a.serviceId ? "selected" : ""}>${esc(s.name)} · ${s.duration} min</option>`,
+            )
+            .join("")}</select></label>
+          ${input("date", "Date", a.date, "date", "required")}
+          ${input("start", "Start time", clock(a.start), "time", 'step="300" required')}
+          ${input("duration", "Duration (minutes)", a.duration, "number", 'min="5" max="720" step="5" required')}
+          <label><span>Status</span><select name="status">${["booked", "confirmed", "done", "cancelled", "no_show"].map((s) => `<option value="${s}" ${s === a.status ? "selected" : ""}>${statusName(s)}</option>`).join("")}</select></label>
+        </div>
+      </section>
+      <section class="booking-form-section" aria-labelledby="booking-resources-heading">
+        <h3 id="booking-resources-heading" class="booking-section-heading">Therapist &amp; room</h3>
+        <div class="fields booking-section-fields">
+          <label class="wide"><span>Therapist</span><select name="therapistId">${opts(
+            state.catalogue.therapists.filter(
+              (t) => t.active || t.id === a.therapistId,
+            ),
+            a.therapistId,
+          )}</select></label>
+          <label><span>Room</span><select name="roomId" id="booking-room">${opts(state.catalogue.rooms, a.roomId)}</select></label>
+          <label><span>Table</span><select name="bed" id="booking-bed"></select></label>
+        </div>
+      </section>
+      ${owner() ? '<section class="booking-form-section" aria-labelledby="booking-pricing-heading"><h3 id="booking-pricing-heading" class="booking-section-heading">Pricing</h3><div class="fields booking-section-fields">' + input("grossCents", "Full price (RSD)", (a.grossCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') + input("netCents", "After discount (RSD)", (a.netCents / 100).toFixed(2), "number", 'min="0" step="0.01" required') + "</div></section>" : ""}
+      <section class="booking-form-section" aria-labelledby="booking-notes-heading">
+        <h3 id="booking-notes-heading" class="booking-section-heading">Requests &amp; notes</h3>
+        <div class="fields booking-section-fields">
+          <label class="wide"><span>Requested therapist · optional</span><select name="requestedTherapistId">${opts(state.catalogue.therapists, a.requestedTherapistId, "No specific request")}</select></label>
+          <label class="wide"><span>Appointment note</span><textarea name="note" rows="3" maxlength="2000">${esc(a.note)}</textarea></label>
+        </div>
+      </section>
+      ${existing ? `<p class="hint">Booked on ${esc(stamp(a.createdAt))}</p>` : ""}${errorBox()}
+    </form>`,
   );
   const form = $("appointment-form"),
     formEpoch = drawerEpoch,
@@ -863,7 +909,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
       sessionEpoch === openingSession &&
       operator(),
     beds = (selected = a.bed) => {
-      const capacity = room($("booking-room").value).capacity;
+      const capacity = room($("booking-room").value)?.capacity || 0;
       selected = Math.min(capacity - 1, Math.max(0, Number(selected)));
       $("booking-bed").innerHTML = Array.from(
         { length: capacity },
@@ -871,6 +917,29 @@ async function appointmentDialog(existing = null, defaults = {}) {
           `<option value="${i}" ${i === selected ? "selected" : ""}>Table ${i + 1}</option>`,
       ).join("");
     };
+  const summaryFields = new Set([
+    "date",
+    "start",
+    "duration",
+    "serviceId",
+    "therapistId",
+    "roomId",
+    "bed",
+  ]);
+  const refreshSummary = () => {
+    if (!formCurrent()) return;
+    const selection = Object.fromEntries(
+      [...summaryFields].map((name) => [name, form.elements[name].value]),
+    );
+    $("booking-summary").innerHTML = bookingSummaryHTML(
+      selection,
+      state.catalogue,
+    );
+  };
+  for (const eventName of ["input", "change"])
+    form.addEventListener(eventName, (event) => {
+      if (summaryFields.has(event.target.name)) refreshSummary();
+    });
   let availability = null;
   const availabilityEpoch = drawerEpoch,
     availabilityVersion = state.version;
@@ -942,15 +1011,23 @@ async function appointmentDialog(existing = null, defaults = {}) {
     });
   }
   beds();
-  $("booking-room").onchange = () =>
+  refreshSummary();
+  $("booking-room").onchange = () => {
     beds(existing ? a.bed : form.elements.bed.value);
+    refreshSummary();
+  };
   $("booking-service").onchange = () => {
     const s = service($("booking-service").value);
+    if (!s) {
+      refreshSummary();
+      return;
+    }
     form.elements.duration.value = s.duration;
     if (owner())
       form.elements.grossCents.value = form.elements.netCents.value = (
         s.priceCents / 100
       ).toFixed(2);
+    refreshSummary();
   };
   const showClientPhoto = () => {
     const c = state.clients.find((c) => c.id === $("booking-client").value);
@@ -1053,6 +1130,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
         form.elements.therapistId.value = selected.therapistId;
         form.elements.roomId.value = selected.roomId;
         beds(selected.bed);
+        refreshSummary();
       },
       isCurrent: () =>
         form.isConnected &&
@@ -1682,7 +1760,7 @@ $("sign-out").onclick = async () => {
 };
 $("change-password").onclick = () => passwordDialog();
 document
-  .querySelectorAll("[data-page]")
+  .querySelectorAll("nav [data-page]")
   .forEach((b) => (b.onclick = () => setPage(b.dataset.page)));
 window.addEventListener("focus", () => {
   if (

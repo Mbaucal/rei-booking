@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.11.0** — 1 October 2026.
+Current implementation release, **0.12.0** — 1 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -23,6 +23,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Therapist profiles, weekly hours and dated time off, independent of login accounts.
 - Treatment variants with duration, price and calendar colour.
 - Daily calendar by therapist, room or both; two-table couple rooms; current Belgrade time.
+- Compact calendar controls leave more of the schedule visible on narrow screens. The grid fills the remaining viewport; short landscape windows retain document scrolling so controls remain reachable.
 - Calendar uses four 15-minute divisions per hour. Empty-slot selection uses 15-minute starts; existing appointment movement uses independent 5-minute steps. The full-day grid runs from 00:00 to 24:00, with visible boundary labels and an initial view near working hours.
 - Grey blocked-time cards store breaks, comments and call reminders, including outside working hours. The Block availability switch reserves a therapist, one table or a whole room; note-only entries do not prevent appointments. Blocks can be edited/removed and never count toward massage reports or bonuses. Free text is hidden from therapist accounts. See [calendar blocks](docs/calendar-blocks.md).
 - Desktop appointment cards offer a hover/focus information preview. Click or tap opens the appointment summary, with edit and reschedule actions for authorized roles. Therapist summaries exclude client identity, notes and financial data; reception excludes prices.
@@ -30,6 +31,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - A floating Today button on narrow screens returns other dates to today in Europe/Belgrade.
 - Calendar hover and keyboard selection show the containing quarter-hour start; clicking an empty slot opens quick actions next to that slot. Add appointment retains the selected time, therapist or room/table. The popover stays in the viewport and closes on Escape, outside interaction, scrolling or navigation.
 - Booking forms give immediate loading and retry feedback, open at the top, and ignore stale responses after closing or navigation. Add a new client while booking, edit appointments and move bookings with a pointer-based drag handle using 5-minute snapping.
+- New/Edit appointment forms group Client, Treatment & time, Therapist & room, owner-only Pricing, and Requests & notes. A live Current selection summary follows time, duration, treatment and resource edits, including automatic resource suggestions. Incomplete values show prompts rather than invented times; availability feedback remains separate. Save/Cancel stay outside the form's scroll area.
 - New-booking suggestions find an available therapist and room/table for the full treatment duration while keeping the clicked time and explicit resource choices. Availability messages remain advisory; the server authoritatively checks conflicts when saving.
 - Database-level prevention of simultaneous bookings for the same therapist or table, including concurrent requests.
 - Version checks against overwriting another user's edits, appointment creation timestamps, price/name snapshots and owner-only audit data.
