@@ -10,6 +10,7 @@ import {
   calendarTop,
   calendarHeight,
   calendarSlotAtPoint,
+  calendarStartAtY,
 } from "../public/calendar-geometry.js";
 import {
   calendarMovedAppointment,
@@ -43,7 +44,7 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
-test("one shared geometry renders four quarter-hour bands per hour but resolves all five-minute slots", () => {
+test("shared geometry selects quarter-hour booking starts while dragging still resolves every five minutes", () => {
   assert.deepEqual([START, END, SCALE, STEP, BAND], [600, 1320, 2, 5, 15]);
   assert.deepEqual([600, 615, 630, 645].map(calendarTop), [0, 30, 60, 90]);
   assert.equal(calendarHeight(60), 120);
@@ -55,10 +56,11 @@ test("one shared geometry renders four quarter-hour bands per hour but resolves 
       { x: 81, y: rect.top + calendarTop(minute) },
       2,
     );
-    assert.equal(slot.start, minute);
+    assert.equal(slot.start, calendarBandStart(minute));
     assert.equal(slot.bandStart, calendarBandStart(minute));
-    assert.ok(
-      slot.start >= slot.bandStart && slot.start < slot.bandStart + BAND,
+    assert.equal(
+      calendarStartAtY(rect, rect.top + calendarTop(minute)),
+      minute,
     );
   }
 });

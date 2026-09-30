@@ -2,7 +2,6 @@ import {
   START,
   END,
   SCALE,
-  STEP,
   BAND,
   clamp,
   calendarBandStart,
@@ -172,7 +171,7 @@ export function mountCalendarInteractions({
     column.tabIndex = 0;
     column.setAttribute(
       "aria-label",
-      `${resource(column).name}. Use up and down arrows to choose a time, then Enter for booking options.`,
+      `${resource(column).name}. Use up and down arrows to choose a time in 15-minute steps, then Enter for booking options.`,
     );
     listen(column, "pointerdown", (event) => {
       if (event.target.closest("[data-appointment]") || event.button !== 0)
@@ -238,8 +237,8 @@ export function mountCalendarInteractions({
         event.preventDefault();
         const delta =
           {
-            ArrowUp: -STEP,
-            ArrowDown: STEP,
+            ArrowUp: -BAND,
+            ArrowDown: BAND,
             PageUp: -2 * BAND,
             PageDown: 2 * BAND,
           }[event.key] || 0;
@@ -247,8 +246,8 @@ export function mountCalendarInteractions({
           event.key === "Home"
             ? START
             : event.key === "End"
-              ? END - STEP
-              : clamp(slot.start + delta, START, END - STEP);
+              ? END - BAND
+              : clamp(slot.start + delta, START, END - BAND);
         slot = {
           start,
           bandStart: calendarBandStart(start),

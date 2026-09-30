@@ -5,7 +5,7 @@ import {
   calendarMenuPosition,
 } from "../public/calendar-interactions.js";
 
-test("hover uses exact five-minute start within a fixed quarter-hour band, including a vertically scrolled column", () => {
+test("hover selects the containing quarter-hour start, including a vertically scrolled column", () => {
   const rect = { top: -160, left: 60, width: 180 };
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 350 }), {
     start: 855,
@@ -13,7 +13,7 @@ test("hover uses exact five-minute start within a fixed quarter-hour band, inclu
     bed: 0,
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 364 }), {
-    start: 860,
+    start: 855,
     bandStart: 855,
     bed: 0,
   });
@@ -40,7 +40,7 @@ test("calendar boundaries never produce an off-grid start or a non-existent tabl
     bed: 0,
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 1000, y: 2000 }, 2), {
-    start: 1315,
+    start: 1305,
     bandStart: 1305,
     bed: 1,
   });
@@ -91,11 +91,14 @@ test("popup stays inside desktop, phone, tablet and offset visual viewports at a
 test("hover keeps the final pixels of each quarter in that quarter", () => {
   const rect = { top: 100, left: 0, width: 180 };
   for (const [y, start, bandStart] of [
-    [129.9, 610, 600],
+    [129.9, 600, 600],
     [130, 615, 615],
-    [159.9, 625, 615],
+    [159.9, 615, 615],
     [160, 630, 630],
-    [219.9, 655, 645],
+    [180, 630, 630], // 10:40 selects 10:30, never 10:40.
+    [189.9, 630, 630],
+    [190, 645, 645],
+    [219.9, 645, 645],
     [220, 660, 660],
   ]) {
     assert.deepEqual(calendarSlotAtPoint(rect, { x: 50, y }), {
