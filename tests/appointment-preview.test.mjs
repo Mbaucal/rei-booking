@@ -185,7 +185,7 @@ test("floating previews stay within desktop/tablet/offset viewport bounds near e
 
 // Exercise the mounted controller with real EventTarget listeners; geometry is
 // fixed so this checks focus lifecycle independently of browser layout.
-function previewFixture() {
+function previewFixture({ hover = true } = {}) {
   class Element extends EventTarget {
     attributes = new Map();
     style = {};
@@ -224,6 +224,7 @@ function previewFixture() {
   const doc = new EventTarget();
   doc.defaultView = new EventTarget();
   doc.defaultView.innerHeight = 900;
+  doc.defaultView.matchMedia = () => ({ matches: hover });
   doc.documentElement = { clientWidth: 1440 };
   doc.body = new Element();
   doc.createElement = () => new Element();
@@ -277,5 +278,52 @@ test("Escape and Enter dismiss a focused preview until a fresh keyboard visit", 
     } finally {
       controller.dispose();
     }
+  }
+});
+
+test("touch lift and compatibility focus/mouse events never cover the tap, while keyboard focus still works on a touch device", async () => {
+  const { root, item, other, doc, card, controller, emit } = previewFixture({
+    hover: false,
+  });
+  try {
+    emit(root, "pointerover", { target: item, pointerType: "touch" });
+    emit(doc, "pointerdown", { target: item, pointerType: "touch" });
+    emit(root, "pointerout", {
+      target: item,
+      pointerType: "touch",
+      relatedTarget: null,
+    });
+    emit(root, "focusin", { target: item });
+    assert.equal(
+      card.hidden,
+      true,
+      "touch-generated focus must not intercept the ensuing click",
+    );
+    emit(root, "pointerover", {
+      target: item,
+      pointerType: "mouse",
+      buttons: 0,
+      relatedTarget: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    assert.equal(
+      card.hidden,
+      true,
+      "compatibility mouse events cannot create a phone hover card",
+    );
+    assert.equal(item.getAttribute("aria-describedby"), null);
+    emit(doc, "keydown", { target: item, key: "Tab" });
+    emit(root, "focusout", { target: item, relatedTarget: other });
+    emit(root, "focusin", { target: other });
+    emit(doc, "keydown", { target: other, key: "Tab", shiftKey: true });
+    emit(root, "focusout", { target: other, relatedTarget: item });
+    emit(root, "focusin", { target: item });
+    assert.equal(
+      card.hidden,
+      false,
+      "a real keyboard visit works even on a touch-only screen",
+    );
+  } finally {
+    controller.dispose();
   }
 });

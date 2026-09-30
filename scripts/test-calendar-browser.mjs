@@ -236,6 +236,7 @@ await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ headless: true });
 let passed = 0;
+const failures = [];
 
 async function scenario(name, device, run) {
   const id = name + "-" + device.name,
@@ -284,7 +285,8 @@ async function scenario(name, device, run) {
       page,
       id.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-failure",
     ).catch(() => {});
-    throw error;
+    failures.push({ name, device: device.name, message: error.message });
+    console.error(`FAIL ${device.name}: ${name}\n${error.stack || error}`);
   } finally {
     for (const delay of f.delayed.values()) delay.release();
     f.writeWait?.release();
@@ -1812,6 +1814,11 @@ try {
     },
   );
   assert.ok(passed > 0, "No browser acceptance scenarios ran");
+  assert.deepEqual(
+    failures,
+    [],
+    `${failures.length} browser acceptance scenario(s) failed; ${passed} passed`,
+  );
 } finally {
   await browser.close();
   await new Promise((done) => server.close(done));

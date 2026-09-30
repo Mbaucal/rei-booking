@@ -114,7 +114,9 @@ export function mountAppointmentPreview({
   let anchor = null,
     showTimer,
     hideTimer,
-    suppressed = null;
+    suppressed = null,
+    inputModality = "keyboard";
+  const hoverCapability = win.matchMedia?.("(any-hover: hover)");
   const scrollPositionsAtShow = new Map();
   const available = () => isCurrent() && !isBusy();
   function dismiss() {
@@ -177,7 +179,12 @@ export function mountAppointmentPreview({
   }
   const eventAt = (target) => target?.closest?.("[data-appointment]");
   listen(root, "pointerover", (event) => {
-    if (event.pointerType === "touch" || event.buttons) return;
+    if (
+      event.pointerType === "touch" ||
+      event.buttons ||
+      hoverCapability?.matches === false
+    )
+      return;
     const item = eventAt(event.target);
     if (!item || eventAt(event.relatedTarget) === item) return;
     suppressed = null;
@@ -188,6 +195,9 @@ export function mountAppointmentPreview({
     showTimer = setTimeout(() => show(item), 110);
   });
   listen(root, "pointerout", (event) => {
+    // Touch leaves the element when the finger lifts, before compatibility
+    // focus/click events. Keep the tap dismissed through that whole sequence.
+    if (event.pointerType === "touch") return;
     const item = eventAt(event.target);
     if (!item || eventAt(event.relatedTarget) === item) return;
     if (suppressed === item) suppressed = null;
@@ -202,6 +212,13 @@ export function mountAppointmentPreview({
     if (!anchor?.contains(event.relatedTarget)) leave();
   });
   listen(root, "focusin", (event) => {
+    // A tap can focus a card before its click. Showing a clamped tooltip here
+    // would cover the finger and may steal that click from the appointment.
+    if (
+      inputModality === "touch" ||
+      (hoverCapability?.matches === false && inputModality !== "keyboard")
+    )
+      return;
     const item = eventAt(event.target);
     if (item) show(item);
   });
@@ -217,6 +234,7 @@ export function mountAppointmentPreview({
     doc,
     "pointerdown",
     (event) => {
+      inputModality = event.pointerType === "touch" ? "touch" : "pointer";
       if (card.contains(event.target)) return;
       suppressed = eventAt(event.target);
       dismiss();
@@ -234,12 +252,18 @@ export function mountAppointmentPreview({
     },
     { capture: true },
   );
-  listen(doc, "keydown", (event) => {
-    if (event.key === "Escape") {
-      suppressed = anchor;
-      dismiss();
-    }
-  });
+  listen(
+    doc,
+    "keydown",
+    (event) => {
+      inputModality = "keyboard";
+      if (event.key === "Escape") {
+        suppressed = anchor;
+        dismiss();
+      }
+    },
+    { capture: true },
+  );
   listen(
     doc,
     "scroll",

@@ -559,7 +559,7 @@ function renderCalendar() {
   $("calendar-body").style.height = `${calendarHeight(END - START)}px`;
   $("calendar-grid").style.setProperty(
     "--columns",
-    widths.map((w) => w + "px").join(" "),
+    widths.map((w, i) => `minmax(${w}px, ${list[i].capacity}fr)`).join(" "),
   );
   $("calendar-grid").style.setProperty(
     "--grid-width",
