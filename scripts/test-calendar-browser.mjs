@@ -57,6 +57,8 @@ function fixture() {
       ],
     },
     role: "owner",
+    authenticated: true,
+    serviceWrites: [],
     clientResponses: [],
     clients: [
       {
@@ -157,13 +159,39 @@ const server = createServer(async (req, res) => {
         query: url.search,
         method: req.method,
       });
-      if (url.pathname === "/api/session")
+      if (url.pathname === "/api/session" && !f.authenticated)
+        return json({ error: "Fictional signed-out session" }, 401);
+      if (url.pathname === "/api/login") f.authenticated = true;
+      if (["/api/session", "/api/login"].includes(url.pathname))
         return json({
           user: { id: "qa-owner", role: f.role, name: "Fictional QA Owner" },
           csrf: "fixture-csrf",
           mustChangePassword: false,
         });
       if (url.pathname === "/api/catalogue") return json(f.catalogue);
+      if (
+        /^\/api\/services(?:\/[^/]+)?$/.test(url.pathname) &&
+        ["POST", "PUT"].includes(req.method)
+      ) {
+        let raw = "";
+        for await (const chunk of req) raw += chunk;
+        const body = JSON.parse(raw);
+        assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        f.serviceWrites.push({ method: req.method, body, path: url.pathname });
+        const index = f.catalogue.services.findIndex(
+          (s) => s.id === url.pathname.split("/").at(-1),
+        );
+        if (req.method === "PUT" && index < 0)
+          return json({ error: "Fixture treatment not found" }, 404);
+        const saved = {
+          ...body,
+          id: index < 0 ? "qa-created-service" : f.catalogue.services[index].id,
+          version: (f.catalogue.services[index]?.version || 0) + 1,
+        };
+        if (index < 0) f.catalogue.services.push(saved);
+        else f.catalogue.services[index] = saved;
+        return json({ id: saved.id }, req.method === "POST" ? 201 : 200);
+      }
       if (url.pathname === "/api/clients") {
         const response = f.clientResponses.shift();
         if (response?.wait) await response.wait.promise;
@@ -320,6 +348,12 @@ const server = createServer(async (req, res) => {
       }
       return json({ error: "Unimplemented fixture API: " + url.pathname }, 404);
     }
+    if (url.pathname === "/qa-unconstrained-zoom") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      return res.end(
+        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;min-height:200vh;touch-action:auto}main{height:100vh;background:linear-gradient(#fff,#ccc)}</style><main>Fictional unconstrained zoom control</main>',
+      );
+    }
     const path = resolve(
       root,
       "." +
@@ -467,6 +501,116 @@ async function withinViewport(page, locator, description) {
     description + " fits the viewport: " + JSON.stringify({ rect, viewport }),
   );
   return rect;
+}
+async function editableFonts(page, scope, label) {
+  const controls = await page
+    .locator(scope)
+    .locator("input,select,textarea")
+    .evaluateAll((nodes) =>
+      nodes
+        .filter(
+          (el) =>
+            !["checkbox", "radio", "color", "file", "hidden"].includes(
+              el.type,
+            ) && el.getClientRects().length,
+        )
+        .map((el) => ({
+          name: el.name || el.id,
+          font: parseFloat(getComputedStyle(el).fontSize),
+        })),
+    );
+  assert.ok(controls.length > 0, label + " has editable controls");
+  assert.deepEqual(
+    controls.filter((el) => el.font < 16),
+    [],
+    label + " uses at least 16px for every rendered editable field",
+  );
+}
+async function noPageOverflow(page, label) {
+  const sizes = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth,
+    width: innerWidth,
+    drawer: document.querySelector("#drawer[open]")?.scrollWidth,
+    drawerWidth: document.querySelector("#drawer[open]")?.clientWidth,
+  }));
+  assert.ok(
+    sizes.page <= sizes.width + 1,
+    label + " has no outer horizontal overflow: " + JSON.stringify(sizes),
+  );
+  if (sizes.drawer != null)
+    assert.ok(
+      sizes.drawer <= sizes.drawerWidth + 1,
+      label + " has no horizontal drawer overflow: " + JSON.stringify(sizes),
+    );
+}
+async function pinch(page, point) {
+  await page.bringToFront();
+  await renderedFrames(page);
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    // A genuine two-contact gesture, not a forced page-scale override. This
+    // advertises two available contacts; the application's touch-action still
+    // decides whether the browser may pan or pinch.
+    await cdp.send("Emulation.setTouchEmulationEnabled", {
+      enabled: true,
+      maxTouchPoints: 2,
+    });
+    const contacts = (spread) => [
+      {
+        id: 1,
+        x: point.x - spread,
+        y: point.y,
+        radiusX: 3,
+        radiusY: 3,
+        force: 0.5,
+      },
+      {
+        id: 2,
+        x: point.x + spread,
+        y: point.y,
+        radiusX: 3,
+        radiusY: 3,
+        force: 0.5,
+      },
+    ];
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: contacts(25),
+    });
+    for (let step = 1; step <= 12; step++) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: contacts(25 + step * 6),
+      });
+      await renderedFrames(page);
+    }
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await renderedFrames(page);
+  } finally {
+    await cdp.detach();
+  }
+  const scale = await page.evaluate(() => visualViewport.scale);
+  console.log(`Touch pinch ${new URL(page.url()).pathname}: scale=${scale}`);
+  return scale;
+}
+async function calendarScaleStable(page) {
+  assert.ok(
+    Math.abs((await page.evaluate(() => visualViewport.scale)) - 1) < 0.02,
+    "Application starts at natural scale",
+  );
+  const box = await page.locator("#calendar-scroll").boundingBox();
+  const center = {
+    x: box.x + box.width / 2,
+    y: Math.min(box.y + box.height / 2, page.viewportSize().height - 100),
+  };
+  const scale = await pinch(page, center);
+  assert.ok(
+    Math.abs(scale - 1) < 0.02,
+    "Pinching the calendar preserves viewport scale: " + scale,
+  );
 }
 async function bookingLayout(page, role = "owner") {
   const headings = await page
@@ -1181,6 +1325,27 @@ try {
           ),
           y: Math.min(area.y + area.height - 15, viewport.height - 15),
         };
+        const floating = page.locator("#calendar-today-floating");
+        if (await floating.isVisible()) {
+          const overlay = await floating.boundingBox();
+          if (
+            point.x >= overlay.x &&
+            point.x <= overlay.x + overlay.width &&
+            point.y >= overlay.y &&
+            point.y <= overlay.y + overlay.height
+          )
+            point.x = overlay.x - 10;
+        }
+        assert.equal(
+          await page.evaluate(
+            ({ x, y }) =>
+              document.elementFromPoint(x, y)?.closest("[data-resource]")
+                ?.dataset.resource,
+            point,
+          ),
+          "r2",
+          "Edge tap must hit the empty resource, not floating Today",
+        );
         const expectedStart =
           Math.floor(((point.y - box.y) / displayScale + displayStart) / 15) *
           15;
@@ -1725,6 +1890,14 @@ try {
       );
       await denseView(page);
       await longPress(page, event);
+      assert.equal(
+        await page
+          .locator(".calendar-reschedule-preview")
+          .first()
+          .evaluate((el) => getComputedStyle(el).touchAction),
+        "none",
+        "Selected draft retains its controlled drag gesture",
+      );
       await withinViewport(
         page,
         page.locator("#calendar-reschedule-bar"),
@@ -2685,6 +2858,364 @@ try {
       assert.equal(f.writes.length, 0);
     },
   );
+  for (const device of [phone, tablet])
+    await scenario(
+      "touch forms keep editable text readable across login and salon workflows",
+      device,
+      async ({ page, f, open }) => {
+        f.authenticated = false;
+        await page.goto(origin);
+        await page.locator("#login-screen").waitFor();
+        await editableFonts(page, "#login-form", "Login");
+        await page
+          .locator('#login-form [name="email"]')
+          .fill("fictional@example.test");
+        await page
+          .locator('#login-form [name="password"]')
+          .fill("FictionalQAOnly123");
+        await page.locator('#login-form button[type="submit"]').click();
+        await page.locator("#report-metrics .report-metric").first().waitFor();
+        await open();
+        await editableFonts(page, ".calendar-date-controls", "Calendar date");
+        await noPageOverflow(page, "Touch calendar");
+        await page.locator('nav [data-page="clients"]').click();
+        await page.locator("#client-search").waitFor();
+        await editableFonts(page, "#page-content", "Client search");
+        await page.locator("#client-add").click();
+        await editableFonts(page, "#client-form", "Client profile");
+        await page.locator("#form-cancel").click();
+        await page.locator('nav [data-page="services"]').click();
+        await page.locator("#service-add").click();
+        await editableFonts(page, "#service-form", "Treatment");
+        await withinViewport(
+          page,
+          page.locator("#form-save"),
+          "Treatment save",
+        );
+        await page.locator("#form-cancel").click();
+        await page.locator('nav [data-page="calendar"]').click();
+        await page.locator("#calendar-block-add").click();
+        await page.locator("#calendar-block-form").waitFor();
+        await editableFonts(page, "#calendar-block-form", "Blocked time");
+        await blockControl(page, "note").fill("Fictional mobile note");
+        await noPageOverflow(page, "Blocked-time form");
+        await withinViewport(
+          page,
+          page.locator("#form-save"),
+          "Blocked-time save",
+        );
+        await page.locator("#form-cancel").click();
+        await add(page);
+        await editableFonts(
+          page,
+          "#appointment-form",
+          "Booking and client search",
+        );
+        await control(page, "note").fill("Fictional touch booking note");
+        await bookingLayout(page);
+        await noPageOverflow(page, "Booking form");
+        assert.ok(
+          Math.abs((await page.evaluate(() => visualViewport.scale)) - 1) <
+            0.02,
+          "Field focus stays at natural scale in Chromium emulation",
+        );
+        await capture(page, `${device.name}-stable-booking-inputs`);
+        await page.locator("#form-cancel").click();
+        assert.equal(
+          f.writes.length + f.blockWrites.length + f.serviceWrites.length,
+          0,
+          "Font and focus checks do not save test entities",
+        );
+      },
+    );
+  for (const device of [
+    {
+      name: "phone-narrow",
+      viewport: { width: 320, height: 568 },
+      mobile: true,
+    },
+    {
+      name: "phone-landscape",
+      viewport: { width: 844, height: 390 },
+      mobile: true,
+    },
+  ])
+    await scenario(
+      "narrow and short touch viewports keep native time fields and save controls reachable",
+      device,
+      async ({ page, open }) => {
+        await open();
+        await noPageOverflow(page, "Narrow calendar");
+        await page.locator("#appointment-add").scrollIntoViewIfNeeded();
+        await add(page);
+        await editableFonts(page, "#appointment-form", "Narrow booking fields");
+        for (const name of ["date", "start", "duration"]) {
+          await control(page, name).scrollIntoViewIfNeeded();
+          await withinViewport(
+            page,
+            control(page, name),
+            "Native booking field " + name,
+          );
+          await noPageOverflow(page, "Native booking field " + name);
+        }
+        await control(page, "duration").fill("90");
+        await control(page, "note").fill("Narrow fictional note");
+        await withinViewport(
+          page,
+          page.locator("#form-save"),
+          "Narrow booking save",
+        );
+        await withinViewport(
+          page,
+          page.locator("#form-cancel"),
+          "Narrow booking cancel",
+        );
+        await capture(page, `${device.name}-stable-booking-footer`);
+        await page.locator("#form-cancel").click();
+        await page.locator("#calendar-block-add").scrollIntoViewIfNeeded();
+        await page.locator("#calendar-block-add").click();
+        await page.locator("#calendar-block-form").waitFor();
+        await editableFonts(
+          page,
+          "#calendar-block-form",
+          "Narrow blocked-time fields",
+        );
+        await blockControl(page, "start").scrollIntoViewIfNeeded();
+        await withinViewport(
+          page,
+          blockControl(page, "start"),
+          "Native blocked-time field",
+        );
+        await noPageOverflow(page, "Narrow blocked-time form");
+        await withinViewport(
+          page,
+          page.locator("#form-save"),
+          "Narrow blocked-time save",
+        );
+      },
+    );
+  for (const device of [phone, tablet])
+    await scenario(
+      "empty catalogue guides owner through treatment creation and editing into a real booking selection",
+      device,
+      async ({ page, f, open }) => {
+        f.catalogue.services = [];
+        await open();
+        await page.locator("#calendar-treatment-setup").waitFor();
+        assert.equal(
+          f.serviceWrites.length,
+          0,
+          "Guidance must not invent or seed treatments",
+        );
+        await page.locator("#appointment-add").click();
+        await page.locator("#booking-treatment-add").waitFor();
+        assert.equal(
+          await page.locator("#appointment-form").count(),
+          0,
+          "Missing catalogue has readable guidance, not a broken booking form",
+        );
+        await page.locator("#booking-treatment-add").click();
+        await page.locator("#service-form").waitFor();
+        await page.locator("#form-cancel").click();
+        await page.locator('nav [data-page="calendar"]').click();
+        await page.locator("#calendar-treatment-setup").waitFor();
+        await page.locator('[data-resource="tA"]').waitFor();
+        await page
+          .locator("#calendar-headers")
+          .filter({ hasText: "QA Therapist A" })
+          .waitFor();
+        await capture(page, `${device.name}-empty-treatment-guidance`);
+        await page.locator("#calendar-treatment-add").click();
+        await page.locator("#service-form").waitFor();
+        await editableFonts(page, "#service-form", "Created treatment");
+        await page
+          .locator('#service-form [name="name"]')
+          .fill("QA Newly Added Massage");
+        await page.locator('#service-form [name="duration"]').fill("60");
+        await page.locator('#service-form [name="price"]').fill("4700");
+        await page.locator("#form-save").click();
+        await page.locator('[data-service="qa-created-service"]').waitFor();
+        assert.equal(f.serviceWrites.length, 1);
+        assert.equal(f.serviceWrites[0].method, "POST");
+        assert.equal(f.serviceWrites[0].body.priceCents, 470000);
+        await page.locator('[data-service="qa-created-service"]').click();
+        await page
+          .locator('#service-form [name="name"]')
+          .fill("QA Updated Massage");
+        await page.locator('#service-form [name="duration"]').fill("90");
+        await page.locator('#service-form [name="price"]').fill("5900");
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(f.serviceWrites.length, 2);
+        assert.equal(f.serviceWrites[1].method, "PUT");
+        assert.equal(f.serviceWrites[1].body.version, 1);
+        await page.locator('nav [data-page="calendar"]').click();
+        await page.locator("#calendar-grid").waitFor();
+        assert.equal(
+          await page.locator("#calendar-treatment-setup").count(),
+          0,
+        );
+        await add(page);
+        await stateIs(page, "available");
+        assert.equal(
+          await control(page, "serviceId").inputValue(),
+          "qa-created-service",
+        );
+        await liveSummary(page, {
+          time: /10:00.*11:30/,
+          duration: /90/,
+          treatment: /QA Updated Massage/,
+          resources: [/QA Therapist A/, /QA Couple/, /Table 1/],
+        });
+        assert.equal(await control(page, "grossCents").inputValue(), "5900.00");
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(f.writes.length, 1);
+        assert.equal(f.writes[0].body.serviceId, "qa-created-service");
+        assert.equal(f.writes[0].body.duration, 90);
+        assert.equal(f.writes[0].body.grossCents, 590000);
+      },
+    );
+  for (const role of ["reception", "therapist"])
+    await scenario(
+      `${role} empty-catalogue guidance never exposes owner treatment controls`,
+      phone,
+      async ({ page, f, open }) => {
+        f.role = role;
+        f.catalogue.services = [];
+        await open();
+        assert.equal(await page.locator("#calendar-treatment-add").count(), 0);
+        if (role === "reception") {
+          await page.locator("#calendar-treatment-setup").waitFor();
+          assert.match(
+            await page.locator("#calendar-treatment-setup").textContent(),
+            /owner/i,
+          );
+          await page.locator("#appointment-add").click();
+          await page.locator("#drawer[open]").waitFor();
+          assert.match(
+            await page.locator("#drawer-content").textContent(),
+            /owner/i,
+          );
+          assert.equal(
+            await page
+              .locator("#booking-treatment-add,#appointment-form")
+              .count(),
+            0,
+          );
+        } else
+          assert.equal(
+            await page
+              .locator("#calendar-treatment-setup,#appointment-add")
+              .count(),
+            0,
+          );
+        assert.equal(f.serviceWrites.length, 0);
+      },
+    );
+  for (const device of [phone, tablet])
+    await scenario(
+      "touch pinch has a working positive control and cannot enlarge calendar or booking form",
+      device,
+      async ({ page, f, open }) => {
+        const controlPage = await page.context().newPage();
+        try {
+          await controlPage.goto(origin + "/qa-unconstrained-zoom");
+          const scale = await pinch(controlPage, {
+            x: device.viewport.width / 2,
+            y: device.viewport.height / 2,
+          });
+          assert.ok(
+            scale > 1.2,
+            "Positive control must actually zoom; otherwise a stable application scale proves nothing: " +
+              scale,
+          );
+        } finally {
+          await controlPage.close();
+        }
+        await open();
+        await calendarScaleStable(page);
+        assert.equal(
+          await page.locator("#calendar-slot-menu").isVisible(),
+          false,
+          "Pinching empty calendar space does not open booking actions",
+        );
+        assert.equal(
+          f.writes.length + f.blockWrites.length,
+          0,
+          "Pinch never creates or moves a booking",
+        );
+        const scrollBox = await page.locator("#calendar-scroll").boundingBox();
+        const beforeScroll = await page
+          .locator("#calendar-scroll")
+          .evaluate((el) => ({
+            left: el.scrollLeft,
+            top: el.scrollTop,
+            width: el.clientWidth,
+            totalWidth: el.scrollWidth,
+            height: el.clientHeight,
+            totalHeight: el.scrollHeight,
+          }));
+        assert.ok(
+          beforeScroll.totalWidth - beforeScroll.width > 100,
+          "Fixture exposes horizontally scrollable resources: " +
+            JSON.stringify(beforeScroll),
+        );
+        const point = {
+          x: scrollBox.x + scrollBox.width / 2,
+          y: scrollBox.y + scrollBox.height / 2,
+        };
+        const horizontal = await touchStart(page, point);
+        await horizontal.move({ x: point.x - 40, y: point.y });
+        await horizontal.move({ x: point.x - 110, y: point.y });
+        await horizontal.end();
+        await renderedFrames(page);
+        const vertical = await touchStart(page, point);
+        await vertical.move({ x: point.x, y: point.y - 40 });
+        await vertical.move({ x: point.x, y: point.y - 110 });
+        await vertical.end();
+        await renderedFrames(page);
+        const afterScroll = await page
+          .locator("#calendar-scroll")
+          .evaluate((el) => ({ left: el.scrollLeft, top: el.scrollTop }));
+        assert.ok(
+          afterScroll.left > beforeScroll.left + 25,
+          "Single-finger horizontal scrolling remains usable: " +
+            JSON.stringify({ beforeScroll, afterScroll }),
+        );
+        assert.ok(
+          afterScroll.top > beforeScroll.top + 25,
+          "Single-finger vertical scrolling remains usable: " +
+            JSON.stringify({ beforeScroll, afterScroll }),
+        );
+        const meta = await page.locator(".calendar-meta").boundingBox();
+        await page.touchscreen.tap(meta.x + 20, meta.y + meta.height / 2);
+        await page.touchscreen.tap(meta.x + 20, meta.y + meta.height / 2);
+        await renderedFrames(page);
+        assert.ok(
+          Math.abs((await page.evaluate(() => visualViewport.scale)) - 1) <
+            0.02,
+          "Double tap preserves application scale",
+        );
+        await add(page);
+        await stateIs(page, "available");
+        const summary = await page.locator("#booking-summary").boundingBox();
+        const scale = await pinch(page, {
+          x: summary.x + summary.width / 2,
+          y: summary.y + summary.height / 2,
+        });
+        assert.ok(
+          Math.abs(scale - 1) < 0.02,
+          "Pinching the booking form preserves scale: " + scale,
+        );
+        await withinViewport(
+          page,
+          page.locator("#form-save"),
+          "Save after touch gestures",
+        );
+        await noPageOverflow(page, "Booking after touch gestures");
+      },
+    );
   assert.ok(passed > 0, "No browser acceptance scenarios ran");
   assert.deepEqual(
     failures,

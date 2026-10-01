@@ -484,6 +484,25 @@ function resources(mode = state.mode) {
       : state.catalogue.rooms.map((r) => ({ ...r, kind: "room" }))),
   ];
 }
+async function openTreatmentSetup() {
+  if (!owner()) return;
+  const session = sessionEpoch,
+    version = state.version + 1;
+  await setPage("services");
+  if (
+    session !== sessionEpoch ||
+    state.version !== version ||
+    state.page !== "services" ||
+    !owner() ||
+    !$("service-add")
+  )
+    return;
+  serviceDialog();
+}
+function calendarTreatmentSetupHTML() {
+  if (!operator() || state.catalogue.services.some((s) => s.active)) return "";
+  return `<div class="calendar-setup-hint" id="calendar-treatment-setup" role="status"><p>${owner() ? "No active treatments yet. Add your treatment name, duration and price to start booking." : "No active treatments are available. Ask the owner to add or activate a treatment in Treatments."}</p>${owner() ? '<button type="button" class="btn" id="calendar-treatment-add">Add treatment</button>' : ""}</div>`;
+}
 function renderCalendarShell() {
   const previousScroll = $("calendar-scroll")?.dataset.initialized
     ? {
@@ -557,6 +576,13 @@ function renderCalendarShell() {
         renderCalendar();
       }),
   );
+  const setup = calendarTreatmentSetupHTML();
+  if (setup) {
+    $("page-content").insertAdjacentHTML("afterbegin", setup);
+    if ($("calendar-treatment-add"))
+      $("calendar-treatment-add").onclick = () =>
+        openTreatmentSetup().catch(showAppError);
+  }
 }
 async function loadCalendar() {
   if (calendarReschedule?.isActive()) return;
@@ -773,11 +799,19 @@ function updateClock() {
 }
 async function appointmentDialog(existing = null, defaults = {}) {
   if (!operator()) return;
-  if (
-    !state.catalogue.services.some((s) => s.active) ||
-    !state.catalogue.therapists.some((t) => t.active)
-  ) {
-    toast("Add a treatment and an active team member first.");
+  const needsTreatment = !state.catalogue.services.some((s) => s.active);
+  const needsTherapist = !state.catalogue.therapists.some((t) => t.active);
+  if (needsTreatment || needsTherapist) {
+    showDrawer(
+      "Set up bookings",
+      "Calendar",
+      `<p>${owner() ? "Complete the following before adding an appointment:" : "Ask the owner to complete the following before adding an appointment:"}</p><ul>${needsTreatment ? "<li>Add or activate a treatment in Treatments, with its duration and price.</li>" : ""}${needsTherapist ? "<li>Add or activate a team member in Team.</li>" : ""}</ul>${owner() ? `<div class="toolgroup">${needsTreatment ? '<button type="button" class="btn primary" id="booking-treatment-add">Add treatment</button>' : ""}${needsTherapist ? '<button type="button" class="btn" id="booking-team-setup">Open Team</button>' : ""}</div>` : ""}`,
+    );
+    if ($("booking-treatment-add"))
+      $("booking-treatment-add").onclick = () =>
+        openTreatmentSetup().catch(showAppError);
+    if ($("booking-team-setup"))
+      $("booking-team-setup").onclick = () => setPage("team");
     return;
   }
   const openingDate = existing?.date || defaults.date || state.date;
