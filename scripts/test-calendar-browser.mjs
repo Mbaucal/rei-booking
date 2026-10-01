@@ -767,7 +767,9 @@ async function roomPoint(page, device, minute, roomId = "r1", lane = 1) {
   const box = await column.boundingBox();
   const point = {
     x: box.x + box.width * (roomId === "r1" ? (lane ? 0.75 : 0.25) : 0.5),
-    y: box.y + (await pixelAt(page, minute)) + 0.2,
+    // Click MouseEvents round CSS coordinates; choose the first integer
+    // pixel inside this minute, keeping the last-minute boundary probes intact.
+    y: Math.ceil(box.y + (await pixelAt(page, minute))),
   };
   if (device.mobile) await page.touchscreen.tap(point.x, point.y);
   else await page.mouse.click(point.x, point.y);
@@ -1288,7 +1290,9 @@ try {
           const box = await column.boundingBox();
           const point = {
             x: box.x + box.width * 0.75,
-            y: box.y + (await pixelAt(page, minute)) + 0.2,
+            // Click MouseEvents round CSS coordinates; choose the first integer
+            // pixel inside this minute, keeping the last-minute boundary probes intact.
+            y: Math.ceil(box.y + (await pixelAt(page, minute))),
           };
           const expected = `10:${String(quarter - 600).padStart(2, "0")}`;
           if (!device.mobile) {
@@ -1955,10 +1959,32 @@ try {
       await open();
       await denseView(page);
       const event = page.locator('[data-appointment="dense-target"]');
-      const point = await bodyPoint(event);
       const scrollBefore = await page
         .locator("#calendar-scroll")
-        .evaluate((el) => el.scrollTop);
+        .evaluate((el) => {
+          // The denser full-day phone grid can clamp 18:00 at the bottom.
+          // Start with real upward pan travel instead of swiping at its limit.
+          el.scrollTop = Math.min(
+            el.scrollTop,
+            el.scrollHeight - el.clientHeight - 150,
+          );
+          return {
+            top: el.scrollTop,
+            maximum: el.scrollHeight - el.clientHeight,
+          };
+        });
+      assert.ok(
+        scrollBefore.maximum - scrollBefore.top >= 140,
+        "Swipe fixture has at least 140px of upward scrolling travel: " +
+          JSON.stringify(scrollBefore),
+      );
+      await renderedFrames(page);
+      await withinViewport(
+        page,
+        event,
+        "Booking used for ordinary touch swipe",
+      );
+      const point = await bodyPoint(event);
       const swipe = await touchStart(page, point);
       await swipe.move({ x: point.x, y: point.y - 40 });
       await swipe.move({ x: point.x, y: point.y - 100 });
@@ -1969,8 +1995,9 @@ try {
       assert.ok(
         (await page
           .locator("#calendar-scroll")
-          .evaluate((el) => el.scrollTop)) > scrollBefore,
-        "Ordinary touch swipe scrolls the calendar",
+          .evaluate((el) => el.scrollTop)) >
+          scrollBefore.top + 25,
+        "Ordinary touch swipe scrolls the calendar by more than 25px",
       );
       await denseView(page);
       await longPress(page, event);
