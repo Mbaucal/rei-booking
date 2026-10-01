@@ -11,6 +11,7 @@ import {
   START,
   END,
   SCALE,
+  setCalendarScale,
   BAND,
   calendarTop,
   calendarHeight,
@@ -98,12 +99,22 @@ const statusName = (value) =>
     cancelled: "Cancelled",
     no_show: "No-show",
   })[value] || value;
+const mobileCalendarMedia = window.matchMedia(
+  "(max-width:700px), (max-height:560px) and (pointer:coarse)",
+);
+const calendarLayout = () =>
+  mobileCalendarMedia.matches ? "mobile" : "desktop";
+const calendarModes = { mobile: "therapists", desktop: "all" };
+let calendarLayoutKey = calendarLayout(),
+  calendarRenderedWidth = 0,
+  calendarLayoutPending = false,
+  calendarResizeFrame = 0;
 let state = {
     user: null,
     csrf: "",
     page: "calendar",
     date: today(),
-    mode: "all",
+    mode: calendarModes[calendarLayoutKey],
     catalogue: { therapists: [], rooms: [], services: [] },
     appointments: [],
     blocks: [],
@@ -197,15 +208,35 @@ function signOutView() {
   $("signed-name").textContent = "";
   $("signed-role").textContent = "";
   $("app").hidden = true;
+  $("mobile-navigation").hidden = true;
   delete $("app").dataset.page;
   $("login-screen").hidden = false;
 }
-let drawerEpoch = 0;
+let drawerEpoch = 0,
+  drawerReturnFocus = null;
 function closeDrawer() {
   drawerEpoch++;
-  if ($("drawer").open) $("drawer").close();
+  const wasOpen = $("drawer").open;
+  if (wasOpen) $("drawer").close();
   $("drawer-content").textContent = "";
   $("drawer-footer").textContent = "";
+  if (wasOpen) {
+    const target = [
+      drawerReturnFocus,
+      $("required-password-open"),
+      $("calendar-view-options"),
+      $("mobile-more"),
+      $("change-password"),
+    ].find(
+      (element) =>
+        element?.isConnected &&
+        element.getClientRects().length &&
+        !element.disabled,
+    );
+    target?.focus({ preventScroll: true });
+  }
+  drawerReturnFocus = null;
+  scheduleCalendarLayoutSync();
 }
 function showDrawer(title, kicker, html) {
   calendarReschedule?.cancel();
@@ -216,7 +247,10 @@ function showDrawer(title, kicker, html) {
   $("drawer-kicker").textContent = kicker;
   $("drawer-content").innerHTML = html;
   $("drawer-footer").innerHTML = "";
-  if (!$("drawer").open) $("drawer").showModal();
+  if (!$("drawer").open) {
+    drawerReturnFocus = document.activeElement;
+    $("drawer").showModal();
+  }
   $("drawer-content").scrollTop = 0;
 }
 function errorBox(message) {
@@ -266,6 +300,12 @@ async function enterApp(session) {
   sessionEpoch++;
   state.user = session.user;
   state.csrf = session.csrf;
+  $("mobile-navigation").hidden = !!session.mustChangePassword;
+  $("mobile-navigation")
+    .querySelectorAll("[data-mobile-operator]")
+    .forEach((button) => {
+      button.hidden = !operator();
+    });
   $("login-screen").hidden = true;
   $("app").hidden = false;
   $("signed-name").textContent = session.user.name;
@@ -286,8 +326,13 @@ async function enterApp(session) {
               : !owner()),
     );
   if (session.mustChangePassword) {
+    $("app").dataset.page = "password";
+    $("page-title").textContent = "Your account";
+    $("page-title").closest(".page-top").classList.remove("calendar-page-top");
     $("page-content").innerHTML =
-      '<div class="empty"><h2>Choose your own password</h2><p>Replace your temporary password to continue.</p></div>';
+      '<div class="empty"><h2>Choose your own password</h2><p>Replace your temporary password to continue.</p><button type="button" class="btn primary" id="required-password-open">Change password</button> <button type="button" class="btn" id="required-password-sign-out">Sign out</button></div>';
+    $("required-password-open").onclick = () => passwordDialog(true);
+    $("required-password-sign-out").onclick = signOut;
     passwordDialog(true);
     return;
   }
@@ -295,7 +340,7 @@ async function enterApp(session) {
   await setPage(
     owner() && /^#report=[a-f0-9]{64}$/.test(location.hash)
       ? "monthly"
-      : owner()
+      : owner() && !mobileCalendarMedia.matches
         ? "dashboard"
         : "calendar",
   );
@@ -323,6 +368,7 @@ async function setPage(page, monthlyFilters = null) {
     return;
   disposeCalendarUI();
   state.page = page;
+  updateMobileNavigation();
   $("app").dataset.page = page;
   $("page-title")
     .closest(".page-top")
@@ -484,6 +530,163 @@ function resources(mode = state.mode) {
       : state.catalogue.rooms.map((r) => ({ ...r, kind: "room" }))),
   ];
 }
+function updateMobileNavigation() {
+  const activePage =
+    state.page === "monthly"
+      ? "reports"
+      : state.page === "client-transfer"
+        ? "clients"
+        : state.page;
+  $("mobile-navigation")
+    .querySelectorAll("[data-mobile-page]")
+    .forEach((button) => {
+      const active = button.dataset.mobilePage === activePage;
+      button.classList.toggle("active", active);
+      if (active) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    });
+  $("mobile-more").classList.toggle(
+    "active",
+    !["calendar", "clients"].includes(activePage),
+  );
+}
+function mobileMenu() {
+  if (!state.user) return;
+  const pages = [
+    ["calendar", "Calendar"],
+    ["dashboard", "Dashboard"],
+    ["clients", "Clients"],
+    ["team", "Team"],
+    ["services", "Treatments"],
+    ["sales", "Sales"],
+    ["reports", "Reports"],
+    ["users", "Accounts"],
+  ].filter(
+    ([page]) =>
+      owner() || page === "calendar" || (operator() && page === "clients"),
+  );
+  showDrawer(
+    "Menu",
+    "Rei Booking",
+    `<div class="mobile-menu-list">${pages.map(([page, label]) => `<button type="button" class="btn mobile-menu-route" data-mobile-page="${page}">${label}</button>`).join("")}</div><section class="mobile-account"><h3>${esc(state.user.name)}</h3><p>${esc($("signed-role").textContent)}</p><button type="button" class="btn" id="mobile-change-password">Change password</button><button type="button" class="btn" id="mobile-sign-out">Sign out</button></section>${errorBox()}`,
+  );
+  $("mobile-change-password").onclick = () => passwordDialog();
+  $("mobile-sign-out").onclick = async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    await signOut();
+    if (button.isConnected) button.disabled = false;
+  };
+}
+function mobileAddMenu() {
+  if (!operator()) return;
+  showDrawer(
+    "Add to calendar",
+    prettyDate(state.date),
+    '<div class="mobile-add-menu"><button type="button" class="btn primary" id="mobile-add-appointment">Add appointment</button><button type="button" class="btn" id="mobile-add-block">Add blocked time or note</button></div>',
+  );
+  const epoch = drawerEpoch,
+    session = sessionEpoch;
+  const open = async (kind) => {
+    if (!operator() || epoch !== drawerEpoch || session !== sessionEpoch)
+      return;
+    closeDrawer();
+    const ready =
+        state.page !== "calendar" ? setPage("calendar") : Promise.resolve(),
+      version = state.version,
+      openingEpoch = drawerEpoch;
+    await ready;
+    if (
+      session !== sessionEpoch ||
+      version !== state.version ||
+      openingEpoch !== drawerEpoch ||
+      !operator() ||
+      state.page !== "calendar"
+    )
+      return;
+    if (kind === "appointment") await appointmentDialog();
+    else calendarBlockDialog();
+  };
+  $("mobile-add-appointment").onclick = () =>
+    open("appointment").catch(showAppError);
+  $("mobile-add-block").onclick = () => open("block").catch(showAppError);
+}
+function calendarLegendHTML() {
+  return (
+    state.catalogue.services
+      .filter((s) => s.active)
+      .map(
+        (s) =>
+          `<span><i style="background:${esc(s.color)}"></i>${esc(s.name)} · ${s.duration} min</span>`,
+      )
+      .join("") +
+    "<span>♥ Requested therapist</span><span>▧ Blocked time</span><span>✎ Note only</span>"
+  );
+}
+function selectCalendarMode(mode) {
+  if (
+    !["all", "therapists", "rooms"].includes(mode) ||
+    state.page !== "calendar"
+  )
+    return;
+  calendarModes[calendarLayout()] = mode;
+  state.mode = mode;
+  calendarLayoutKey = calendarLayout();
+  renderCalendarShell();
+  renderCalendar();
+}
+function calendarOptions() {
+  if (!state.user || state.page !== "calendar") return;
+  showDrawer(
+    "Calendar view",
+    "View and options",
+    `<div class="calendar-mobile-options"><div class="mobile-menu-list">${[
+      ["all", "All resources"],
+      ["therapists", "Therapists"],
+      ["rooms", "Rooms"],
+    ]
+      .map(
+        ([mode, label]) =>
+          `<button type="button" class="btn ${state.mode === mode ? "primary" : ""}" data-mobile-mode="${mode}" aria-pressed="${state.mode === mode}">${label}</button>`,
+      )
+      .join(
+        "",
+      )}</div><button type="button" class="btn" id="mobile-calendar-refresh">Refresh calendar</button><h3>Treatments and calendar key</h3><div class="legend calendar-options-legend">${calendarLegendHTML()}</div></div>`,
+  );
+  $("drawer-content")
+    .querySelectorAll("[data-mobile-mode]")
+    .forEach((button) => {
+      button.onclick = () => {
+        closeDrawer();
+        selectCalendarMode(button.dataset.mobileMode);
+        $("calendar-view-options")?.focus({ preventScroll: true });
+      };
+    });
+  $("mobile-calendar-refresh").onclick = () => {
+    closeDrawer();
+    $("calendar-view-options")?.focus({ preventScroll: true });
+    loadCalendar().catch(showAppError);
+  };
+}
+function scheduleCalendarLayoutSync() {
+  if (calendarResizeFrame) return;
+  calendarResizeFrame = requestAnimationFrame(() => {
+    calendarResizeFrame = 0;
+    if (!state.user || state.page !== "calendar" || !$("calendar-scroll"))
+      return;
+    if ($("drawer").open || calendarReschedule?.isActive()) {
+      calendarLayoutPending = true;
+      return;
+    }
+    const changed =
+      calendarLayoutKey !== calendarLayout() ||
+      SCALE !== (mobileCalendarMedia.matches ? 1 : 2) ||
+      Math.abs($("calendar-scroll").clientWidth - calendarRenderedWidth) >= 1;
+    calendarLayoutPending = false;
+    if (changed) renderCalendar();
+  });
+}
 async function openTreatmentSetup() {
   if (!owner()) return;
   const session = sessionEpoch,
@@ -501,18 +704,26 @@ async function openTreatmentSetup() {
 }
 function calendarTreatmentSetupHTML() {
   if (!operator() || state.catalogue.services.some((s) => s.active)) return "";
-  return `<div class="calendar-setup-hint" id="calendar-treatment-setup" role="status"><p>${owner() ? "No active treatments yet. Add your treatment name, duration and price to start booking." : "No active treatments are available. Ask the owner to add or activate a treatment in Treatments."}</p>${owner() ? '<button type="button" class="btn" id="calendar-treatment-add">Add treatment</button>' : ""}</div>`;
+  return `<div class="calendar-setup-hint" id="calendar-treatment-setup" role="status"><p>${owner() ? "Add a treatment to start booking." : "Ask the owner to add treatments."}</p>${owner() ? '<button type="button" class="btn" id="calendar-treatment-add">Add treatment</button>' : ""}</div>`;
 }
 function renderCalendarShell() {
   const previousScroll = $("calendar-scroll")?.dataset.initialized
     ? {
-        top: $("calendar-scroll").scrollTop,
+        minute:
+          $("calendar-scroll").scrollTop /
+          (Number($("calendar-scroll").dataset.scale) || SCALE),
         left: $("calendar-scroll").scrollLeft,
       }
     : null;
   disposeCalendarUI();
+  const layout = calendarLayout();
+  if (layout !== calendarLayoutKey) {
+    calendarModes[calendarLayoutKey] = state.mode;
+    state.mode = calendarModes[layout];
+    calendarLayoutKey = layout;
+  }
   $("page-content").innerHTML =
-    `<div class="toolbar calendar-toolbar"><div class="toolgroup calendar-primary-tools"><div class="calendar-date-controls"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button></div><div class="calendar-resource-controls"><div class="segments" aria-label="Calendar resources">${[
+    `<div class="toolbar calendar-toolbar"><div class="toolgroup calendar-primary-tools"><div class="calendar-date-controls"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button><button type="button" class="btn mobile-calendar-control" id="calendar-view-options" aria-label="Calendar view and options" aria-haspopup="dialog">View</button></div><div class="calendar-resource-controls"><div class="segments" aria-label="Calendar resources">${[
       ["all", "All resources"],
       ["therapists", "Therapists"],
       ["rooms", "Rooms"],
@@ -535,7 +746,7 @@ function renderCalendarShell() {
   if (previousScroll) {
     $("calendar-scroll").dataset.initialized = "true";
     // The full grid has not been rendered yet; restore once its height exists.
-    $("calendar-scroll").dataset.restoreTop = String(previousScroll.top);
+    $("calendar-scroll").dataset.restoreMinute = String(previousScroll.minute);
     $("calendar-scroll").dataset.restoreLeft = String(previousScroll.left);
   }
   const change = async (date) => {
@@ -564,18 +775,14 @@ function renderCalendarShell() {
       change(d.toISOString().slice(0, 10));
     };
   $("calendar-refresh").onclick = () => loadCalendar().catch(showAppError);
+  $("calendar-view-options").onclick = calendarOptions;
   if (operator()) {
     $("appointment-add").onclick = () => appointmentDialog();
     $("calendar-block-add").onclick = () => calendarBlockDialog();
   }
-  document.querySelectorAll("[data-mode]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        state.mode = b.dataset.mode;
-        renderCalendarShell();
-        renderCalendar();
-      }),
-  );
+  document
+    .querySelectorAll("[data-mode]")
+    .forEach((b) => (b.onclick = () => selectCalendarMode(b.dataset.mode)));
   const setup = calendarTreatmentSetupHTML();
   if (setup) {
     $("page-content").insertAdjacentHTML("afterbegin", setup);
@@ -605,25 +812,48 @@ async function loadCalendar() {
 }
 function renderCalendar() {
   if (!$("calendar-grid")) return;
+  if (calendarReschedule?.isActive()) return;
+  const mobile = mobileCalendarMedia.matches,
+    desiredScale = mobile ? 1 : 2;
+  if (
+    $("drawer").open &&
+    (calendarLayoutKey !== calendarLayout() ||
+      SCALE !== desiredScale ||
+      Math.abs($("calendar-scroll").clientWidth - calendarRenderedWidth) >= 1)
+  ) {
+    calendarLayoutPending = true;
+    return;
+  }
+  if (calendarLayoutKey !== calendarLayout()) renderCalendarShell();
   disposeCalendarUI();
   const list = resources(),
     scroll = $("calendar-scroll"),
-    top =
-      scroll.dataset.restoreTop !== undefined
-        ? Number(scroll.dataset.restoreTop)
+    oldScale = Number(scroll.dataset.scale) || SCALE,
+    logicalTop =
+      scroll.dataset.restoreMinute !== undefined
+        ? Number(scroll.dataset.restoreMinute)
         : scroll.dataset.initialized
-          ? scroll.scrollTop
-          : calendarTop(540),
+          ? scroll.scrollTop / oldScale
+          : 540 - START,
     left =
       scroll.dataset.restoreLeft !== undefined
         ? Number(scroll.dataset.restoreLeft)
         : scroll.scrollLeft;
-  delete scroll.dataset.restoreTop;
+  setCalendarScale(desiredScale);
+  scroll.dataset.scale = String(SCALE);
+  calendarRenderedWidth = scroll.clientWidth;
+  calendarLayoutPending = false;
+  delete scroll.dataset.restoreMinute;
   delete scroll.dataset.restoreLeft;
   scroll.dataset.initialized = "true";
   $("calendar-summary").textContent =
     `${prettyDate(state.date)} · ${state.appointments.filter((a) => !["cancelled", "no_show"].includes(a.status)).length} appointments`;
-  const widths = list.map((r) => (r.capacity === 2 ? 280 : 180));
+  const timeAxis = mobile ? 44 : 60,
+    mobileColumnWidth = Math.max(92, (scroll.clientWidth - timeAxis) / 3),
+    widths = list.map((r) =>
+      mobile ? mobileColumnWidth * r.capacity : r.capacity === 2 ? 280 : 180,
+    );
+  $("calendar-grid").style.setProperty("--time-axis-width", `${timeAxis}px`);
   $("calendar-grid").style.setProperty(
     "--calendar-quarter-height",
     `${BAND * SCALE}px`,
@@ -635,19 +865,19 @@ function renderCalendar() {
   );
   $("calendar-grid").style.setProperty(
     "--grid-width",
-    60 + widths.reduce((a, b) => a + b, 0) + "px",
+    timeAxis + widths.reduce((a, b) => a + b, 0) + "px",
   );
   $("calendar-headers").innerHTML =
     "<div>Time</div>" +
     list
       .map(
         (r) =>
-          `<div>${r.kind === "room" ? `<span class="avatar room-avatar">${esc("R" + r.id.slice(1))}</span>` : avatar("therapists", r, esc)}<div>${esc(r.name)}<small>${r.kind === "room" ? r.capacity + " tables" : "Therapist"}</small></div></div>`,
+          `<div data-kind="${r.kind}">${r.kind === "room" ? `<span class="avatar room-avatar">${esc("R" + r.id.slice(1))}</span>` : avatar("therapists", r, esc)}<div>${esc(r.name)}<small>${r.kind === "room" ? r.capacity + " tables" : "Therapist"}</small></div></div>`,
       )
       .join("");
   let ticks = "";
   for (let m = START; m <= END; m += 30)
-    ticks += `<span style="top:${calendarTop(m)}px">${clock(m)}</span>`;
+    ticks += `<span class="${m % 60 ? "time-half-hour" : "time-hour"}" style="top:${calendarTop(m)}px">${clock(m)}</span>`;
   $("calendar-body").innerHTML =
     '<div class="time-axis">' +
     ticks +
@@ -669,7 +899,7 @@ function renderCalendar() {
       )
       .join("") +
     '<div class="now-line" id="now-line" hidden><span id="now-time"></span></div>';
-  scroll.scrollTop = top;
+  scroll.scrollTop = logicalTop * SCALE;
   scroll.scrollLeft = left;
   updateClock();
   const date = state.date,
@@ -708,6 +938,7 @@ function renderCalendar() {
         if ($("calendar-today-floating"))
           $("calendar-today-floating").hidden =
             active || state.date === today();
+        if (!active && calendarLayoutPending) scheduleCalendarLayoutSync();
       },
       confirmTherapistChange: () =>
         confirm(
@@ -783,7 +1014,7 @@ function eventHTML(a, r, layout = null) {
   const lane = r.kind === "room" ? a.bed : 0;
   const left = layout?.left ?? (lane / r.capacity) * 100;
   const width = layout?.width ?? 100 / r.capacity;
-  return `<div class="calendar-event ${a.duration <= 30 ? "short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time">${clock(a.start)}–${clock(a.start + a.duration)}</span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
+  return `<div class="calendar-event ${a.duration <= 30 ? "short" : ""} ${a.duration <= 15 ? "very-short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time">${clock(a.start)}–${clock(a.start + a.duration)}</span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
 }
 function updateClock() {
   const p = dateParts();
@@ -1761,8 +1992,9 @@ function passwordDialog(required = false) {
   );
 }
 $("drawer-close").onclick = closeDrawer;
-$("drawer").addEventListener("cancel", () => {
-  setTimeout(closeDrawer, 0);
+$("drawer").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeDrawer();
 });
 $("login-form").onsubmit = async (event) => {
   event.preventDefault();
@@ -1784,15 +2016,29 @@ $("login-form").onsubmit = async (event) => {
     button.disabled = false;
   }
 };
-$("sign-out").onclick = async () => {
+async function signOut() {
   try {
     await api("/logout", { method: "POST" });
     signOutView();
   } catch (error) {
-    showAppError(error);
+    if ($("drawer").open && $("form-error")) formError(error);
+    else showAppError(error);
   }
-};
+}
+$("sign-out").onclick = signOut;
 $("change-password").onclick = () => passwordDialog();
+$("mobile-more").onclick = mobileMenu;
+$("mobile-add").onclick = mobileAddMenu;
+document.addEventListener("click", (event) => {
+  const button = event.target.closest?.("[data-mobile-page]");
+  if (button && state.user) void setPage(button.dataset.mobilePage);
+});
+window.addEventListener("resize", scheduleCalendarLayoutSync);
+for (const eventName of ["pointerup", "pointercancel"])
+  document.addEventListener(eventName, () => {
+    if (calendarLayoutPending) scheduleCalendarLayoutSync();
+  });
+mobileCalendarMedia.addEventListener("change", scheduleCalendarLayoutSync);
 document
   .querySelectorAll("nav [data-page]")
   .forEach((b) => (b.onclick = () => setPage(b.dataset.page)));

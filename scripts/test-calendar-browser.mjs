@@ -15,10 +15,17 @@ const root = resolve("public"),
   fixtures = new Map();
 const date = "2026-10-01",
   nextDate = "2026-10-02";
-// Independent display oracle: 24 hours, 120 pixels per hour.
-const displayStart = 0,
-  displayScale = 2;
-const pixelAt = (minute) => (minute - displayStart) * displayScale;
+// Measure the rendered 24-hour column. Density itself is asserted separately:
+// one pixel per minute on the compact phone UI and two on desktop/tablet.
+const displayStart = 0;
+async function pixelsPerMinute(page) {
+  return page
+    .locator(".calendar-column")
+    .first()
+    .evaluate((el) => el.getBoundingClientRect().height / 1440);
+}
+const pixelAt = async (page, minute) =>
+  (minute - displayStart) * (await pixelsPerMinute(page));
 const week = () =>
   Array.from({ length: 7 }, () => ({ enabled: true, start: 600, end: 1320 }));
 function fixture() {
@@ -404,16 +411,26 @@ async function scenario(name, device, run) {
   page.setDefaultTimeout(10000);
   const open = async () => {
     await page.goto(origin);
-    if (f.role === "owner") {
+    const compact = await page.evaluate(
+      () =>
+        matchMedia("(max-width:700px), (max-height:560px) and (pointer:coarse)")
+          .matches,
+    );
+    if (f.role === "owner" && !compact) {
       await page.locator("#report-metrics .report-metric").first().waitFor();
-      await page.locator('nav [data-page="calendar"]').click();
+      await navigate(page, "calendar");
     } else await page.locator("#calendar-grid").waitFor();
     await page.locator("#calendar-date").fill(date);
     await page.locator("#calendar-date").dispatchEvent("change");
     await page
       .locator("#calendar-summary")
-      .filter({ hasText: "Oct" })
-      .waitFor();
+      .filter({ hasText: "1 Oct 2026" })
+      .waitFor({ state: "attached" });
+    await page.locator(".calendar-column").first().waitFor();
+    assert.ok(
+      Math.abs((await pixelsPerMinute(page)) - (compact ? 1 : 2)) < 0.001,
+      "Rendered calendar density matches compact 60px/hour or desktop 120px/hour",
+    );
   };
   try {
     await run({ page, f, open, device });
@@ -708,18 +725,21 @@ async function formAtTop(page) {
   );
 }
 async function roomSlot(page, device, id = "r1", lane = 1) {
-  await page.locator('[data-mode="rooms"]').click();
+  await selectMode(page, "rooms");
   const column = page.locator(`[data-resource="${id}"]`);
-  await column.evaluate((el, top) => {
-    const scroller = el.closest(".calendar-scroll");
-    scroller.scrollTop = top;
-    scroller.scrollLeft = el.offsetLeft - 60;
-  }, pixelAt(540));
+  await column.evaluate(
+    (el, top) => {
+      const scroller = el.closest(".calendar-scroll");
+      scroller.scrollTop = top;
+      scroller.scrollLeft = el.offsetLeft - 60;
+    },
+    await pixelAt(page, 540),
+  );
   await renderedFrames(page);
   const box = await column.boundingBox();
   const point = {
     x: box.x + box.width * (id === "r1" ? (lane === 1 ? 0.75 : 0.25) : 0.5),
-    y: box.y + pixelAt(600) + 4,
+    y: box.y + (await pixelAt(page, 600)) + 4,
   };
   if (device.mobile) await page.touchscreen.tap(point.x, point.y);
   else await page.mouse.click(point.x, point.y);
@@ -733,7 +753,7 @@ async function roomSlot(page, device, id = "r1", lane = 1) {
 const blockControl = (page, name) =>
   page.locator(`#calendar-block-form [name="${name}"]`);
 async function roomPoint(page, device, minute, roomId = "r1", lane = 1) {
-  await page.locator('[data-mode="rooms"]').click();
+  await selectMode(page, "rooms");
   const column = page.locator(`[data-resource="${roomId}"]`);
   await column.evaluate(
     (el, top) => {
@@ -741,20 +761,71 @@ async function roomPoint(page, device, minute, roomId = "r1", lane = 1) {
       scroller.scrollTop = top;
       scroller.scrollLeft = el.offsetLeft - 60;
     },
-    pixelAt(Math.max(0, minute - 60)),
+    await pixelAt(page, Math.max(0, minute - 60)),
   );
   await renderedFrames(page);
   const box = await column.boundingBox();
   const point = {
     x: box.x + box.width * (roomId === "r1" ? (lane ? 0.75 : 0.25) : 0.5),
-    y: box.y + pixelAt(minute) + 1,
+    // Click MouseEvents round CSS coordinates; choose the first integer
+    // pixel inside this minute, keeping the last-minute boundary probes intact.
+    y: Math.ceil(box.y + (await pixelAt(page, minute))),
   };
   if (device.mobile) await page.touchscreen.tap(point.x, point.y);
   else await page.mouse.click(point.x, point.y);
   await menuAt(page, point);
 }
+async function mobileNavigation(page) {
+  return page.locator("#mobile-navigation").isVisible();
+}
+async function navigate(page, destination) {
+  if (!(await mobileNavigation(page))) {
+    await page.locator(`nav [data-page="${destination}"]`).click();
+    return;
+  }
+  const direct = page.locator(
+    `#mobile-navigation [data-mobile-page="${destination}"]`,
+  );
+  if (await direct.isVisible()) await direct.click();
+  else {
+    await page.locator("#mobile-more").click();
+    await page.locator(`#drawer [data-mobile-page="${destination}"]`).click();
+  }
+}
+async function selectMode(page, mode) {
+  if (await page.locator(`[data-mode="${mode}"]`).isVisible())
+    await page.locator(`[data-mode="${mode}"]`).click();
+  else {
+    await page.locator("#calendar-view-options").click();
+    await page.locator(`[data-mobile-mode="${mode}"]`).click();
+    await page.locator("#drawer").waitFor({ state: "hidden" });
+  }
+}
+async function openAdd(page, kind) {
+  const desktop = page.locator(
+    kind === "block" ? "#calendar-block-add" : "#appointment-add",
+  );
+  if (await desktop.isVisible()) await desktop.click();
+  else {
+    await page.locator("#mobile-add").click();
+    await page
+      .locator(
+        kind === "block" ? "#mobile-add-block" : "#mobile-add-appointment",
+      )
+      .click();
+  }
+}
+async function refreshCalendar(page) {
+  if (await page.locator("#calendar-refresh").isVisible())
+    await page.locator("#calendar-refresh").click();
+  else {
+    await page.locator("#calendar-view-options").click();
+    await page.locator("#mobile-calendar-refresh").click();
+    await page.locator("#drawer").waitFor({ state: "hidden" });
+  }
+}
 async function add(page) {
-  await page.locator("#appointment-add").click();
+  await openAdd(page, "appointment");
   await page.locator("#appointment-form").waitFor();
 }
 function deferred() {
@@ -818,11 +889,14 @@ function denseSchedule(f) {
   return target;
 }
 async function denseView(page) {
-  await page.locator('[data-mode="rooms"]').click();
-  await page.locator("#calendar-scroll").evaluate((el) => {
-    el.scrollTop = 2160; // 18:00 in a midnight-origin grid.
-    el.scrollLeft = 0;
-  });
+  await selectMode(page, "rooms");
+  await page.locator("#calendar-scroll").evaluate(
+    (el, top) => {
+      el.scrollTop = top;
+      el.scrollLeft = 0;
+    },
+    await pixelAt(page, 1080),
+  );
   await page.locator('[data-appointment="dense-target"]').waitFor();
 }
 async function bodyPoint(locator) {
@@ -859,7 +933,10 @@ async function shiftTouchDraft(page) {
   );
   const point = await bodyPoint(preview);
   const touch = await touchStart(page, point);
-  await touch.move({ x: point.x, y: point.y - 10 });
+  await touch.move({
+    x: point.x,
+    y: point.y - 5 * (await pixelsPerMinute(page)) - 0.25,
+  });
   await touch.end();
   await page
     .locator("#calendar-reschedule-time")
@@ -1126,13 +1203,13 @@ try {
       async ({ page, f, open }) => {
         f.appointments = [booking("first-hour", "tA", "r1", 0, 600, 90)];
         await open();
-        await page.locator('[data-mode="rooms"]').click();
+        await selectMode(page, "rooms");
         const column = page.locator('[data-resource="r1"]');
         assert.ok(
           Math.abs(
             (await page
               .locator("#calendar-scroll")
-              .evaluate((el) => el.scrollTop)) - pixelAt(540),
+              .evaluate((el) => el.scrollTop)) - (await pixelAt(page, 540)),
           ) <= 2,
           "A new full-day calendar initially opens near 09:00",
         );
@@ -1174,9 +1251,12 @@ try {
         const lastLabel = page.locator(".time-axis span").last();
         assert.equal(await lastLabel.textContent(), "24:00");
         await withinViewport(page, lastLabel, "Complete last 24:00 label");
-        await page.locator("#calendar-scroll").evaluate((el) => {
-          el.scrollTop = 1080;
-        });
+        await page.locator("#calendar-scroll").evaluate(
+          (el, top) => {
+            el.scrollTop = top;
+          },
+          await pixelAt(page, 540),
+        );
         await renderedFrames(page);
         await withinViewport(
           page,
@@ -1192,7 +1272,7 @@ try {
           Math.abs(
             (await appointment.boundingBox()).y -
               (await column.boundingBox()).y -
-              pixelAt(600),
+              (await pixelAt(page, 600)),
           ) <= 1,
           "Label repair must not shift the 10:00 appointment off its time origin",
         );
@@ -1210,7 +1290,9 @@ try {
           const box = await column.boundingBox();
           const point = {
             x: box.x + box.width * 0.75,
-            y: box.y + pixelAt(minute) + 1,
+            // Click MouseEvents round CSS coordinates; choose the first integer
+            // pixel inside this minute, keeping the last-minute boundary probes intact.
+            y: Math.ceil(box.y + (await pixelAt(page, minute))),
           };
           const expected = `10:${String(quarter - 600).padStart(2, "0")}`;
           if (!device.mobile) {
@@ -1231,7 +1313,7 @@ try {
             );
             const rect = await hint.boundingBox();
             assert.ok(
-              Math.abs(rect.height - 30) <= 3,
+              Math.abs(rect.height - 15 * (await pixelsPerMinute(page))) <= 3,
               "The selected quarter spans 15 minutes",
             );
             assert.ok(
@@ -1303,12 +1385,15 @@ try {
       device,
       async ({ page, open }) => {
         await open();
-        await page.locator('[data-mode="rooms"]').click();
+        await selectMode(page, "rooms");
         const scroller = page.locator("#calendar-scroll");
-        await scroller.evaluate((el) => {
-          el.scrollTop = 1620; // 13:30 in a midnight-origin grid.
-          el.scrollLeft = el.scrollWidth - el.clientWidth;
-        });
+        await scroller.evaluate(
+          (el, top) => {
+            el.scrollTop = top;
+            el.scrollLeft = el.scrollWidth - el.clientWidth;
+          },
+          await pixelAt(page, 810),
+        );
         await scroller.scrollIntoViewIfNeeded();
         const area = await scroller.boundingBox(),
           column = page.locator('[data-resource="r2"]'),
@@ -1346,6 +1431,7 @@ try {
           "r2",
           "Edge tap must hit the empty resource, not floating Today",
         );
+        const displayScale = await pixelsPerMinute(page);
         const expectedStart =
           Math.floor(((point.y - box.y) / displayScale + displayStart) / 15) *
           15;
@@ -1399,7 +1485,7 @@ try {
       const held = deferred();
       f.delayed.set("client-error", held);
       f.clientResponses.push({ wait: held, fail: true });
-      await page.locator("#appointment-add").click();
+      await openAdd(page, "appointment");
       await page.locator("#booking-opening[aria-busy=true]").waitFor();
       await withinViewport(page, page.locator("#drawer"), "Loading dialog");
       assert.equal(await page.locator("#form-cancel").isEnabled(), true);
@@ -1425,7 +1511,7 @@ try {
       const old = deferred();
       f.delayed.set("old-opening", old);
       f.clientResponses.push({ wait: old });
-      await page.locator("#appointment-add").click();
+      await openAdd(page, "appointment");
       await page.locator("#booking-opening").waitFor();
       await page.locator("#form-cancel").click();
       await add(page);
@@ -1449,11 +1535,11 @@ try {
       const abandonedStarted = page.waitForRequest(
         (r) => new URL(r.url()).pathname === "/api/clients",
       );
-      await page.locator("#appointment-add").click();
+      await openAdd(page, "appointment");
       const abandonedRequest = await abandonedStarted;
       await page.locator("#booking-opening").waitFor();
       await page.locator("#form-cancel").click();
-      await page.locator('nav [data-page="clients"]').click();
+      await navigate(page, "clients");
       await page
         .locator("#page-title")
         .filter({ hasText: "Clients" })
@@ -1524,7 +1610,7 @@ try {
     async ({ page, f, open }) => {
       f.appointments = [booking("existing", "tA", "r1", 0)];
       await open();
-      await page.locator('[data-mode="rooms"]').click();
+      await selectMode(page, "rooms");
       const event = page.locator('[data-appointment="existing"]');
       await event.click();
       await page.locator("#appointment-summary-edit").waitFor();
@@ -1574,16 +1660,16 @@ try {
       f.role = "therapist";
       f.appointments = [booking("read-only", "tA", "r1", 0)];
       await open();
-      await page.locator('[data-mode="rooms"]').click();
+      await selectMode(page, "rooms");
       const column = page.locator('[data-resource="r1"]'),
         box = await column.boundingBox();
       await page.mouse.move(
         box.x + box.width * 0.75,
-        box.y + pixelAt(600) + 20,
+        box.y + (await pixelAt(page, 600)) + 20,
       );
       await page.mouse.click(
         box.x + box.width * 0.75,
-        box.y + pixelAt(600) + 20,
+        box.y + (await pixelAt(page, 600)) + 20,
       );
       assert.equal(
         await page.locator("#calendar-slot-menu").isVisible(),
@@ -1628,13 +1714,15 @@ try {
           );
         assert.equal(
           quarterHeight,
-          "30px",
-          "Four 15-minute grid divisions fit one 120-pixel hour",
+          `${15 * (await pixelsPerMinute(page))}px`,
+          "Four 15-minute grid divisions fit one rendered hour",
         );
         const event = page.locator('[data-appointment="dense-target"]');
         const original = await event.boundingBox();
         assert.ok(
-          Math.abs(original.height - 177) <= 1,
+          Math.abs(
+            original.height - (90 * (await pixelsPerMinute(page)) - 3),
+          ) <= 1,
           "90-minute card retains its duration scale",
         );
         await capture(page, `${device.name}-dense-five-table-calendar`);
@@ -1871,10 +1959,32 @@ try {
       await open();
       await denseView(page);
       const event = page.locator('[data-appointment="dense-target"]');
-      const point = await bodyPoint(event);
       const scrollBefore = await page
         .locator("#calendar-scroll")
-        .evaluate((el) => el.scrollTop);
+        .evaluate((el) => {
+          // The denser full-day phone grid can clamp 18:00 at the bottom.
+          // Start with real upward pan travel instead of swiping at its limit.
+          el.scrollTop = Math.min(
+            el.scrollTop,
+            el.scrollHeight - el.clientHeight - 150,
+          );
+          return {
+            top: el.scrollTop,
+            maximum: el.scrollHeight - el.clientHeight,
+          };
+        });
+      assert.ok(
+        scrollBefore.maximum - scrollBefore.top >= 140,
+        "Swipe fixture has at least 140px of upward scrolling travel: " +
+          JSON.stringify(scrollBefore),
+      );
+      await renderedFrames(page);
+      await withinViewport(
+        page,
+        event,
+        "Booking used for ordinary touch swipe",
+      );
+      const point = await bodyPoint(event);
       const swipe = await touchStart(page, point);
       await swipe.move({ x: point.x, y: point.y - 40 });
       await swipe.move({ x: point.x, y: point.y - 100 });
@@ -1885,8 +1995,9 @@ try {
       assert.ok(
         (await page
           .locator("#calendar-scroll")
-          .evaluate((el) => el.scrollTop)) > scrollBefore,
-        "Ordinary touch swipe scrolls the calendar",
+          .evaluate((el) => el.scrollTop)) >
+          scrollBefore.top + 25,
+        "Ordinary touch swipe scrolls the calendar by more than 25px",
       );
       await denseView(page);
       await longPress(page, event);
@@ -2052,7 +2163,7 @@ try {
       const started = page.waitForRequest(
         (r) => new URL(r.url()).pathname === "/api/appointments",
       );
-      await page.locator("#calendar-refresh").click();
+      await refreshCalendar(page);
       const request = await started;
       await longPress(page, page.locator('[data-appointment="dense-target"]'));
       await page.locator("#calendar-reschedule-earlier").click();
@@ -2096,7 +2207,7 @@ try {
       const started = page.waitForRequest((r) => r.method() === "PUT");
       await page.locator("#calendar-reschedule-save").click();
       const request = await started;
-      await page.locator('nav [data-page="clients"]').click();
+      await navigate(page, "clients");
       await page.locator("#client-search").waitFor();
       const finished = page.waitForResponse((r) => r.request() === request);
       hold.release();
@@ -2166,11 +2277,14 @@ try {
         },
       ];
       await open();
-      await page.locator('[data-mode="all"]').click();
-      await page.locator("#calendar-scroll").evaluate((el) => {
-        el.scrollTop = 2160; // 18:00 in a midnight-origin grid.
-        el.scrollLeft = 0;
-      });
+      await selectMode(page, "all");
+      await page.locator("#calendar-scroll").evaluate(
+        (el, top) => {
+          el.scrollTop = top;
+          el.scrollLeft = 0;
+        },
+        await pixelAt(page, 1080),
+      );
       const roomColumn = page.locator('[data-kind="room"][data-resource="r1"]');
       await roomColumn.locator('[data-appointment="linked"]').click();
       await page.locator("#appointment-summary-reschedule").click();
@@ -2283,7 +2397,7 @@ try {
     },
   );
   await scenario(
-    "floating Today returns both past and future to the Belgrade date",
+    "Today action returns both past and future to the Belgrade date",
     phone,
     async ({ page, open }) => {
       await open();
@@ -2386,7 +2500,7 @@ try {
         );
         const box = await entry.boundingBox(),
           column = await page.locator('[data-resource="r1"]').boundingBox();
-        assert.ok(Math.abs(box.y - column.y - pixelAt(495)) <= 1);
+        assert.ok(Math.abs(box.y - column.y - (await pixelAt(page, 495))) <= 1);
         assert.ok(
           box.x >= column.x + column.width / 2,
           "Room block stays inside its selected second table",
@@ -2415,10 +2529,13 @@ try {
         assert.equal(f.blockWrites[1].body.version, 1);
         assert.equal(f.blockWrites[1].body.blocksAvailability, false);
         await open();
-        await page.locator('[data-mode="rooms"]').click();
-        await page.locator("#calendar-scroll").evaluate((el) => {
-          el.scrollTop = 900;
-        });
+        await selectMode(page, "rooms");
+        await page.locator("#calendar-scroll").evaluate(
+          (el, top) => {
+            el.scrollTop = top;
+          },
+          await pixelAt(page, 450),
+        );
         await entry.waitFor();
         assert.match(await entry.textContent(), /QA edited reminder/);
         assert.match(await entry.getAttribute("class"), /is-note-only/);
@@ -2467,7 +2584,7 @@ try {
         }),
       ];
       await open();
-      await page.locator('[data-mode="rooms"]').click();
+      await selectMode(page, "rooms");
       const appointment = page.locator('[data-appointment="with-note"]'),
         note = page.locator('[data-calendar-block="overlap"]');
       const a = await withinViewport(
@@ -2545,7 +2662,7 @@ try {
           }),
         ];
         await open();
-        await page.locator('[data-mode="rooms"]').click();
+        await selectMode(page, "rooms");
         const block = page.locator('[data-calendar-block="private-block"]');
         await block.waitFor();
         assert.doesNotMatch(
@@ -2594,25 +2711,58 @@ try {
           overflow.actual <= overflow.viewport + 1,
           "Calendar width stays inside the outer page; resources scroll within their own grid",
         );
-        for (const selector of [
-          "#calendar-today",
-          "#calendar-prev",
-          "#calendar-date",
-          "#calendar-next",
-          "#calendar-refresh",
-          "#calendar-block-add",
-          "#appointment-add",
-          '[data-mode="all"]',
-          '[data-mode="therapists"]',
-          '[data-mode="rooms"]',
-        ])
+        const compact = await mobileNavigation(page);
+        const controls = compact
+          ? [
+              "#calendar-prev",
+              "#calendar-date",
+              "#calendar-next",
+              "#calendar-view-options",
+              "#mobile-add",
+              "#mobile-more",
+              '#mobile-navigation [data-mobile-page="calendar"]',
+              '#mobile-navigation [data-mobile-page="clients"]',
+            ]
+          : [
+              "#calendar-today",
+              "#calendar-prev",
+              "#calendar-date",
+              "#calendar-next",
+              "#calendar-refresh",
+              "#calendar-block-add",
+              "#appointment-add",
+              '[data-mode="all"]',
+              '[data-mode="therapists"]',
+              '[data-mode="rooms"]',
+            ];
+        for (const selector of controls)
           await withinViewport(
             page,
             page.locator(selector),
             "Available calendar control " + selector,
           );
+        if (compact) {
+          assert.ok(
+            header.y + header.height <= 150,
+            "Schedule starts by150px in compact view",
+          );
+          await page.locator("#calendar-view-options").click();
+          for (const selector of [
+            '[data-mobile-mode="all"]',
+            '[data-mobile-mode="therapists"]',
+            '[data-mobile-mode="rooms"]',
+            "#mobile-calendar-refresh",
+          ])
+            await withinViewport(
+              page,
+              page.locator(selector),
+              "View option " + selector,
+            );
+          await page.keyboard.press("Escape");
+          await page.locator("#drawer").waitFor({ state: "hidden" });
+        }
         await capture(page, `${device.name}-compact-calendar-toolbar`);
-        await page.locator('[data-mode="rooms"]').click();
+        await selectMode(page, "rooms");
         const column = page.locator('[data-resource="r1"]');
         await column.evaluate((el) => el.focus({ preventScroll: true }));
         const initial = await page.evaluate(() => {
@@ -2623,8 +2773,11 @@ try {
             .querySelector("#calendar-headers")
             .getBoundingClientRect();
           return (
-            Math.floor((Math.max(header.bottom, 0) + 10 - box.top) / 2 / 15) *
-            15
+            Math.floor(
+              (Math.max(header.bottom, 0) + 10 - box.top) /
+                (box.height / 1440) /
+                15,
+            ) * 15
           );
         });
         await page.keyboard.press("ArrowRight");
@@ -2647,7 +2800,9 @@ try {
             band.y >= currentHeader.y + currentHeader.height - 1,
             "Selected band remains below the actual compact header",
           );
-          assert.ok(Math.abs(band.height - 30) <= 1);
+          assert.ok(
+            Math.abs(band.height - 15 * (await pixelsPerMinute(page))) <= 1,
+          );
           assert.equal(Number(await hint.getAttribute("data-start")) % 15, 0);
         }
         assert.equal(await hint.getAttribute("data-start"), "30");
@@ -2806,7 +2961,7 @@ try {
     async ({ page, f, open }) => {
       f.appointments = [booking("profile-flow", "tA", "r1", 0)];
       await open();
-      await page.locator('[data-mode="rooms"]').click();
+      await selectMode(page, "rooms");
       await page.locator('[data-appointment="profile-flow"]').click();
       await page.locator("#appointment-summary-edit").click();
       await page.locator("#appointment-form").waitFor();
@@ -2874,17 +3029,20 @@ try {
           .locator('#login-form [name="password"]')
           .fill("FictionalQAOnly123");
         await page.locator('#login-form button[type="submit"]').click();
-        await page.locator("#report-metrics .report-metric").first().waitFor();
+        await page
+          .locator("#calendar-grid,#report-metrics .report-metric")
+          .first()
+          .waitFor();
         await open();
         await editableFonts(page, ".calendar-date-controls", "Calendar date");
         await noPageOverflow(page, "Touch calendar");
-        await page.locator('nav [data-page="clients"]').click();
+        await navigate(page, "clients");
         await page.locator("#client-search").waitFor();
         await editableFonts(page, "#page-content", "Client search");
         await page.locator("#client-add").click();
         await editableFonts(page, "#client-form", "Client profile");
         await page.locator("#form-cancel").click();
-        await page.locator('nav [data-page="services"]').click();
+        await navigate(page, "services");
         await page.locator("#service-add").click();
         await editableFonts(page, "#service-form", "Treatment");
         await withinViewport(
@@ -2893,8 +3051,8 @@ try {
           "Treatment save",
         );
         await page.locator("#form-cancel").click();
-        await page.locator('nav [data-page="calendar"]').click();
-        await page.locator("#calendar-block-add").click();
+        await navigate(page, "calendar");
+        await openAdd(page, "block");
         await page.locator("#calendar-block-form").waitFor();
         await editableFonts(page, "#calendar-block-form", "Blocked time");
         await blockControl(page, "note").fill("Fictional mobile note");
@@ -2946,7 +3104,7 @@ try {
       async ({ page, open }) => {
         await open();
         await noPageOverflow(page, "Narrow calendar");
-        await page.locator("#appointment-add").scrollIntoViewIfNeeded();
+
         await add(page);
         await editableFonts(page, "#appointment-form", "Narrow booking fields");
         for (const name of ["date", "start", "duration"]) {
@@ -2972,8 +3130,8 @@ try {
         );
         await capture(page, `${device.name}-stable-booking-footer`);
         await page.locator("#form-cancel").click();
-        await page.locator("#calendar-block-add").scrollIntoViewIfNeeded();
-        await page.locator("#calendar-block-add").click();
+
+        await openAdd(page, "block");
         await page.locator("#calendar-block-form").waitFor();
         await editableFonts(
           page,
@@ -3007,7 +3165,7 @@ try {
           0,
           "Guidance must not invent or seed treatments",
         );
-        await page.locator("#appointment-add").click();
+        await openAdd(page, "appointment");
         await page.locator("#booking-treatment-add").waitFor();
         assert.equal(
           await page.locator("#appointment-form").count(),
@@ -3017,7 +3175,7 @@ try {
         await page.locator("#booking-treatment-add").click();
         await page.locator("#service-form").waitFor();
         await page.locator("#form-cancel").click();
-        await page.locator('nav [data-page="calendar"]').click();
+        await navigate(page, "calendar");
         await page.locator("#calendar-treatment-setup").waitFor();
         await page.locator('[data-resource="tA"]').waitFor();
         await page
@@ -3049,7 +3207,7 @@ try {
         assert.equal(f.serviceWrites.length, 2);
         assert.equal(f.serviceWrites[1].method, "PUT");
         assert.equal(f.serviceWrites[1].body.version, 1);
-        await page.locator('nav [data-page="calendar"]').click();
+        await navigate(page, "calendar");
         await page.locator("#calendar-grid").waitFor();
         assert.equal(
           await page.locator("#calendar-treatment-setup").count(),
@@ -3091,7 +3249,7 @@ try {
             await page.locator("#calendar-treatment-setup").textContent(),
             /owner/i,
           );
-          await page.locator("#appointment-add").click();
+          await openAdd(page, "appointment");
           await page.locator("#drawer[open]").waitFor();
           assert.match(
             await page.locator("#drawer-content").textContent(),
@@ -3145,6 +3303,7 @@ try {
           0,
           "Pinch never creates or moves a booking",
         );
+        await selectMode(page, "all");
         const scrollBox = await page.locator("#calendar-scroll").boundingBox();
         const beforeScroll = await page
           .locator("#calendar-scroll")
@@ -3188,7 +3347,13 @@ try {
           "Single-finger vertical scrolling remains usable: " +
             JSON.stringify({ beforeScroll, afterScroll }),
         );
-        const meta = await page.locator(".calendar-meta").boundingBox();
+        const meta = await page
+          .locator(
+            (await page.locator(".calendar-meta").isVisible())
+              ? ".calendar-meta"
+              : "#calendar-headers",
+          )
+          .boundingBox();
         await page.touchscreen.tap(meta.x + 20, meta.y + meta.height / 2);
         await page.touchscreen.tap(meta.x + 20, meta.y + meta.height / 2);
         await renderedFrames(page);
@@ -3216,6 +3381,350 @@ try {
         await noPageOverflow(page, "Booking after touch gestures");
       },
     );
+  for (const device of [
+    {
+      name: "phone-short",
+      viewport: { width: 390, height: 650 },
+      mobile: true,
+    },
+    phone,
+    {
+      name: "phone-narrow",
+      viewport: { width: 320, height: 568 },
+      mobile: true,
+    },
+    {
+      name: "phone-landscape",
+      viewport: { width: 844, height: 390 },
+      mobile: true,
+    },
+  ])
+    await scenario(
+      "schedule-first mobile layout shows three therapists and keeps all booking actions usable",
+      device,
+      async ({ page, f, open }) => {
+        f.catalogue.rooms.push({
+          id: "r3",
+          name: "QA Second Couple",
+          capacity: 2,
+        });
+        f.appointments = ["A", "B", "C"].flatMap((letter, index) => [
+          {
+            ...booking(
+              "morning-" + letter,
+              "t" + letter,
+              index < 2 ? "r1" : "r2",
+              index === 1 ? 1 : 0,
+              600,
+              60,
+            ),
+            requestedTherapistId: index === 1 ? "tB" : null,
+          },
+          booking(
+            "afternoon-" + letter,
+            "t" + letter,
+            index < 2 ? "r1" : "r2",
+            index === 1 ? 1 : 0,
+            690,
+            90,
+          ),
+        ]);
+        await open();
+        assert.equal(await mobileNavigation(page), true);
+        assert.equal(
+          await page.locator('.calendar-column[data-kind="therapist"]').count(),
+          3,
+          "Compact default is the therapist view",
+        );
+        assert.equal(
+          await page.locator('.calendar-column[data-kind="room"]').count(),
+          0,
+        );
+        assert.ok(
+          Math.abs((await pixelsPerMinute(page)) - 1) < 0.001,
+          "Compact mobile grid is 60px per hour",
+        );
+        const header = await page.locator("#calendar-headers").boundingBox();
+        assert.ok(
+          header.y + header.height <= 150,
+          "Mobile schedule begins by 150px: " + JSON.stringify(header),
+        );
+        const grid = await withinViewport(
+          page,
+          page.locator("#calendar-scroll"),
+          "Mobile schedule including sticky resource header",
+        );
+        if (device.viewport.height > 560)
+          assert.ok(
+            grid.height >= device.viewport.height * 0.6,
+            "At least 60% of portrait screen belongs to the schedule: " +
+              grid.height,
+          );
+        else
+          assert.ok(
+            grid.height >= 200,
+            "Short landscape retains a usable scrollable schedule",
+          );
+        const axis = await page.locator(".time-axis").boundingBox();
+        assert.ok(
+          Math.abs(axis.width - 44) <= 1,
+          "Compact time axis is 44px wide",
+        );
+        for (const letter of ["A", "B", "C"]) {
+          const card = page.locator(`[data-appointment="morning-${letter}"]`);
+          await withinViewport(page, card, "Visible morning booking " + letter);
+          assert.match(await card.textContent(), /10:00.*11:00/);
+        }
+        for (const selector of [
+          "#calendar-prev",
+          "#calendar-date",
+          "#calendar-next",
+          "#calendar-view-options",
+          "#mobile-add",
+          "#mobile-more",
+        ]) {
+          const rect = await withinViewport(
+            page,
+            page.locator(selector),
+            "Touch action " + selector,
+          );
+          assert.ok(
+            rect.height >= 44 && rect.width >= 44,
+            "Touch action meets 44px target: " + selector,
+          );
+        }
+        await editableFonts(
+          page,
+          ".calendar-date-controls",
+          "Compact calendar date",
+        );
+        await noPageOverflow(page, "Schedule-first calendar");
+        await capture(page, `${device.name}-schedule-first-three-therapists`);
+        await selectMode(page, "rooms");
+        const couple = await page.locator('[data-resource="r1"]').boundingBox();
+        const single = await page.locator('[data-resource="r2"]').boundingBox();
+        assert.ok(
+          Math.abs(couple.width - 2 * single.width) <= 3,
+          "Two-table room is twice the single-table room width",
+        );
+        await capture(page, `${device.name}-schedule-first-room-tables`);
+        await openAdd(page, "appointment");
+        await page.locator("#appointment-form").waitFor();
+        await control(page, "duration").fill("90");
+        await control(page, "note").fill("Fictional compact-screen note");
+        await bookingLayout(page);
+        const save = await withinViewport(
+          page,
+          page.locator("#form-save"),
+          "Save above the bottom navigation",
+        );
+        assert.equal(
+          await page.evaluate(
+            ({ x, y }) =>
+              document.elementFromPoint(x, y)?.closest("#form-save")?.id,
+            { x: save.x + save.width / 2, y: save.y + save.height / 2 },
+          ),
+          "form-save",
+          "Mobile navigation never covers modal Save",
+        );
+        await noPageOverflow(page, "Compact booking drawer");
+        await page.locator("#form-cancel").click();
+        assert.equal(f.writes.length, 0);
+        f.catalogue.services = [];
+        await open();
+        await page.locator("#calendar-treatment-setup").waitFor();
+        await page.locator('[data-resource="tA"]').waitFor();
+        const emptyHeader = await page
+          .locator("#calendar-headers")
+          .boundingBox();
+        assert.ok(
+          emptyHeader.y + emptyHeader.height <= 190,
+          "Setup guidance leaves schedule beginning by 190px",
+        );
+        const emptyGrid = await withinViewport(
+          page,
+          page.locator("#calendar-scroll"),
+          "Schedule with empty-treatment guidance",
+        );
+        if (device.viewport.height > 560)
+          assert.ok(
+            emptyGrid.height >= device.viewport.height * 0.6,
+            "Empty setup still reserves 60% portrait height for calendar including resource header",
+          );
+        await withinViewport(
+          page,
+          page.locator("#calendar-treatment-add"),
+          "Reachable first-treatment action",
+        );
+        await capture(page, `${device.name}-schedule-first-empty-catalogue`);
+      },
+    );
+  for (const role of ["owner", "reception", "therapist"])
+    await scenario(
+      `${role} mobile menus expose permitted routes and return keyboard focus`,
+      phone,
+      async ({ page, f, open }) => {
+        f.role = role;
+        f.appointments = [booking("private-menu-source", "tA", "r1", 0)];
+        await open();
+        await page.locator("#mobile-more").click();
+        assert.equal(await page.locator("#drawer-title").textContent(), "Menu");
+        const routes = await page
+          .locator("#drawer [data-mobile-page]")
+          .evaluateAll((nodes) =>
+            nodes.map((el) => el.dataset.mobilePage).sort(),
+          );
+        const expected =
+          role === "owner"
+            ? [
+                "dashboard",
+                "calendar",
+                "clients",
+                "team",
+                "services",
+                "sales",
+                "reports",
+                "users",
+              ]
+            : role === "reception"
+              ? ["calendar", "clients"]
+              : ["calendar"];
+        assert.deepEqual(routes, expected.sort());
+        assert.doesNotMatch(
+          await page.locator("#drawer").textContent(),
+          /Fictional QA Client|Fixture only|4700|470,000/,
+        );
+        await capture(page, `${role}-mobile-more-menu-top`);
+        for (const id of ["mobile-change-password", "mobile-sign-out"]) {
+          await page.locator("#" + id).scrollIntoViewIfNeeded();
+          await withinViewport(
+            page,
+            page.locator("#" + id),
+            "Reachable account action " + id,
+          );
+        }
+        await capture(page, `${role}-mobile-more-menu`);
+        await page.keyboard.press("Escape");
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(
+          await page.evaluate(() => document.activeElement.id),
+          "mobile-more",
+        );
+        await page.locator("#calendar-view-options").click();
+        assert.equal(
+          await page.locator("#drawer-title").textContent(),
+          "Calendar view",
+        );
+        assert.match(await page.locator("#drawer").textContent(), /QA Massage/);
+        await page.keyboard.press("Escape");
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(
+          await page.evaluate(() => document.activeElement.id),
+          "calendar-view-options",
+        );
+        if (role !== "therapist") {
+          await page.locator("#mobile-add").click();
+          assert.equal(
+            await page.locator("#drawer-title").textContent(),
+            "Add to calendar",
+          );
+          for (const id of ["mobile-add-appointment", "mobile-add-block"])
+            await withinViewport(
+              page,
+              page.locator("#" + id),
+              "Add choice " + id,
+            );
+          await page.keyboard.press("Escape");
+          await page.locator("#drawer").waitFor({ state: "hidden" });
+          assert.equal(
+            await page.evaluate(() => document.activeElement.id),
+            "mobile-add",
+          );
+          await navigate(page, "clients");
+          await page.locator("#client-search").waitFor();
+          await navigate(page, "calendar");
+          await page.locator("#calendar-grid").waitFor();
+        } else {
+          assert.equal(await page.locator("#mobile-add").isVisible(), false);
+          assert.equal(
+            await page
+              .locator('#mobile-navigation [data-mobile-page="clients"]')
+              .isVisible(),
+            false,
+          );
+        }
+        assert.equal(f.writes.length + f.blockWrites.length, 0);
+      },
+    );
+  await scenario(
+    "resizing preserves a selected unsaved mobile move and converts idle logical scroll density",
+    phone,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      await longPress(page, page.locator('[data-appointment="dense-target"]'));
+      await shiftTouchDraft(page);
+      assert.ok(Math.abs((await pixelsPerMinute(page)) - 1) < 0.001);
+      await page.setViewportSize({ width: 820, height: 1180 });
+      await renderedFrames(page);
+      await page.locator("#calendar-reschedule-bar").waitFor();
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /18:55–20:25.*90 min/,
+      );
+      assert.ok(
+        Math.abs((await pixelsPerMinute(page)) - 1) < 0.001,
+        "Density remains frozen until the current draft resolves",
+      );
+      assert.equal(f.writes.length, 0);
+      await capture(page, "tablet-resize-preserved-mobile-draft");
+      await page.locator("#calendar-reschedule-cancel").click();
+      await page.waitForFunction(
+        () =>
+          Math.abs(
+            document.querySelector(".calendar-column").getBoundingClientRect()
+              .height /
+              1440 -
+              2,
+          ) < 0.001,
+      );
+      assert.equal(f.writes.length, 0, "Resize and cancel do not save a move");
+      assert.match(
+        await page
+          .locator('[data-appointment="dense-target"] .event-time')
+          .first()
+          .textContent(),
+        /19:00–20:30/,
+      );
+      const logical = await page
+        .locator("#calendar-scroll")
+        .evaluate((el) => el.scrollTop / 2);
+      await page.setViewportSize(phone.viewport);
+      await page.waitForFunction(
+        () =>
+          Math.abs(
+            document.querySelector(".calendar-column").getBoundingClientRect()
+              .height /
+              1440 -
+              1,
+          ) < 0.001,
+      );
+      const restored = await page
+        .locator("#calendar-scroll")
+        .evaluate((el) => el.scrollTop);
+      assert.ok(
+        Math.abs(restored - logical) <= 2,
+        "Idle orientation preserves visible logical time, not raw pixels: " +
+          JSON.stringify({ logical, restored }),
+      );
+      await withinViewport(
+        page,
+        page.locator("#calendar-scroll"),
+        "Restored phone schedule",
+      );
+    },
+  );
   assert.ok(passed > 0, "No browser acceptance scenarios ran");
   assert.deepEqual(
     failures,

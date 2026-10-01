@@ -1,8 +1,17 @@
 export const START = 0;
 export const END = 1440;
-export const SCALE = 2;
+export let SCALE = 2;
 export const STEP = 5;
 export const BAND = 15;
+
+// Live ESM binding keeps rendering, hit testing and dragging on the same scale.
+// Density changes pixels, never the 15-minute creation / 5-minute move rules.
+export function setCalendarScale(value) {
+  if (value !== 1 && value !== 2) {
+    throw new RangeError("Calendar scale must be 1 or 2 pixels per minute.");
+  }
+  SCALE = value;
+}
 
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 export const calendarTop = (minute) => (minute - START) * SCALE;
