@@ -544,19 +544,57 @@ async function noPageOverflow(page, label) {
     );
 }
 async function pinch(page, point) {
+  await page.bringToFront();
+  await renderedFrames(page);
   const cdp = await page.context().newCDPSession(page);
   try {
-    await cdp.send("Input.synthesizePinchGesture", {
-      ...point,
-      scaleFactor: 1.8,
-      relativeSpeed: 400,
-      gestureSourceType: "touch",
+    // A genuine two-contact gesture, not a forced page-scale override. This
+    // advertises two available contacts; the application's touch-action still
+    // decides whether the browser may pan or pinch.
+    await cdp.send("Emulation.setTouchEmulationEnabled", {
+      enabled: true,
+      maxTouchPoints: 2,
+    });
+    const contacts = (spread) => [
+      {
+        id: 1,
+        x: point.x - spread,
+        y: point.y,
+        radiusX: 3,
+        radiusY: 3,
+        force: 0.5,
+      },
+      {
+        id: 2,
+        x: point.x + spread,
+        y: point.y,
+        radiusX: 3,
+        radiusY: 3,
+        force: 0.5,
+      },
+    ];
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: contacts(25),
+    });
+    for (let step = 1; step <= 12; step++) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: contacts(25 + step * 6),
+      });
+      await renderedFrames(page);
+    }
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
     });
     await renderedFrames(page);
   } finally {
     await cdp.detach();
   }
-  return page.evaluate(() => visualViewport.scale);
+  const scale = await page.evaluate(() => visualViewport.scale);
+  console.log(`Touch pinch ${new URL(page.url()).pathname}: scale=${scale}`);
+  return scale;
 }
 async function calendarScaleStable(page) {
   assert.ok(
@@ -1287,6 +1325,27 @@ try {
           ),
           y: Math.min(area.y + area.height - 15, viewport.height - 15),
         };
+        const floating = page.locator("#calendar-today-floating");
+        if (await floating.isVisible()) {
+          const overlay = await floating.boundingBox();
+          if (
+            point.x >= overlay.x &&
+            point.x <= overlay.x + overlay.width &&
+            point.y >= overlay.y &&
+            point.y <= overlay.y + overlay.height
+          )
+            point.x = overlay.x - 10;
+        }
+        assert.equal(
+          await page.evaluate(
+            ({ x, y }) =>
+              document.elementFromPoint(x, y)?.closest("[data-resource]")
+                ?.dataset.resource,
+            point,
+          ),
+          "r2",
+          "Edge tap must hit the empty resource, not floating Today",
+        );
         const expectedStart =
           Math.floor(((point.y - box.y) / displayScale + displayStart) / 15) *
           15;
@@ -2960,6 +3019,11 @@ try {
         await page.locator("#form-cancel").click();
         await page.locator('nav [data-page="calendar"]').click();
         await page.locator("#calendar-treatment-setup").waitFor();
+        await page.locator('[data-resource="tA"]').waitFor();
+        await page
+          .locator("#calendar-headers")
+          .filter({ hasText: "QA Therapist A" })
+          .waitFor();
         await capture(page, `${device.name}-empty-treatment-guidance`);
         await page.locator("#calendar-treatment-add").click();
         await page.locator("#service-form").waitFor();
