@@ -8,6 +8,11 @@
   --ink: #273c34;
   --muted: #69756a;
   --control: #c8c8b9;
+  --time-axis-width: 60px;
+  --mobile-nav-height: 56px;
+  --mobile-nav-space: calc(
+    var(--mobile-nav-height) + env(safe-area-inset-bottom)
+  );
   color-scheme: light;
 }
 * {
@@ -342,7 +347,7 @@ main {
   top: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: 60px var(--columns);
+  grid-template-columns: var(--time-axis-width) var(--columns);
   height: 76px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -386,7 +391,7 @@ main {
 }
 .calendar-body {
   display: grid;
-  grid-template-columns: 60px var(--columns);
+  grid-template-columns: var(--time-axis-width) var(--columns);
   height: 1440px;
   position: relative;
 }
@@ -773,7 +778,7 @@ main {
   display: block;
   background: #c73549;
   color: white;
-  width: 56px;
+  width: calc(var(--time-axis-width) - 4px);
   font-size: 10px;
   text-align: center;
   transform: translateY(-50%);
@@ -2216,129 +2221,6 @@ body:has(.is-rescheduling) .calendar-today-floating {
     gap: 4px 12px;
   }
 }
-@media (max-width: 700px) {
-  .shell[data-page="calendar"] {
-    display: flex;
-    flex-direction: column;
-  }
-  .shell[data-page="calendar"] > .rail {
-    padding: 4px 10px;
-    gap: 2px;
-    overflow-y: visible;
-  }
-  .shell[data-page="calendar"] .rail nav {
-    flex-shrink: 0;
-    gap: 4px;
-  }
-  .shell[data-page="calendar"] .rail nav button {
-    min-width: 44px;
-    min-height: 44px;
-    gap: 7px;
-    padding: 8px 10px;
-    font-size: 16px;
-  }
-  .shell[data-page="calendar"] .rail-bottom {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-rows: 1fr 1fr;
-    column-gap: 10px;
-    row-gap: 0;
-    min-height: 44px;
-    padding: 0 4px;
-  }
-  .shell[data-page="calendar"] #signed-name {
-    grid-column: 1;
-    grid-row: 1;
-    align-self: end;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.25;
-  }
-  .shell[data-page="calendar"] #signed-role {
-    grid-column: 1;
-    grid-row: 2;
-    align-self: start;
-    line-height: 1.25;
-  }
-  .shell[data-page="calendar"] .rail-bottom button {
-    grid-row: 1 / 3;
-    min-height: 44px;
-    min-width: 44px;
-    padding: 8px 4px;
-    white-space: nowrap;
-  }
-  .shell[data-page="calendar"] #change-password {
-    grid-column: 2;
-  }
-  .shell[data-page="calendar"] #sign-out {
-    grid-column: 3;
-  }
-  .shell[data-page="calendar"] > main {
-    padding: 6px 10px max(6px, env(safe-area-inset-bottom));
-  }
-  .shell[data-page="calendar"] .calendar-page-top {
-    gap: 8px;
-    margin-bottom: 6px;
-  }
-  .shell[data-page="calendar"] #page-title {
-    font-size: 24px;
-  }
-  .shell[data-page="calendar"] .top-meta {
-    gap: 2px;
-    font-size: 10px;
-    line-height: 1.3;
-  }
-  .shell[data-page="calendar"] .top-meta .badge {
-    padding: 3px 6px;
-    font-size: 8px;
-  }
-  .shell[data-page="calendar"] .calendar-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-    margin-bottom: 6px;
-  }
-  .calendar-primary-tools {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-    min-width: 0;
-  }
-  .calendar-date-controls {
-    display: grid;
-    grid-template-columns: auto 44px minmax(0, 1fr) 44px;
-    gap: 4px;
-    min-width: 0;
-  }
-  .calendar-date-controls input {
-    width: 100%;
-    min-width: 0;
-    padding: 8px;
-    font-size: 14px;
-  }
-  .calendar-resource-controls {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px;
-    min-width: 0;
-  }
-  .calendar-resource-controls .segments button {
-    flex: 1;
-    padding: 8px 6px;
-    font-size: 11px;
-  }
-  .shell[data-page="calendar"] .calendar-toolbar .btn {
-    padding: 8px 10px;
-    font-size: 13px;
-  }
-  .shell[data-page="calendar"] .calendar-add-actions {
-    gap: 4px;
-  }
-  .shell[data-page="calendar"] .calendar-meta {
-    padding: 5px 10px;
-  }
-}
 @media (max-height: 560px) {
   /* Short landscape windows need document scrolling instead of clipping the
      controls or shrinking the actual schedule to an unusable strip. */
@@ -2594,5 +2476,494 @@ body:has(.is-rescheduling) .calendar-today-floating {
   }
   .login-screen {
     min-height: 100dvh;
+  }
+}
+
+/* The phone workspace puts the schedule first. Secondary calendar controls
+   and every account route remain available in the bottom navigation drawers. */
+.mobile-navigation,
+.mobile-calendar-control {
+  display: none;
+}
+.mobile-menu-list,
+.mobile-add-menu,
+.calendar-mobile-options {
+  display: grid;
+  gap: 10px;
+}
+.mobile-menu-list > button,
+.mobile-add-menu > button,
+.calendar-mobile-options > button {
+  min-height: 48px;
+  justify-content: flex-start;
+  text-align: left;
+}
+.mobile-menu-list > button[aria-current="page"],
+.mobile-menu-list > button.active {
+  border-color: var(--green);
+  background: #e8eee7;
+  font-weight: 700;
+}
+.mobile-account {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.mobile-account > button {
+  min-height: 48px;
+  justify-content: flex-start;
+}
+.calendar-mobile-options .segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.calendar-mobile-options .segments button {
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 6px;
+  font-size: 12px;
+}
+.calendar-mobile-options .legend {
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 700px), (max-height: 560px) and (pointer: coarse) {
+  :root {
+    --time-axis-width: 44px;
+  }
+  .shell {
+    display: block;
+    min-height: 100dvh;
+    padding-bottom: var(--mobile-nav-space);
+  }
+  .shell > .rail {
+    display: none;
+  }
+  .shell > main {
+    min-width: 0;
+    padding: 20px max(14px, env(safe-area-inset-right)) 20px
+      max(14px, env(safe-area-inset-left));
+  }
+  .mobile-navigation {
+    position: fixed;
+    z-index: 100;
+    inset: auto 0 0;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    align-items: center;
+    height: var(--mobile-nav-space);
+    padding: 3px max(6px, env(safe-area-inset-right))
+      calc(3px + env(safe-area-inset-bottom))
+      max(6px, env(safe-area-inset-left));
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+    box-shadow: 0 -3px 16px #16302a0a;
+  }
+  .mobile-navigation > button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-width: 44px;
+    min-height: 48px;
+    padding: 2px 6px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.2;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-navigation .mobile-nav-icon {
+    display: grid;
+    width: 23px;
+    height: 24px;
+    place-items: center;
+    color: var(--green);
+    font-size: 21px;
+    line-height: 1;
+  }
+  .mobile-nav-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+  .mobile-navigation > button[aria-current="page"],
+  .mobile-navigation > button.active {
+    background: #e8eee7;
+    color: var(--green-dark);
+    font-weight: 700;
+  }
+  .mobile-navigation #mobile-add .mobile-nav-icon {
+    width: 28px;
+    border-radius: 8px;
+    background: var(--green);
+    color: white;
+  }
+  .mobile-navigation > button:focus-visible {
+    outline-offset: -3px;
+  }
+  .shell[data-page="calendar"] {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .shell[data-page="calendar"] > main {
+    flex: 1;
+    padding: 0;
+    overflow: hidden;
+  }
+  .shell[data-page="calendar"] .calendar-page-top,
+  .shell[data-page="calendar"] .calendar-meta,
+  .shell[data-page="calendar"] #calendar-today,
+  .shell[data-page="calendar"] .calendar-resource-controls,
+  .shell[data-page="calendar"] .calendar-add-actions,
+  .shell[data-page="calendar"] #page-content > .legend {
+    display: none;
+  }
+  .shell[data-page="calendar"] #page-content {
+    min-width: 0;
+  }
+  .shell[data-page="calendar"] .calendar-toolbar {
+    display: block;
+    min-height: 48px;
+    margin: 0;
+    padding: calc(2px + env(safe-area-inset-top))
+      max(6px, env(safe-area-inset-right)) 2px
+      max(6px, env(safe-area-inset-left));
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .shell[data-page="calendar"] .calendar-primary-tools {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+  .shell[data-page="calendar"] .calendar-date-controls {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px 56px;
+    gap: 2px;
+    width: 100%;
+    min-width: 0;
+  }
+  .shell[data-page="calendar"] .calendar-date-controls > * {
+    min-width: 0;
+    min-height: 44px;
+    height: 44px;
+  }
+  .shell[data-page="calendar"] #calendar-prev {
+    grid-column: 1;
+  }
+  .shell[data-page="calendar"] #calendar-date {
+    grid-column: 2;
+    width: 100%;
+    padding: 8px 3px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--green-dark);
+    font-size: 16px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .shell[data-page="calendar"] #calendar-next {
+    grid-column: 3;
+  }
+  .shell[data-page="calendar"] #calendar-view-options {
+    display: inline-flex;
+    grid-column: 4;
+    padding: 8px 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .shell[data-page="calendar"] #calendar-prev,
+  .shell[data-page="calendar"] #calendar-next {
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    font-size: 26px;
+  }
+  .shell[data-page="calendar"] .calendar-card {
+    flex: 1;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .shell[data-page="calendar"] .calendar-scroll {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+    scrollbar-width: thin;
+  }
+  .shell[data-page="calendar"] .calendar-headers {
+    height: 56px;
+  }
+  .shell[data-page="calendar"] .calendar-headers > div {
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: 3px 2px;
+    font-size: 11px;
+    line-height: 14px;
+  }
+  .shell[data-page="calendar"] .calendar-headers > div > div {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .shell[data-page="calendar"] .calendar-headers small {
+    display: none;
+  }
+  .shell[data-page="calendar"] .calendar-headers .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 10px;
+  }
+  .shell[data-page="calendar"] .calendar-headers > div:first-child {
+    font-size: 10px;
+  }
+  .time-axis span {
+    padding: 0 4px;
+    font-size: 10px;
+    line-height: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .time-axis .time-half-hour {
+    color: #879087;
+    font-size: 9px;
+  }
+  .now-line span {
+    padding: 1px 0;
+    font-size: 9px;
+    line-height: 12px;
+  }
+  .shell[data-page="calendar"] .calendar-setup-hint {
+    min-height: 32px;
+    flex-wrap: nowrap;
+    gap: 8px;
+    margin: 0;
+    padding: 6px max(10px, env(safe-area-inset-right)) 6px
+      max(10px, env(safe-area-inset-left));
+    border-width: 0 0 1px;
+    border-radius: 0;
+    background: #f5eddb;
+    font-size: 12px;
+    line-height: 19px;
+  }
+  .shell[data-page="calendar"] .calendar-setup-hint p {
+    flex-basis: auto;
+  }
+  .shell[data-page="calendar"] .calendar-setup-hint:has(.btn) {
+    min-height: 52px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+  .shell[data-page="calendar"] .calendar-setup-hint .btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  .shell[data-page="calendar"] #app-error:not(:empty) {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .calendar-event {
+    padding: 2px 4px;
+    border-left-width: 3px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 13px;
+    color: #16302a;
+  }
+  .calendar-event .event-time {
+    overflow: hidden;
+    padding-right: 0;
+    font-size: 10px;
+    line-height: 12px;
+    letter-spacing: -0.25px;
+  }
+  .calendar-event strong {
+    margin: 1px 0;
+    font-size: 11px;
+    line-height: 13px;
+  }
+  .calendar-event .event-service {
+    -webkit-line-clamp: 1;
+    font-size: 10px;
+    line-height: 12px;
+  }
+  .calendar-event .event-room,
+  .calendar-event .drag-grip {
+    display: none;
+  }
+  .calendar-event .request-heart {
+    right: 2px;
+    bottom: 1px;
+    width: 14px;
+    height: 14px;
+    font-size: 11px;
+  }
+  .calendar-event:has(.request-heart) strong {
+    padding-right: 13px;
+  }
+  .calendar-event.short {
+    padding: 0 3px;
+  }
+  .calendar-event.short .event-service {
+    display: none;
+  }
+  .calendar-event.short strong {
+    margin: 0;
+    line-height: 11px;
+  }
+  .calendar-event.very-short {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0 2px;
+    border-top: 0;
+    border-bottom: 0;
+    border-radius: 2px;
+    line-height: 11px;
+  }
+  .calendar-event.very-short .event-time {
+    flex-shrink: 0;
+    font-size: 9px;
+    line-height: 11px;
+  }
+  .calendar-event.very-short strong {
+    min-width: 0;
+    font-size: 10px;
+    line-height: 11px;
+  }
+  .calendar-event.very-short .request-heart {
+    right: 1px;
+    bottom: 0;
+    width: 11px;
+    height: 11px;
+    font-size: 10px;
+  }
+  .calendar-block {
+    padding: 2px 4px;
+    border-left-width: 3px;
+    border-radius: 4px;
+    font-size: 10px;
+    line-height: 12px;
+  }
+  .calendar-block strong {
+    margin: 1px 0;
+    font-size: 11px;
+    line-height: 12px;
+  }
+  .calendar-block .block-note {
+    -webkit-line-clamp: 1;
+  }
+  .calendar-block.is-short {
+    gap: 3px;
+    padding: 0 2px;
+    border-top: 0;
+    border-bottom: 0;
+    border-radius: 2px;
+  }
+  .calendar-block.is-short .block-time,
+  .calendar-block.is-short strong {
+    line-height: 11px;
+  }
+  .calendar-block.is-short strong {
+    margin: 0;
+    font-size: 10px;
+  }
+  .calendar-today-floating {
+    right: max(12px, env(safe-area-inset-right));
+    bottom: calc(var(--mobile-nav-space) + 12px);
+    min-height: 44px;
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+  .toast {
+    bottom: calc(var(--mobile-nav-space) + 12px);
+  }
+  .calendar-reschedule-bar {
+    left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+    bottom: calc(var(--mobile-nav-space) + 8px);
+    max-height: calc(100dvh - var(--mobile-nav-space) - 24px);
+    overflow-y: auto;
+    padding: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px 6px;
+    border-radius: 10px;
+  }
+  #calendar-reschedule-time {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    font-size: 16px;
+    line-height: 20px;
+  }
+  #calendar-reschedule-resource,
+  #calendar-reschedule-instruction {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    font-size: 11px;
+    line-height: 15px;
+  }
+  #calendar-reschedule-earlier,
+  #calendar-reschedule-later,
+  #calendar-reschedule-cancel,
+  #calendar-reschedule-save {
+    grid-column: auto;
+    grid-row: auto;
+    min-height: 44px;
+    padding: 7px 3px;
+    font-size: 11px;
+  }
+  .drawer {
+    max-height: 100dvh;
+  }
+}
+
+@media (min-width: 560px) and (max-height: 560px) and (pointer: coarse) {
+  .calendar-reschedule-bar {
+    grid-template-columns: minmax(130px, 1fr) repeat(4, auto);
+    gap: 4px 8px;
+  }
+  #calendar-reschedule-time {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  #calendar-reschedule-resource {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  #calendar-reschedule-instruction {
+    grid-row: 3;
+  }
+  #calendar-reschedule-earlier {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+  #calendar-reschedule-later {
+    grid-column: 3;
+    grid-row: 1 / 3;
+  }
+  #calendar-reschedule-cancel {
+    grid-column: 4;
+    grid-row: 1 / 3;
+  }
+  #calendar-reschedule-save {
+    grid-column: 5;
+    grid-row: 1 / 3;
   }
 }
