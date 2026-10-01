@@ -3148,39 +3148,45 @@ try {
         const scrollBox = await page.locator("#calendar-scroll").boundingBox();
         const beforeScroll = await page
           .locator("#calendar-scroll")
-          .evaluate((el) => ({ left: el.scrollLeft, top: el.scrollTop }));
-        const cdp = await page.context().newCDPSession(page);
-        try {
-          const point = {
-            x: scrollBox.x + scrollBox.width / 2,
-            y: scrollBox.y + scrollBox.height / 2,
-            gestureSourceType: "touch",
-            preventFling: true,
-          };
-          await cdp.send("Input.synthesizeScrollGesture", {
-            ...point,
-            xDistance: -100,
-            yDistance: 0,
-          });
-          await cdp.send("Input.synthesizeScrollGesture", {
-            ...point,
-            xDistance: 0,
-            yDistance: -100,
-          });
-        } finally {
-          await cdp.detach();
-        }
+          .evaluate((el) => ({
+            left: el.scrollLeft,
+            top: el.scrollTop,
+            width: el.clientWidth,
+            totalWidth: el.scrollWidth,
+            height: el.clientHeight,
+            totalHeight: el.scrollHeight,
+          }));
+        assert.ok(
+          beforeScroll.totalWidth - beforeScroll.width > 100,
+          "Fixture exposes horizontally scrollable resources: " +
+            JSON.stringify(beforeScroll),
+        );
+        const point = {
+          x: scrollBox.x + scrollBox.width / 2,
+          y: scrollBox.y + scrollBox.height / 2,
+        };
+        const horizontal = await touchStart(page, point);
+        await horizontal.move({ x: point.x - 40, y: point.y });
+        await horizontal.move({ x: point.x - 110, y: point.y });
+        await horizontal.end();
+        await renderedFrames(page);
+        const vertical = await touchStart(page, point);
+        await vertical.move({ x: point.x, y: point.y - 40 });
+        await vertical.move({ x: point.x, y: point.y - 110 });
+        await vertical.end();
         await renderedFrames(page);
         const afterScroll = await page
           .locator("#calendar-scroll")
           .evaluate((el) => ({ left: el.scrollLeft, top: el.scrollTop }));
         assert.ok(
           afterScroll.left > beforeScroll.left + 25,
-          "Single-finger horizontal scrolling remains usable",
+          "Single-finger horizontal scrolling remains usable: " +
+            JSON.stringify({ beforeScroll, afterScroll }),
         );
         assert.ok(
           afterScroll.top > beforeScroll.top + 25,
-          "Single-finger vertical scrolling remains usable",
+          "Single-finger vertical scrolling remains usable: " +
+            JSON.stringify({ beforeScroll, afterScroll }),
         );
         const meta = await page.locator(".calendar-meta").boundingBox();
         await page.touchscreen.tap(meta.x + 20, meta.y + meta.height / 2);
