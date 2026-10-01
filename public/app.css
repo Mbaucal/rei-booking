@@ -2511,12 +2511,6 @@ body:has(.is-rescheduling) .calendar-today-floating {
   .booking-section-fields {
     gap: 13px 12px;
   }
-  .booking-form input,
-  .booking-form select,
-  .booking-form textarea {
-    /* Keep mobile focus from zooming the viewport around smaller text. */
-    font-size: 16px;
-  }
   .drawer:has(.booking-form) > footer {
     padding: 10px 16px max(10px, env(safe-area-inset-bottom));
   }
@@ -2525,5 +2519,80 @@ body:has(.is-rescheduling) .calendar-today-floating {
   }
   .drawer:has(.booking-form) #form-save {
     flex: 1;
+  }
+}
+
+.calendar-setup-hint {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  font-size: 13px;
+}
+.calendar-setup-hint p {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.calendar-setup-hint .btn {
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+/* Touch workspaces keep their normal scale while allowing native panning.
+   Browser/system zoom remains available; no viewport scaling lock is applied.
+   Set the policy on nested scroll containers too, since touch-action is
+   intersected with ancestors only up to the gesture's scrolling container. */
+@media (max-width: 700px), (any-pointer: coarse) {
+  body,
+  .shell,
+  .login-screen,
+  .drawer,
+  .drawer-content,
+  .rail,
+  .rail nav,
+  .calendar-scroll,
+  .legend,
+  .table-wrap,
+  #buyer-results,
+  .calendar-slot-menu,
+  .appointment-hover,
+  .calendar-reschedule-bar,
+  input,
+  select,
+  textarea,
+  button {
+    touch-action: pan-x pan-y;
+  }
+  /* More-specific drag-preview rules retain touch-action:none. Ordinary
+     inputs retain native selection, editing and single-finger scrolling. */
+  :is(#app, #drawer, #login-screen) :is(input, select, textarea) {
+    font-size: max(16px, 1em);
+  }
+  :is(#app, #drawer, #login-screen)
+    :is(input[type="date"], input[type="time"]) {
+    width: 100%;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+  .drawer .fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .drawer .fields > label {
+    min-width: 0;
+  }
+  .drawer > header,
+  .drawer > footer {
+    flex-shrink: 0;
+  }
+  .login-screen {
+    min-height: 100dvh;
   }
 }

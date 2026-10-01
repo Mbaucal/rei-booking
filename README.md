@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.12.0** — 1 October 2026.
+Current implementation release, **0.12.1** — 1 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -22,8 +22,10 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Owner client CSV import of one file up to 50,000 rows / 25 MiB, automatic resumable upload parts, explicit column mapping, preview/selection, duplicate and conflict checks, atomic repeat-safe confirmation; all-client CSV export with optional notes. See [client transfer](docs/client-transfer.md).
 - Therapist profiles, weekly hours and dated time off, independent of login accounts.
 - Treatment variants with duration, price and calendar colour.
+- An empty treatment catalogue explains the setup requirement and gives the owner a direct Add treatment route from Calendar. Reception is directed to the owner. Services and prices are entered explicitly, with no automatic sample records.
 - Daily calendar by therapist, room or both; two-table couple rooms; current Belgrade time.
 - Compact calendar controls leave more of the schedule visible on narrow screens. The grid fills the remaining viewport; short landscape windows retain document scrolling so controls remain reachable.
+- Touch layouts use readable form controls and constrain ordinary pinch/double-tap gestures while retaining one-finger scrolling and appointment dragging. Browser and system accessibility zoom remain under the user's control. Native-app/PWA installation and offline booking are not included in this release.
 - Calendar uses four 15-minute divisions per hour. Empty-slot selection uses 15-minute starts; existing appointment movement uses independent 5-minute steps. The full-day grid runs from 00:00 to 24:00, with visible boundary labels and an initial view near working hours.
 - Grey blocked-time cards store breaks, comments and call reminders, including outside working hours. The Block availability switch reserves a therapist, one table or a whole room; note-only entries do not prevent appointments. Blocks can be edited/removed and never count toward massage reports or bonuses. Free text is hidden from therapist accounts. See [calendar blocks](docs/calendar-blocks.md).
 - Desktop appointment cards offer a hover/focus information preview. Click or tap opens the appointment summary, with edit and reschedule actions for authorized roles. Therapist summaries exclude client identity, notes and financial data; reception excludes prices.
