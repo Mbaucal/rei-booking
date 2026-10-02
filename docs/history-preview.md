@@ -1,6 +1,6 @@
 # Appointment history preview
 
-The preview foundation (0.14.0, MBA-197–200) provides an owner-only **Clients → Import history** screen and temporary D1 review storage. Release 0.15.0 adds the separately confirmed [permanent archive](history-archive.md). Preparing a preview or saving client matches does not itself import any visits. All automated fixtures are fictional.
+The preview foundation (0.14.0, MBA-197–200) provides an owner-only **Clients → Import history** screen and temporary D1 review storage. Release 0.15.0 adds the separately confirmed [permanent archive](history-archive.md); 0.16.0 adds full-report confirmation and resumable processing. Preparing a preview or saving client matches does not itself import any visits. All automated fixtures are fictional.
 
 ## Owner workflow and runtime boundary
 

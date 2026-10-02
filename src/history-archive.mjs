@@ -391,7 +391,7 @@ async function review(db, user, body) {
     ),
     stmt(
       db,
-      `SELECT a.id,a.ref_hash,a.line_key,a.client_id,a.evidence_hash FROM history_archive a JOIN json_each(?) k ON a.ref_hash=json_extract(k.value,'$.ref') AND a.line_key=json_extract(k.value,'$.line') WHERE a.source=?`,
+      `SELECT a.id,a.ref_hash,a.line_key,a.client_id,a.evidence_hash FROM json_each(?) k CROSS JOIN history_archive a ON a.source=? AND a.ref_hash=json_extract(k.value,'$.ref') AND a.line_key=json_extract(k.value,'$.line')`,
       keys,
       source,
     ),
@@ -818,3 +818,6 @@ export async function historyArchiveRoutes(request, db, user) {
     return confirm(db, user, await readJSON(request, 17000));
   fail(404, "History import action not found.");
 }
+
+// The durable whole-file workflow reuses this authoritative bounded review.
+export { review as historyArchiveReview };

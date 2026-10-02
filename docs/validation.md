@@ -1,5 +1,13 @@
 # Development validation — 26 September 2026
 
+## Full-report history import release 0.16.0 — 2 October 2026
+
+MBA-202 replaces manual 50-row confirmations with a single confirmation of a whole report, up to the existing 50,000-row / 25 MiB file limit. The actual Worker/D1 suite covers frozen full-report reviews, cross-step duplicate detection, explicit confirmation, atomic processing and progress, exact retries, competing jobs, source-link/client/native/archive changes, cancellation with retained partial progress, and confirmed jobs surviving preview removal and Worker restart. The large fixture defaults to 1,205 records and can be run at the 50,000-row boundary with `REI_BULK_TEST_ROWS=50000 node --test tests/history-bulk-api.test.mjs`.
+
+Browser scenarios cover desktop/phone reports larger than one month, a duplicate across processing boundaries, overlapping reports, late unmatched rows, pause/reload/resume, and stale work after partial progress. These use fictional API fixtures with real browser assets; the separate Worker/D1 tests verify persistence and transactions. The page must remain open for automatic processing; browser closure pauses requests and saved progress can be resumed.
+
+Exact candidate CI, independent review, measured capacity and deployment verification are recorded in MBA-202. No real salon history is imported by the checks. Physical Safari and an owner-confirmed real report remain separate acceptance steps.
+
 ## History archive release 0.15.0 — 2 October 2026
 
 The new Worker/D1 checks cover explicit owner review/acknowledgement, immutable original statuses, unknown completion, source/client/contact conflicts, repeat and reordered reports, reference-mode ambiguity, concurrent imports, stale client/preview/native state, atomic rollback and receipts surviving preview expiry/deletion. Profile API checks cover full-archive status counts, pagination and owner/reception/therapist projections. Runtime schema and the additive migration are compared.
