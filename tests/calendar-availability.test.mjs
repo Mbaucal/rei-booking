@@ -59,7 +59,7 @@ test("therapist slot keeps its time and therapist, finds the second table for th
   assert.match(result.message, /Table 2/);
 });
 
-test("room slot retains its clicked table half and selects a free therapist", () => {
+test("explicit table selection retains that table and selects a free therapist", () => {
   const result = suggest(
     [booking({ roomId: "r2", bed: 0 })],
     { roomId: true, bed: true },
@@ -74,6 +74,23 @@ test("room slot retains its clicked table half and selects a free therapist", ()
   );
   assert.equal(blocked.available, false);
   assert.deepEqual(blocked.selection, selection({ therapistId: "t2", bed: 1 }));
+});
+
+test("a unified room slot keeps the room and selects a free table for the full duration", () => {
+  const first = booking({ therapistId: "t2", start: 880, duration: 20 });
+  const result = suggest([first], { roomId: true });
+  assert.equal(result.available, true);
+  assert.deepEqual(result.selection, selection({ bed: 1 }));
+  const full = suggest(
+    [first, booking({ id: "second", therapistId: "t3", bed: 1 })],
+    { roomId: true },
+  );
+  assert.equal(full.available, false);
+  assert.equal(
+    full.selection.roomId,
+    "r1",
+    "does not silently move to another room",
+  );
 });
 
 test("working hours include the full interval; weekly day off, dated time off and inactive therapists are excluded", () => {

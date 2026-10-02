@@ -849,10 +849,8 @@ function renderCalendar() {
   $("calendar-summary").textContent =
     `${prettyDate(state.date)} · ${state.appointments.filter((a) => !["cancelled", "no_show"].includes(a.status)).length} appointments`;
   const timeAxis = mobile ? 44 : 60,
-    mobileColumnWidth = Math.max(92, (scroll.clientWidth - timeAxis) / 3),
-    widths = list.map((r) =>
-      mobile ? mobileColumnWidth * r.capacity : r.capacity === 2 ? 280 : 180,
-    );
+    mobileColumnWidth = Math.max(80, (scroll.clientWidth - timeAxis) / 3),
+    widths = list.map(() => (mobile ? mobileColumnWidth : 180));
   $("calendar-grid").style.setProperty("--time-axis-width", `${timeAxis}px`);
   $("calendar-grid").style.setProperty(
     "--calendar-quarter-height",
@@ -861,7 +859,7 @@ function renderCalendar() {
   $("calendar-body").style.height = `${calendarHeight(END - START)}px`;
   $("calendar-grid").style.setProperty(
     "--columns",
-    widths.map((w, i) => `minmax(${w}px, ${list[i].capacity}fr)`).join(" "),
+    widths.map((w) => `minmax(${w}px, 1fr)`).join(" "),
   );
   $("calendar-grid").style.setProperty(
     "--grid-width",
@@ -885,7 +883,7 @@ function renderCalendar() {
     list
       .map(
         (r) =>
-          `<div class="calendar-column ${r.capacity === 2 ? "couple" : ""}" data-resource="${esc(r.id)}" data-kind="${r.kind}" aria-label="${esc(r.name)}">${availability(r)}${calendarResourceItems(
+          `<div class="calendar-column" data-resource="${esc(r.id)}" data-kind="${r.kind}" aria-label="${esc(r.name)}">${availability(r)}${calendarResourceItems(
             r,
             state.appointments,
             state.blocks,
@@ -921,6 +919,8 @@ function renderCalendar() {
         date,
         resources: resources("all"),
         appointments: state.appointments.filter(eligible),
+        blockingAppointments: state.appointments,
+        blocks: state.blocks,
       }),
       isCurrent: () => current() && operator(),
       onSave: (candidate) =>
@@ -1011,10 +1011,9 @@ function availability(r) {
     .join("");
 }
 function eventHTML(a, r, layout = null) {
-  const lane = r.kind === "room" ? a.bed : 0;
-  const left = layout?.left ?? (lane / r.capacity) * 100;
-  const width = layout?.width ?? 100 / r.capacity;
-  return `<div class="calendar-event ${a.duration <= 30 ? "short" : ""} ${a.duration <= 15 ? "very-short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time">${clock(a.start)}–${clock(a.start + a.duration)}</span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
+  const left = layout?.left ?? 0;
+  const width = layout?.width ?? 100;
+  return `<div class="calendar-event ${width < 100 ? "is-overlapping" : ""} ${a.duration <= 30 ? "short" : ""} ${a.duration <= 15 ? "very-short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time"><span class="event-start">${clock(a.start)}</span><span class="event-time-separator">–</span><span class="event-end">${clock(a.start + a.duration)}</span></span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
 }
 function updateClock() {
   const p = dateParts();
