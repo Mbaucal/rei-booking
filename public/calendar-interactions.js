@@ -94,7 +94,7 @@ export function mountCalendarInteractions({
     blockClick = false,
     keyboardScroll = null;
   const remembered = new WeakMap();
-  let scrollPositionsAtOpen = new Map();
+  const scrollPositionsAtAnchor = new Map();
   const columns = [...root.querySelectorAll("[data-resource]")];
   const resource = (column) =>
     resources.find(
@@ -114,11 +114,20 @@ export function mountCalendarInteractions({
     menu.hidden = true;
     selected = null;
     menuColumn = null;
-    scrollPositionsAtOpen.clear();
+    keyboardScroll = null;
+    scrollPositionsAtAnchor.clear();
     hint.remove();
     if (suppress) blockClick = true;
     if (restoreFocus && previous?.isConnected)
       previous.focus({ preventScroll: true });
+  }
+  function rememberScrollPositions() {
+    scrollPositionsAtAnchor.clear();
+    for (let node = root; node; node = node.parentElement)
+      scrollPositionsAtAnchor.set(node, {
+        top: node.scrollTop,
+        left: node.scrollLeft,
+      });
   }
   function showHint(column, slot) {
     remembered.set(column, slot);
@@ -131,6 +140,10 @@ export function mountCalendarInteractions({
     marker.style.top = `${(slot.start - slot.bandStart) * SCALE}px`;
     marker.textContent = time(slot.start);
     column.append(hint);
+    // A mode switch can queue a scroll event before this hint is displayed.
+    // Its geometry already uses the current offsets, so that old notification
+    // must not dismiss the new selection when no later movement has occurred.
+    rememberScrollPositions();
   }
   function open(column, slot, anchor) {
     if (!isCurrent()) return;
@@ -154,11 +167,7 @@ export function mountCalendarInteractions({
     // Focus and keyboard navigation can queue scroll events. Layout already
     // reflects those offsets when the menu is anchored; only a later movement
     // should dismiss it, not notification of an earlier scroll.
-    for (let node = root; node; node = node.parentElement)
-      scrollPositionsAtOpen.set(node, {
-        top: node.scrollTop,
-        left: node.scrollLeft,
-      });
+    rememberScrollPositions();
     add.focus({ preventScroll: true });
   }
   function fromPointer(column, event) {
@@ -275,7 +284,11 @@ export function mountCalendarInteractions({
         else if (bandTop + BAND * SCALE > frame.bottom)
           root.scrollTop += bandTop + BAND * SCALE - frame.bottom;
         if (previousScroll !== root.scrollTop)
-          keyboardScroll = { column, top: root.scrollTop };
+          keyboardScroll = {
+            column,
+            top: root.scrollTop,
+            left: root.scrollLeft,
+          };
       } else if (event.key === "Escape") {
         dismiss();
       }
@@ -321,17 +334,23 @@ export function mountCalendarInteractions({
       if (menu.contains(event.target)) return;
       const scroller =
         event.target === doc ? doc.scrollingElement : event.target;
-      const atOpen = scrollPositionsAtOpen.get(scroller);
+      const atAnchor = scrollPositionsAtAnchor.get(scroller);
       if (
-        !menu.hidden &&
-        atOpen &&
-        atOpen.top === scroller.scrollTop &&
-        atOpen.left === scroller.scrollLeft
-      )
+        (!menu.hidden || hint.isConnected) &&
+        atAnchor &&
+        atAnchor.top === scroller.scrollTop &&
+        atAnchor.left === scroller.scrollLeft
+      ) {
+        if (scroller === root) keyboardScroll = null;
         return;
+      }
       const movedByKeyboard = keyboardScroll;
       keyboardScroll = null;
-      if (event.target === root && movedByKeyboard?.top === root.scrollTop) {
+      if (
+        event.target === root &&
+        movedByKeyboard?.top === root.scrollTop &&
+        movedByKeyboard.left === root.scrollLeft
+      ) {
         showHint(
           movedByKeyboard.column,
           remembered.get(movedByKeyboard.column),

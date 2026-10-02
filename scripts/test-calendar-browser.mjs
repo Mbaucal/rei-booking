@@ -1668,11 +1668,11 @@ try {
         box = await column.boundingBox();
       await page.mouse.move(
         box.x + box.width * 0.75,
-        box.y + (await pixelAt(page, 600)) + 20,
+        box.y + (await pixelAt(page, 585)) + 20,
       );
       await page.mouse.click(
         box.x + box.width * 0.75,
-        box.y + (await pixelAt(page, 600)) + 20,
+        box.y + (await pixelAt(page, 585)) + 20,
       );
       assert.equal(
         await page.locator("#calendar-slot-menu").isVisible(),
