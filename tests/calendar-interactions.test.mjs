@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   calendarSlotAtPoint,
   calendarMenuPosition,
+  calendarSelectionDefaults,
 } from "../public/calendar-interactions.js";
 
 test("hover selects the containing quarter-hour start, including a vertically scrolled column", () => {
@@ -10,40 +11,55 @@ test("hover selects the containing quarter-hour start, including a vertically sc
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 350 }), {
     start: 855,
     bandStart: 855,
-    bed: 0,
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 364 }), {
     start: 855,
     bandStart: 855,
-    bed: 0,
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 100, y: 380 }), {
     start: 870,
     bandStart: 870,
-    bed: 0,
   });
 });
 
-test("table halves remain relative to room coordinates during horizontal scrolling", () => {
+test("every horizontal point in a scrolled room selects the same time without choosing a physical table", () => {
   const rect = { top: 100, left: -75, width: 280 };
-  assert.equal(calendarSlotAtPoint(rect, { x: 64, y: 300 }, 2).bed, 0);
-  assert.equal(calendarSlotAtPoint(rect, { x: 65, y: 300 }, 2).bed, 1);
-  assert.equal(calendarSlotAtPoint(rect, { x: 205, y: 300 }, 2).bed, 1);
-  assert.equal(calendarSlotAtPoint(rect, { x: 205, y: 300 }, 1).bed, 0);
+  for (const x of [-100, -75, 64, 65, 205, 1000]) {
+    const slot = calendarSlotAtPoint(rect, { x, y: 300 });
+    assert.deepEqual(slot, { start: 90, bandStart: 90 });
+    assert.deepEqual(
+      calendarSelectionDefaults("2026-10-02", slot, {
+        id: "r1",
+        kind: "room",
+        capacity: 2,
+      }),
+      { date: "2026-10-02", start: 90, roomId: "r1" },
+    );
+  }
 });
 
-test("calendar boundaries never produce an off-grid start or a non-existent table", () => {
+test("calendar boundaries never produce an off-grid start, and therapist defaults remain independent of rooms", () => {
   const rect = { top: 100, left: 80, width: 280 };
   assert.deepEqual(calendarSlotAtPoint(rect, { x: -100, y: -100 }, 2), {
     start: 0,
     bandStart: 0,
-    bed: 0,
   });
   assert.deepEqual(calendarSlotAtPoint(rect, { x: 1000, y: 4000 }, 2), {
     start: 1425,
     bandStart: 1425,
-    bed: 1,
   });
+  assert.deepEqual(
+    calendarSelectionDefaults(
+      "2026-10-02",
+      { start: 0 },
+      {
+        id: "t1",
+        kind: "therapist",
+        capacity: 1,
+      },
+    ),
+    { date: "2026-10-02", start: 0, therapistId: "t1" },
+  );
 });
 
 test("quick actions prefer the pointer's lower-right side and flip beside screen edges", () => {
@@ -104,7 +120,6 @@ test("hover keeps the final pixels of each quarter in that quarter", () => {
     assert.deepEqual(calendarSlotAtPoint(rect, { x: 50, y }), {
       start,
       bandStart,
-      bed: 0,
     });
   }
 });

@@ -4,9 +4,11 @@ The calendar displays a full local day, from 00:00 through 24:00. It opens near 
 
 ## Use
 
-Choose **Add blocked time** from a calendar slot. The form retains that slot's date, time and therapist or room/table. Set the title, optional note and duration, then save. Click a grey card to view it, edit it or remove it. This does not require a treatment or client record.
+Choose **Add blocked time** from a calendar slot. The form retains that slot's date, time and therapist or room. A room slot defaults to all tables; choose a specific table in the form when needed. Set the title, optional note and duration, then save. Click a grey card to view it, edit it or remove it. This does not require a treatment or client record.
 
 **Block availability** reserves the selected resource for the full interval. Turn it off for a call reminder or other note that should not prevent a booking. Note-only entries can overlap appointments and other notes. A room entry can cover one table or all tables; a therapist entry reserves only that therapist.
+
+Each room occupies one calendar column regardless of table count. A lone card fills that column, and entries whose times overlap appear side by side. A whole-room block appears once. These visual lanes do not change physical table assignments or room capacity.
 
 Blocks and notes may be placed outside working hours. The expanded display does not change therapist working hours or the existing appointment booking rules. Midnight is represented as 00:00 at the start and 24:00 at the end of a day; an entry must finish within its selected date. Use separate entries for an interval spanning two dates.
 

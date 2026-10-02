@@ -6,9 +6,25 @@ import {
   clamp,
   calendarBandStart,
   calendarTime as time,
-  calendarSlotAtPoint,
+  calendarSlotAtPoint as geometrySlotAtPoint,
 } from "./calendar-geometry.js";
-export { calendarSlotAtPoint } from "./calendar-geometry.js";
+
+// Room columns are visual resources, not physical table selectors. A booking
+// fixes the room while the form chooses a table for the complete treatment.
+export function calendarSlotAtPoint(rect, point) {
+  const { start, bandStart } = geometrySlotAtPoint(rect, point);
+  return { start, bandStart };
+}
+
+export function calendarSelectionDefaults(date, slot, resource) {
+  return {
+    date,
+    start: slot.start,
+    ...(resource.kind === "therapist"
+      ? { therapistId: resource.id }
+      : { roomId: resource.id }),
+  };
+}
 
 export function calendarMenuPosition(anchor, size, viewport) {
   const margin = 8,
@@ -105,14 +121,12 @@ export function mountCalendarInteractions({
       previous.focus({ preventScroll: true });
   }
   function showHint(column, slot) {
-    const r = resource(column);
     remembered.set(column, slot);
     hint.dataset.start = String(slot.start);
     hint.dataset.bandStart = String(slot.bandStart);
-    hint.dataset.bed = String(slot.bed);
     hint.style.top = `${(slot.bandStart - START) * SCALE}px`;
-    hint.style.left = `${(slot.bed / r.capacity) * 100}%`;
-    hint.style.width = `${100 / r.capacity}%`;
+    hint.style.left = "0%";
+    hint.style.width = "100%";
     hint.style.height = `${BAND * SCALE}px`;
     marker.style.top = `${(slot.start - slot.bandStart) * SCALE}px`;
     marker.textContent = time(slot.start);
@@ -122,20 +136,13 @@ export function mountCalendarInteractions({
     if (!isCurrent()) return;
     dismiss();
     const r = resource(column);
-    selected = {
-      date,
-      start: slot.start,
-      ...(r.kind === "therapist"
-        ? { therapistId: r.id }
-        : { roomId: r.id, bed: slot.bed }),
-    };
+    selected = calendarSelectionDefaults(date, slot, r);
     menuColumn = column;
     showHint(column, slot);
     menu.querySelector("#calendar-slot-menu-time").textContent = time(
       slot.start,
     );
-    menu.querySelector("#calendar-slot-menu-resource").textContent =
-      r.name + (r.kind === "room" ? ` · Table ${slot.bed + 1}` : "");
+    menu.querySelector("#calendar-slot-menu-resource").textContent = r.name;
     const visible = viewport();
     menu.style.maxWidth = `${Math.max(1, visible.width - 16)}px`;
     menu.style.maxHeight = `${Math.max(1, visible.height - 16)}px`;
@@ -155,20 +162,15 @@ export function mountCalendarInteractions({
     add.focus({ preventScroll: true });
   }
   function fromPointer(column, event) {
-    return calendarSlotAtPoint(
-      column.getBoundingClientRect(),
-      { x: event.clientX, y: event.clientY },
-      resource(column).capacity,
-    );
+    return calendarSlotAtPoint(column.getBoundingClientRect(), {
+      x: event.clientX,
+      y: event.clientY,
+    });
   }
   function initialKeyboardSlot(column) {
     const box = column.getBoundingClientRect();
     const top = Math.max(box.top, visibleGridBounds().top);
-    return calendarSlotAtPoint(
-      box,
-      { x: box.left + 8, y: top + 10 },
-      resource(column).capacity,
-    );
+    return calendarSlotAtPoint(box, { x: box.left + 8, y: top + 10 });
   }
   function visibleGridBounds() {
     const frame = root.getBoundingClientRect(),
@@ -234,24 +236,17 @@ export function mountCalendarInteractions({
     listen(column, "keydown", (event) => {
       if (event.target !== column || !isCurrent()) return;
       let slot = remembered.get(column) || initialKeyboardSlot(column);
-      const r = resource(column);
       if (["Enter", " "].includes(event.key)) {
         event.preventDefault();
         const rect = column.getBoundingClientRect();
         open(column, slot, {
-          x: rect.left + (rect.width * (slot.bed + 0.5)) / r.capacity,
+          x: rect.left + rect.width / 2,
           y: rect.top + (slot.start - START) * SCALE,
         });
       } else if (
-        [
-          "ArrowUp",
-          "ArrowDown",
-          "PageUp",
-          "PageDown",
-          "Home",
-          "End",
-          ...(r.capacity > 1 ? ["ArrowLeft", "ArrowRight"] : []),
-        ].includes(event.key)
+        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"].includes(
+          event.key,
+        )
       ) {
         event.preventDefault();
         const delta =
@@ -270,12 +265,6 @@ export function mountCalendarInteractions({
         slot = {
           start,
           bandStart: calendarBandStart(start),
-          bed:
-            event.key === "ArrowLeft"
-              ? 0
-              : event.key === "ArrowRight"
-                ? r.capacity - 1
-                : slot.bed,
         };
         showHint(column, slot);
         const bandTop =

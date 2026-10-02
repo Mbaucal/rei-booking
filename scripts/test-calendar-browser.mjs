@@ -739,7 +739,7 @@ async function roomSlot(page, device, id = "r1", lane = 1) {
   const box = await column.boundingBox();
   const point = {
     x: box.x + box.width * (id === "r1" ? (lane === 1 ? 0.75 : 0.25) : 0.5),
-    y: box.y + (await pixelAt(page, 600)) + 4,
+    y: Math.ceil(box.y + (await pixelAt(page, 585))),
   };
   if (device.mobile) await page.touchscreen.tap(point.x, point.y);
   else await page.mouse.click(point.x, point.y);
@@ -955,7 +955,7 @@ async function renderedFrames(page) {
 try {
   for (const device of [desktop, phone, tablet]) {
     await scenario(
-      "clicked second table, full treatment recheck and intact save",
+      "room quick action automatically chooses a free table, rechecks treatment and saves intact",
       device,
       async ({ page, f, open }) => {
         f.appointments = [
@@ -964,6 +964,9 @@ try {
         ];
         await open();
         await roomSlot(page, device);
+        assert.equal((await selected(page)).start, "09:45");
+        await control(page, "start").fill("10:00");
+        await control(page, "start").press("Tab");
         await stateIs(page, "available");
         let values = await selected(page);
         assert.equal(values.roomId, "r1");
@@ -982,7 +985,7 @@ try {
         assert.equal(
           values.bed,
           "1",
-          "Changing treatment must preserve the clicked table",
+          "Changing treatment must keep a table free for the whole duration",
         );
         assert.equal(values.grossCents, "5900.00");
         await bookingLayout(page);
@@ -1201,7 +1204,7 @@ try {
       "full-day labels stay visible and populated workday slots select quarter hours",
       device,
       async ({ page, f, open }) => {
-        f.appointments = [booking("first-hour", "tA", "r1", 0, 600, 90)];
+        f.appointments = [booking("first-hour", "tA", "r2", 0, 600, 90)];
         await open();
         await selectMode(page, "rooms");
         const column = page.locator('[data-resource="r1"]');
@@ -1317,9 +1320,9 @@ try {
               "The selected quarter spans 15 minutes",
             );
             assert.ok(
-              rect.x >= box.x + box.width / 2 - 3 &&
-                rect.x + rect.width <= box.x + box.width + 1,
-              "Hover stays in the empty second table half",
+              Math.abs(rect.x - box.x) <= 3 &&
+                Math.abs(rect.width - box.width) <= 3,
+              "Hover spans the unified room without permanent table halves",
             );
             if (minute === 640)
               await capture(page, "desktop-1040-selects1030-hover");
@@ -1332,7 +1335,7 @@ try {
           );
           assert.match(
             await page.locator("#calendar-slot-menu-resource").textContent(),
-            /Table 2/,
+            /^QA Couple$/,
           );
           if (minute === 640) {
             await page.locator("#calendar-slot-add").click();
@@ -1344,7 +1347,7 @@ try {
               "10:30",
               "Pointer at 10:40 prefills a 10:30 booking",
             );
-            assert.equal(values.bed, "1");
+            assert.equal(values.bed, "0");
             assert.equal(values.roomId, "r1");
             await page.locator("#form-cancel").click();
           } else await page.locator("#calendar-slot-close").click();
@@ -1363,7 +1366,7 @@ try {
         );
         assert.match(
           await page.locator("#calendar-slot-menu-resource").textContent(),
-          /Table 2/,
+          /^QA Couple$/,
         );
         await page.keyboard.press("Escape");
         await page.locator("#calendar-slot-menu").waitFor({ state: "hidden" });
@@ -1700,7 +1703,7 @@ try {
         await open();
         await denseView(page);
         assert.equal(await page.locator(".calendar-column").count(), 3);
-        assert.equal(await page.locator(".calendar-column.couple").count(), 2);
+        assert.equal(await page.locator(".calendar-column.couple").count(), 0);
         assert.equal(
           await page.locator("[data-appointment]").count(),
           f.appointments.length,
@@ -2267,7 +2270,7 @@ try {
     },
   );
   await scenario(
-    "All resources mirrors room-half moves and preserves a declined then accepted therapist request",
+    "All resources mirrors unified-room moves and preserves a declined then accepted therapist request",
     desktop,
     async ({ page, f, open }) => {
       f.appointments = [
@@ -2313,12 +2316,13 @@ try {
         .locator(".calendar-reschedule-preview")
         .boundingBox();
       assert.ok(
-        previewBox.x >= roomBox.x + roomBox.width / 2,
-        "Room copy moves into the second table half",
+        Math.abs(previewBox.x - roomBox.x - 3) <= 1 &&
+          Math.abs(previewBox.width - (roomBox.width - 6)) <= 1,
+        "Lone room copy stays full width despite the horizontal drag position",
       );
       assert.match(
         await page.locator("#calendar-reschedule-resource").textContent(),
-        /Table 2/,
+        /Table 1/,
       );
       assert.equal(
         f.writes.length,
@@ -2333,7 +2337,7 @@ try {
       await page
         .locator("#calendar-reschedule-bar")
         .waitFor({ state: "hidden" });
-      assert.equal(f.writes[0].body.bed, 1);
+      assert.equal(f.writes[0].body.bed, 0);
       assert.equal(f.writes[0].body.start, 1135);
       assert.equal(f.writes[0].body.therapistId, "tA");
       await page
@@ -2392,7 +2396,7 @@ try {
       assert.equal(f.writes.length, 2);
       assert.equal(f.writes[1].body.therapistId, "tB");
       assert.equal(f.writes[1].body.requestedTherapistId, "tA");
-      assert.equal(f.writes[1].body.bed, 1);
+      assert.equal(f.writes[1].body.bed, 0);
       assert.equal(f.writes[1].body.duration, 90);
     },
   );
@@ -2461,7 +2465,12 @@ try {
           "room",
         );
         assert.equal(await blockControl(page, "resourceId").inputValue(), "r1");
-        assert.equal(await blockControl(page, "bed").inputValue(), "1");
+        assert.equal(
+          await blockControl(page, "bed").inputValue(),
+          "",
+          "Room action defaults to the whole room",
+        );
+        await blockControl(page, "bed").selectOption("1");
         assert.equal(
           await blockControl(page, "blocksAvailability").isChecked(),
           true,
@@ -2502,8 +2511,9 @@ try {
           column = await page.locator('[data-resource="r1"]').boundingBox();
         assert.ok(Math.abs(box.y - column.y - (await pixelAt(page, 495))) <= 1);
         assert.ok(
-          box.x >= column.x + column.width / 2,
-          "Room block stays inside its selected second table",
+          Math.abs(box.x - column.x - 3) <= 1 &&
+            Math.abs(box.width - (column.width - 6)) <= 1,
+          "A lone table-specific block uses the whole room width",
         );
         await capture(page, `${device.name}-early-grey-block`);
         await entry.click();
@@ -2780,11 +2790,14 @@ try {
             ) * 15
           );
         });
-        await page.keyboard.press("ArrowRight");
+        await page.keyboard.press("ArrowDown");
         await renderedFrames(page);
         const hint = column.locator(".calendar-slot-hint");
-        assert.equal(await hint.getAttribute("data-start"), String(initial));
-        assert.equal(await hint.getAttribute("data-bed"), "1");
+        assert.equal(
+          await hint.getAttribute("data-start"),
+          String(initial + 15),
+        );
+        assert.equal(await hint.getAttribute("data-bed"), null);
         for (const key of ["ArrowDown", "End", "Home", "PageDown"]) {
           await page.keyboard.press(key);
           await renderedFrames(page);
@@ -2806,7 +2819,7 @@ try {
           assert.equal(Number(await hint.getAttribute("data-start")) % 15, 0);
         }
         assert.equal(await hint.getAttribute("data-start"), "30");
-        assert.equal(await hint.getAttribute("data-bed"), "1");
+        assert.equal(await hint.getAttribute("data-bed"), null);
         await page.keyboard.press("Enter");
         await page.locator("#calendar-slot-menu").waitFor();
         assert.equal(
@@ -2815,7 +2828,7 @@ try {
         );
         assert.match(
           await page.locator("#calendar-slot-menu-resource").textContent(),
-          /Table 2/,
+          /^QA Couple$/,
         );
         await withinViewport(
           page,
@@ -3504,8 +3517,8 @@ try {
         const couple = await page.locator('[data-resource="r1"]').boundingBox();
         const single = await page.locator('[data-resource="r2"]').boundingBox();
         assert.ok(
-          Math.abs(couple.width - 2 * single.width) <= 3,
-          "Two-table room is twice the single-table room width",
+          Math.abs(couple.width - single.width) <= 1,
+          "Room columns have equal widths regardless of table capacity",
         );
         await capture(page, `${device.name}-schedule-first-room-tables`);
         await openAdd(page, "appointment");
@@ -3723,6 +3736,337 @@ try {
         page.locator("#calendar-scroll"),
         "Restored phone schedule",
       );
+    },
+  );
+  for (const device of [
+    desktop,
+    tablet,
+    phone,
+    {
+      name: "phone-narrow",
+      viewport: { width: 320, height: 568 },
+      mobile: true,
+    },
+  ])
+    await scenario(
+      "three equal room columns use full-width lone cards and split only real overlaps",
+      device,
+      async ({ page, f, open }) => {
+        f.catalogue.rooms = [
+          { id: "r1", name: "QA Garden", capacity: 2 },
+          { id: "r2", name: "QA Orchid", capacity: 2 },
+          { id: "r3", name: "QA Quiet", capacity: 1 },
+        ];
+        for (const letter of ["D", "E"])
+          f.catalogue.therapists.push({
+            ...f.catalogue.therapists[0],
+            id: "t" + letter,
+            name: "QA Therapist " + letter,
+          });
+        f.appointments = [
+          booking("room-lone-table-two", "tA", "r1", 1, 600, 60),
+          booking("room-adjacent", "tA", "r1", 0, 660, 30),
+          booking("room-overlap-a", "tA", "r1", 0, 690, 45),
+          booking("room-overlap-b", "tE", "r1", 1, 690, 45),
+          booking("room-after-overlap", "tA", "r1", 1, 735, 45),
+          booking("other-overlap-a", "tB", "r2", 0, 600, 60),
+          booking("other-overlap-b", "tC", "r2", 1, 600, 60),
+          booking("single-room", "tD", "r3", 0, 600, 60),
+        ];
+        f.blocks = [
+          calendarBlock("whole-room-note", {
+            resourceId: "r3",
+            bed: null,
+            start: 690,
+            duration: 45,
+            blocksAvailability: false,
+            title: "QA follow-up reminder",
+          }),
+        ];
+        await open();
+        await selectMode(page, "rooms");
+        const columns = [];
+        for (const id of ["r1", "r2", "r3"]) {
+          const column = page.locator(`[data-resource="${id}"]`);
+          const box = await column.boundingBox();
+          columns.push(box);
+          const visible = await page.evaluate(
+            ({ x, width }) => x >= -1 && x + width <= innerWidth + 1,
+            box,
+          );
+          assert.equal(
+            visible,
+            true,
+            "All three unified room columns fit the viewport: " + id,
+          );
+        }
+        assert.ok(
+          Math.max(...columns.map((x) => x.width)) -
+            Math.min(...columns.map((x) => x.width)) <=
+            1,
+          "Two-table and one-table rooms use equal widths",
+        );
+        assert.equal(
+          await page.locator(".calendar-column.couple").count(),
+          0,
+          "Room columns have no permanent table-half class",
+        );
+        const dividers = await page
+          .locator(".calendar-column")
+          .evaluateAll((nodes) =>
+            nodes.map((el) => ({
+              content: getComputedStyle(el, "::after").content,
+              border: getComputedStyle(el, "::after").borderLeftWidth,
+            })),
+          );
+        assert.ok(
+          dividers.every(
+            (style) =>
+              ["none", "normal"].includes(style.content) &&
+              parseFloat(style.border) === 0,
+          ),
+          "Room columns have no permanent pseudo-element table divider: " +
+            JSON.stringify(dividers),
+        );
+        const full = async (id, roomId = "r1") => {
+          const card = page.locator(`[data-appointment="${id}"]`);
+          const box = await withinViewport(
+            page,
+            card,
+            "Full-width room appointment " + id,
+          );
+          const column = await page
+            .locator(`[data-resource="${roomId}"]`)
+            .boundingBox();
+          assert.ok(
+            Math.abs(box.x - column.x - 3) <= 1 &&
+              Math.abs(box.width - column.width + 6) <= 1,
+            "Only simultaneous bookings narrow a card: " + id,
+          );
+        };
+        await full("room-lone-table-two");
+        await full("room-adjacent");
+        await full("room-after-overlap");
+        await full("single-room", "r3");
+        for (const prefix of ["room", "other"]) {
+          const a = await withinViewport(
+            page,
+            page.locator(`[data-appointment="${prefix}-overlap-a"]`),
+            "First overlapping appointment",
+          );
+          const b = await withinViewport(
+            page,
+            page.locator(`[data-appointment="${prefix}-overlap-b"]`),
+            "Second overlapping appointment",
+          );
+          assert.ok(
+            Math.abs(a.y - b.y) <= 1 && Math.abs(a.width - b.width) <= 1,
+          );
+          assert.ok(
+            a.x + a.width <= b.x + 1 || b.x + b.width <= a.x + 1,
+            "Different tables occupy separate lanes only while simultaneous",
+          );
+          if (device.mobile) {
+            for (const suffix of ["a", "b"]) {
+              const clocks = await page
+                .locator(`[data-appointment="${prefix}-overlap-${suffix}"]`)
+                .evaluate((card) =>
+                  [".event-start", ".event-end"].map((selector) => {
+                    const el = card.querySelector(selector),
+                      range = document.createRange();
+                    range.selectNodeContents(el);
+                    const text = range.getBoundingClientRect(),
+                      bounds = card.getBoundingClientRect();
+                    return {
+                      text: el.textContent,
+                      visible:
+                        getComputedStyle(el).display !== "none" &&
+                        text.left >= bounds.left - 1 &&
+                        text.right <= bounds.right + 1 &&
+                        text.bottom <= bounds.bottom + 1,
+                    };
+                  }),
+                );
+              assert.ok(
+                clocks.every((clock) => clock.visible),
+                "Start and end clocks fit actual narrow overlapping cards: " +
+                  JSON.stringify(clocks),
+              );
+            }
+          }
+        }
+        const note = page.locator('[data-calendar-block="whole-room-note"]');
+        assert.equal(
+          await note.count(),
+          1,
+          "Whole-room notes render once instead of once per table",
+        );
+        const noteBox = await withinViewport(page, note, "Whole-room note");
+        assert.ok(Math.abs(noteBox.width - columns[2].width + 6) <= 1);
+        await noPageOverflow(page, "Three-room unified calendar");
+        await capture(page, `${device.name}-unified-three-room-calendar`);
+        await page.locator('[data-appointment="room-lone-table-two"]').click();
+        await page.locator("#appointment-summary-edit").click();
+        await page.locator("#appointment-form").waitFor();
+        assert.equal(
+          await control(page, "bed").inputValue(),
+          "1",
+          "Full-width display preserves the real Table 2 assignment",
+        );
+        await page.locator("#form-cancel").click();
+        assert.equal(f.writes.length + f.blockWrites.length, 0);
+      },
+    );
+  for (const device of [desktop, phone])
+    await scenario(
+      "either side of an empty room selects the room and later allocates its free table",
+      device,
+      async ({ page, f, open }) => {
+        f.appointments = [booking("later-table-one", "tA", "r1", 0, 720, 60)];
+        await open();
+        for (const side of [0, 1]) {
+          await roomPoint(page, device, 600, "r1", side);
+          assert.equal(
+            await page.locator("#calendar-slot-menu-resource").textContent(),
+            "QA Couple",
+          );
+          await page.locator("#calendar-slot-add").click();
+          await page.locator("#appointment-form").waitFor();
+          await stateIs(page, "available");
+          let values = await selected(page);
+          assert.equal(values.roomId, "r1");
+          assert.equal(
+            values.bed,
+            "0",
+            "Pointer x does not lock Table 2 when Table 1 is free",
+          );
+          await control(page, "start").fill("12:00");
+          await control(page, "start").press("Tab");
+          await stateIs(page, "available");
+          values = await selected(page);
+          assert.equal(values.roomId, "r1");
+          assert.equal(
+            values.bed,
+            "1",
+            "Room-only selection can allocate Table 2 when Table 1 is busy",
+          );
+          await page.locator("#form-cancel").click();
+        }
+        assert.equal(f.writes.length, 0);
+      },
+    );
+  await scenario(
+    "unified room move selects free capacity independently of x and keeps cancel and conflict recovery",
+    desktop,
+    async ({ page, f, open }) => {
+      f.appointments = [
+        booking("room-move", "tA", "r2", 0, 1140, 90),
+        booking("occupied-table-one", "tB", "r1", 0, 1135, 90),
+      ];
+      await open();
+      await selectMode(page, "rooms");
+      await page.locator("#calendar-scroll").evaluate(
+        (el, top) => {
+          el.scrollTop = top;
+        },
+        await pixelAt(page, 1080),
+      );
+      const move = async (fraction) => {
+        await page.locator('[data-appointment="room-move"]').click();
+        await page.locator("#appointment-summary-reschedule").click();
+        const source = await bodyPoint(
+          page.locator(
+            '.calendar-reschedule-preview[data-appointment="room-move"]',
+          ),
+        );
+        const destination = await page
+          .locator('[data-resource="r1"]')
+          .boundingBox();
+        await page.mouse.move(source.x, source.y);
+        await page.mouse.down();
+        await page.mouse.move(
+          destination.x + destination.width * fraction,
+          source.y - 10,
+          { steps: 8 },
+        );
+        await page.mouse.up();
+        assert.match(
+          await page.locator("#calendar-reschedule-time").textContent(),
+          /18:55–20:25.*90 min/,
+        );
+        assert.match(
+          await page.locator("#calendar-reschedule-resource").textContent(),
+          /QA Couple.*Table 2/,
+        );
+        const preview = await page
+          .locator('[data-resource="r1"] .calendar-reschedule-preview')
+          .boundingBox();
+        const busy = await page
+          .locator('[data-appointment="occupied-table-one"]')
+          .boundingBox();
+        assert.ok(
+          preview.x + preview.width <= busy.x + 1 ||
+            busy.x + busy.width <= preview.x + 1,
+          "Provisional moved card stays beside its concurrent booking",
+        );
+      };
+      await move(0.25);
+      await page.locator("#calendar-reschedule-cancel").click();
+      const restoredNeighbor = page.locator(
+        '[data-appointment="occupied-table-one"]',
+      );
+      const restoredBox = await restoredNeighbor.boundingBox();
+      const restoredRoom = await page
+        .locator('[data-resource="r1"]')
+        .boundingBox();
+      assert.ok(
+        Math.abs(restoredBox.x - restoredRoom.x - 3) <= 1 &&
+          Math.abs(restoredBox.width - restoredRoom.width + 6) <= 1,
+        "Cancel restores the neighbor's original full room width",
+      );
+      assert.equal(
+        await restoredNeighbor.evaluate((el) =>
+          el.classList.contains("is-overlapping"),
+        ),
+        false,
+        "Cancel also restores the neighbor's time-label layout",
+      );
+      assert.equal(f.writes.length, 0);
+      assert.equal(
+        f.appointments.find((a) => a.id === "room-move").roomId,
+        "r2",
+      );
+      await move(0.75);
+      f.failNextWrite = true;
+      await page.locator("#calendar-reschedule-save").click();
+      await page
+        .locator("#calendar-reschedule-error")
+        .filter({ hasText: "already booked" })
+        .waitFor();
+      assert.equal(
+        await page.locator("#calendar-reschedule-bar").isVisible(),
+        true,
+      );
+      assert.equal(
+        f.appointments.find((a) => a.id === "room-move").roomId,
+        "r2",
+      );
+      await page.locator("#calendar-reschedule-save").click();
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(
+        f.writes.length,
+        2,
+        "One rejected attempt and one explicit retry",
+      );
+      for (const write of f.writes) {
+        assert.equal(write.method, "PUT");
+        assert.equal(write.body.roomId, "r1");
+        assert.equal(write.body.bed, 1);
+        assert.equal(write.body.start, 1135);
+        assert.equal(write.body.duration, 90);
+      }
     },
   );
   assert.ok(passed > 0, "No browser acceptance scenarios ran");

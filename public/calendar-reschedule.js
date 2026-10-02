@@ -8,12 +8,85 @@ import {
   calendarHeight,
   calendarTime,
   calendarStartAtY,
-  calendarBedAtX,
 } from "./calendar-geometry.js";
+import { calendarResourceItems } from "./calendar-blocks.js";
 
 export const MOVE_THRESHOLD = 5;
 export const TOUCH_TOLERANCE = 8;
 export const LONG_PRESS_MS = 450;
+
+// Physical tables still reserve capacity, but their choice is independent of
+// where a pointer lands in the unified room column. Availability is advisory;
+// the API validates again atomically when the move is saved.
+export function calendarAvailableTable(
+  candidate,
+  room,
+  appointments = [],
+  blocks = [],
+) {
+  if (!room || !Number.isInteger(room.capacity) || room.capacity < 1)
+    return null;
+  const overlaps = (entry) =>
+    entry.date === candidate.date &&
+    entry.start < candidate.start + candidate.duration &&
+    entry.start + entry.duration > candidate.start;
+  const occupied = appointments.filter(
+    (entry) =>
+      entry.id !== candidate.id &&
+      entry.roomId === room.id &&
+      !["cancelled", "no_show"].includes(entry.status) &&
+      overlaps(entry),
+  );
+  const blocking = blocks.filter(
+    (entry) =>
+      entry.blocksAvailability &&
+      entry.resourceType === "room" &&
+      entry.resourceId === room.id &&
+      overlaps(entry),
+  );
+  const free = Array.from({ length: room.capacity }, (_, bed) => bed).filter(
+    (bed) =>
+      !occupied.some((entry) => entry.bed === bed) &&
+      !blocking.some((entry) => entry.bed === null || entry.bed === bed),
+  );
+  return free.includes(candidate.bed) ? candidate.bed : (free[0] ?? null);
+}
+
+function allocateTable(candidate, context, room, original = candidate) {
+  room ||= context.resources?.find(
+    (resource) => resource.kind === "room" && resource.id === candidate.roomId,
+  );
+  if (!room) return candidate;
+  const preferred = {
+    ...candidate,
+    bed: candidate.roomId === original.roomId ? original.bed : candidate.bed,
+  };
+  const bed = calendarAvailableTable(
+    preferred,
+    room,
+    context.blockingAppointments || context.appointments,
+    context.blocks,
+  );
+  // Keep a valid table even when none is free so the server returns its normal
+  // authoritative conflict, rather than an unrelated invalid-table error.
+  return {
+    ...candidate,
+    bed: bed ?? clamp(preferred.bed, 0, room.capacity - 1),
+  };
+}
+
+export function calendarMoveLayout(resource, candidate, context) {
+  return calendarResourceItems(
+    resource,
+    [
+      ...(context.blockingAppointments || context.appointments || []).filter(
+        (entry) => entry.id !== candidate.id && entry.date === candidate.date,
+      ),
+      candidate,
+    ],
+    (context.blocks || []).filter((entry) => entry.date === candidate.date),
+  );
+}
 
 // Moving keeps the complete appointment snapshot, including its original
 // requested therapist, client, duration, prices, notes and version.
@@ -24,6 +97,7 @@ export function calendarMovedAppointment(
   rect,
   point,
   offset = 0,
+  context = {},
 ) {
   const moved = {
     ...original,
@@ -35,9 +109,15 @@ export function calendarMovedAppointment(
   if (resource.kind === "therapist") moved.therapistId = resource.id;
   else {
     moved.roomId = resource.id;
-    moved.bed = calendarBedAtX(rect, point.x, resource.capacity);
+    if (candidate.roomId !== resource.id)
+      moved.bed = resource.id === original.roomId ? original.bed : 0;
   }
-  return moved;
+  return allocateTable(
+    moved,
+    context,
+    resource.kind === "room" ? resource : undefined,
+    original,
+  );
 }
 
 export function sameCalendarPosition(a, b) {
@@ -156,6 +236,7 @@ export function mountCalendarReschedule({
   function clearDraft() {
     if (!draft) return;
     for (const preview of draft.previews) preview.remove();
+    restoreLayout();
     for (const [card, visibility] of draft.originals) {
       card.style.visibility = visibility;
       card.classList.remove("is-reschedule-source", "is-reschedule-selected");
@@ -164,6 +245,15 @@ export function mountCalendarReschedule({
     draft = null;
     root.classList.remove("is-rescheduling");
     if (current()) onModeChange(false);
+  }
+  function restoreLayout() {
+    if (!draft) return;
+    for (const [card, style] of draft.layout) {
+      card.style.left = style.left;
+      card.style.width = style.width;
+      card.classList.toggle("is-overlapping", style.overlapping);
+    }
+    draft.layout.clear();
   }
   function cancel({ restoreFocus = false } = {}) {
     const returnFocus =
@@ -203,12 +293,34 @@ export function mountCalendarReschedule({
     const a = draft.candidate;
     for (const preview of draft.previews) preview.remove();
     draft.previews = [];
+    restoreLayout();
+    const context = getContext();
     for (const column of columns()) {
       const r = byResource(column);
-      if (
-        !r ||
-        (r.kind === "therapist" ? r.id !== a.therapistId : r.id !== a.roomId)
-      )
+      if (!r) continue;
+      const items = calendarMoveLayout(r, a, context);
+      // Moving one appointment can merge or split a visual collision group.
+      // Reflow its neighbors for the draft, then restore them on cancellation.
+      for (const card of column.querySelectorAll(
+        "[data-appointment], [data-calendar-block]",
+      )) {
+        if (card.dataset.appointment === a.id) continue;
+        const item = items.find((entry) =>
+          entry.kind === "appointment"
+            ? entry.record.id === card.dataset.appointment
+            : entry.record.id === card.dataset.calendarBlock,
+        );
+        if (!item) continue;
+        draft.layout.set(card, {
+          left: card.style.left,
+          width: card.style.width,
+          overlapping: card.classList.contains("is-overlapping"),
+        });
+        card.style.left = `calc(${item.left}% + 3px)`;
+        card.style.width = `calc(${item.width}% - 6px)`;
+        card.classList.toggle("is-overlapping", item.width < 100);
+      }
+      if (r.kind === "therapist" ? r.id !== a.therapistId : r.id !== a.roomId)
         continue;
       const template =
         draft.originals.find(
@@ -226,14 +338,23 @@ export function mountCalendarReschedule({
       preview.style.touchAction = "none";
       preview.style.top = `${calendarTop(a.start)}px`;
       preview.style.height = `${calendarHeight(a.duration, 3)}px`;
-      const lane = r.kind === "room" ? a.bed : 0;
-      preview.style.left = `calc(${(lane / r.capacity) * 100}% + 3px)`;
-      preview.style.width = `calc(${100 / r.capacity}% - 6px)`;
+      const item = items.find(
+        (entry) => entry.kind === "appointment" && entry.record.id === a.id,
+      );
+      preview.style.left = `calc(${item?.left ?? 0}% + 3px)`;
+      preview.style.width = `calc(${item?.width ?? 100}% - 6px)`;
+      preview.classList.toggle("is-overlapping", (item?.width ?? 100) < 100);
       const time = preview.querySelector(".event-time");
-      if (time)
-        time.textContent = `${calendarTime(a.start)}–${calendarTime(a.start + a.duration)}`;
+      if (time) {
+        const start = time.querySelector(".event-start"),
+          end = time.querySelector(".event-end");
+        if (start && end) {
+          start.textContent = calendarTime(a.start);
+          end.textContent = calendarTime(a.start + a.duration);
+        } else
+          time.textContent = `${calendarTime(a.start)}–${calendarTime(a.start + a.duration)}`;
+      }
       const label = preview.querySelector(".event-room");
-      const context = getContext();
       const related = context.resources.find((resource) =>
         r.kind === "room"
           ? resource.kind === "therapist" && resource.id === a.therapistId
@@ -250,8 +371,7 @@ export function mountCalendarReschedule({
       column.append(preview);
       draft.previews.push(preview);
     }
-    const context = getContext(),
-      therapist = context.resources.find(
+    const therapist = context.resources.find(
         (r) => r.kind === "therapist" && r.id === a.therapistId,
       ),
       room = context.resources.find(
@@ -265,6 +385,19 @@ export function mountCalendarReschedule({
     ]
       .filter(Boolean)
       .join(" · ");
+    if (
+      room &&
+      calendarAvailableTable(
+        a,
+        room,
+        context.blockingAppointments || context.appointments,
+        context.blocks,
+      ) === null
+    ) {
+      draft.error.textContent =
+        "No table in this room is available for the full treatment. Choose another time or room.";
+      draft.error.hidden = false;
+    }
     setBusy(saving);
   }
   function start(id, { touch = true, focus = true } = {}) {
@@ -304,6 +437,12 @@ export function mountCalendarReschedule({
         draft.candidate.start + delta,
         START,
         END - draft.candidate.duration,
+      );
+      draft.candidate = allocateTable(
+        draft.candidate,
+        getContext(),
+        undefined,
+        draft.original,
       );
       draft.error.hidden = true;
       redraw();
@@ -348,6 +487,7 @@ export function mountCalendarReschedule({
       touch,
       originals: originals.map((card) => [card, card.style.visibility]),
       previews: [],
+      layout: new Map(),
       bar,
       time,
       resource,
@@ -437,6 +577,7 @@ export function mountCalendarReschedule({
       column.getBoundingClientRect(),
       { x: event.clientX, y: event.clientY },
       gesture.offset,
+      getContext(),
     );
     draft.error.hidden = true;
     redraw();

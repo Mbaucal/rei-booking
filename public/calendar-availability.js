@@ -210,8 +210,8 @@ export function mountBookingAvailability({
     const name = event.target.name;
     if (!changes.has(name)) return;
     if (resourceFields.includes(name)) fixed[name] = true;
-    // A room choice leaves its table open to suggestions. A table choice (or
-    // clicked room half in defaults) fixes that particular room/table pair.
+    // A room choice leaves its table open to suggestions. An explicit table
+    // choice fixes that particular room/table pair.
     if (name === "roomId") fixed.bed = false;
     if (name === "bed") fixed.roomId = true;
     void refresh();
