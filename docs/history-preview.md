@@ -1,6 +1,29 @@
-# Historical preview modules
+# Appointment history preview
 
-MBA-194 / MBA-195 / MBA-196 implement the first non-writing step of the [history import contract](history-import-contract.md). These modules are not used by the live Worker yet. No route, UI, database schema, archive, profile history, financial total or bonus calculation is changed. All automated fixtures are fictional.
+Release 0.14.0 (MBA-197 / MBA-198 / MBA-199 / MBA-200) connects the pure MBA-194 / MBA-195 / MBA-196 foundation to an owner-only **Clients → Preview history** screen and temporary D1 review storage. It implements the preview step of the [history import contract](history-import-contract.md). It does not create archived visits, permanent client/source links, live appointments, profile history, financial totals or bonuses. All automated fixtures are fictional.
+
+## Owner workflow and runtime boundary
+
+Read an appointment CSV, confirm column mappings and the source formats that are actually known, then choose **Prepare preview**. Familiar Fresha headers suggest mappings but do not confirm currency, timezone, completed status or reference uniqueness. Review 50 rows per page, inspect original and parsed values, search named client profiles and explicitly save draft choices for selected rows. A name alone is never an automatic identity link. Clearing a draft match does not edit a client.
+
+The screen hashes the original file in the browser. The server records that digest as claimed original-file provenance and independently verifies canonical upload chunks; it does not claim to have received the original bytes. Ready previews reopen without the file. Interrupted uploads require the same original file/configuration. Versioned choices use stable request IDs so a lost acknowledgement can be retried. Client changes require rebuilding the candidate index and reviewing stale choices.
+
+All `/api/history/previews` routes are owner-only, with the existing authentication, required-password-change, origin and CSRF gates. Every job lookup is scoped to its owner. Responses use no-store headers. Additive schema initialization and `migrations/0012_history_previews.sql` create temporary preview, row, chunk, source-key, client-index and decision tables. Contact/source-link mutations advance the existing client revision so previews cannot silently keep stale identity evidence.
+
+| Operation                            | Route / behavior                                                     |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| Recent drafts                        | `GET /api/history/previews`                                          |
+| Start / exact retry                  | `POST /api/history/previews/start`                                   |
+| Upload ordered parts                 | `POST /api/history/previews/:id/upload`                              |
+| Build full candidate index           | `POST /api/history/previews/:id/finalize`, repeat until ready        |
+| Metadata / review page               | `GET /api/history/previews/:id` / `:id/page?page=0`                  |
+| Search candidate profiles            | `GET /api/history/previews/:id/clients?q=…&page=0`                   |
+| Save or clear explicit draft matches | `POST /api/history/previews/:id/choices` with version and request ID |
+| Discard                              | `DELETE /api/history/previews/:id` with version                      |
+
+Limits: 50,000 rows, 25 MiB raw file and decoded aggregate, 128 columns, 16 KiB per UTF-8 cell, 100 rows and 2 MiB JSON per upload. A packed normalized D1 value is additionally bounded below 2 MB; the UI reduces an oversized part and retries. Indexing advances in steps of 1,000 clients, up to 100,000 clients. Each 50-row review page permits at most 1,000 candidate profiles, 2,000 native appointment candidates and 4 MiB of evidence; excessive ambiguity fails explicitly without dropping candidates. Global structural counts are separate from page-only matching/eligibility counts.
+
+Up to three recent previews are retained per owner. Access expires after 24 hours. Expired rows are physically cleaned up on the next preview start, not by a timed purge. Explicit discard removes the preview. Draft choices and possible native appointment overlaps are review evidence, not authority to import or merge.
 
 ## Normalize mapped rows
 
@@ -24,7 +47,7 @@ The result is `{ rows, summary }`. Each row retains mapped `raw` cells, source l
 
 `Cancelled` and `No Show` default to `not_completed`. Other statuses, including `New`, `Confirmed` and `Started`, remain unknown unless explicitly mapped. Unknown completion/request and missing or currency-unconfirmed net sales are informational diagnostics: they suppress only the corresponding metric, not an otherwise verified historical visit. Contradictory cancellation/completion evidence still requires review. Invalid input shape/configuration throws a generic error; malformed cell values become row-level issues. Issue severities are `info`, `review` and `error`; the planner also adds `conflict`.
 
-Limits: 50,000 data rows, 128 columns, 16 KiB per UTF-8 cell and 25 MiB of decoded cell content including separators. The future upload boundary must separately enforce the raw file size and parse CSV safely. Same-day schedules may end at 24:00; cross-midnight schedules need later explicit support. No current treatment menu, prices or five-minute booking grid is imposed on historical values.
+Limits: 50,000 data rows, 128 columns, 16 KiB per UTF-8 cell and 25 MiB of decoded cell content including separators. The upload boundary separately enforces raw-file and chunk limits and parses CSV safely. Same-day schedules may end at 24:00; cross-midnight schedules need later explicit support. No current treatment menu, prices or five-minute booking grid is imposed on historical values.
 
 ## Plan identities and repeat protection
 
@@ -48,6 +71,6 @@ Bounds: 50,000 normalized rows, 100,000 entries per reference snapshot and 1,000
 
 ## Next integration boundary
 
-Build the owner-only preview and explicit matching decisions next, followed by a separately reviewed archive confirmation path. That path must revalidate current client versions/links, enforce atomic repeat protection, and record approvals. Unknown values need visible labels. The pure planner is not a security or persistence boundary; it must never be exposed directly to an unauthorized user. Confirmed archive history and its profile display remain separate from live appointments and reports.
+The next slice is a separately reviewed archive confirmation path. It must revalidate current client versions/links, enforce atomic repeat protection, and record approvals. Unknown values need visible labels. The pure planner is not a security or persistence boundary. Confirmed archive history and its profile display remain separate from live appointments and reports.
 
 Run focused checks with `node --test tests/history-*.test.mjs`. The existing full `npm run check`, `npm test` and build/browser CI gates still apply when merging.

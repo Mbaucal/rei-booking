@@ -34,6 +34,10 @@ test("Voucher Worker + D1: balances, linked treatments, concurrent use and corre
     convertV4MiniflareOptions({
       modules: [
         "worker.mjs",
+        "history-preview.mjs",
+        "history-preview-schema.mjs",
+        "history-normalize.mjs",
+        "history-import-plan.mjs",
       "calendar-blocks.mjs",
       "calendar-block-schema.mjs",
       "client-contacts.mjs",
