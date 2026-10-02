@@ -28,6 +28,7 @@ const freshaHeaders = {
   appointmentRef: "Appt. ref.",
   clientName: "Client",
   therapistName: "Team member",
+  roomName: "Resource",
   serviceName: "Service",
   scheduledDate: "Scheduled date",
   slot: "Appt. slot",

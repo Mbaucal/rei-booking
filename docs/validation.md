@@ -1,5 +1,13 @@
 # Development validation — 26 September 2026
 
+## History archive release 0.15.0 — 2 October 2026
+
+The new Worker/D1 checks cover explicit owner review/acknowledgement, immutable original statuses, unknown completion, source/client/contact conflicts, repeat and reordered reports, reference-mode ambiguity, concurrent imports, stale client/preview/native state, atomic rollback and receipts surviving preview expiry/deletion. Profile API checks cover full-archive status counts, pagination and owner/reception/therapist projections. Runtime schema and the additive migration are compared.
+
+History browser coverage retains the nine preview scenarios and adds seven archive/profile scenarios: desktop/phone confirmation followed by profile display, duplicate-only confirmation with zero new records, changed status/client and missing-reference blocks, interrupted acknowledgement retry after preview removal, stale/expired review recovery, and owner/reception paginated profile views. The existing calendar browser suite remains a separate gate. All fixtures are fictional; no real appointment report, customer, voucher or email is changed by these checks.
+
+Passing exact-commit CI, independent screenshot review and hosted deployment evidence are recorded in MBA-201. Physical Safari/touch acceptance and an owner-confirmed real report import remain separate user checks; browser emulation does not certify those.
+
 ## Client transfer release 0.8 — 26 September 2026
 
 Local `npm run check`, `npm test` and `npm run build` passed: **83 tests, 0 failures**. Local application of all eight tracked migrations also succeeded.

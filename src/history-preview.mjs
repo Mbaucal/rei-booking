@@ -878,3 +878,10 @@ export async function historyPreviewRoutes(request, db, user) {
     return choices(db, user, r, await readJSON(request, 20000));
   fail(404, "History preview action not found.");
 }
+
+// Shared authoritative, bounded read-only evidence for archive review. These
+// helpers never treat a draft client choice as a permanent identity link.
+export {
+  snapshots as historyPreviewSnapshots,
+  contact as historyPreviewContactKey,
+};

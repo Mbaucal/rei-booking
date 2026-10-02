@@ -240,6 +240,19 @@ const server = createServer(async (req, res) => {
       }
       if (url.pathname === "/api/clients/matches") return json({ matches: [] });
       if (
+        /^\/api\/clients\/[^/]+\/history$/.test(url.pathname) &&
+        req.method === "GET"
+      )
+        return json({
+          clientId: url.pathname.split("/").at(-2),
+          page: 0,
+          pageSize: 25,
+          total: 0,
+          totalPages: 0,
+          statusCounts: [],
+          rows: [],
+        });
+      if (
         /^\/api\/clients\/[^/]+$/.test(url.pathname) &&
         req.method === "GET"
       ) {

@@ -727,7 +727,12 @@ export function normalizeHistoryRows({
       instagram: clean(raw.instagram),
       sourceTherapistLabel: clean(raw.therapistName),
       sourceServiceLabel: clean(raw.serviceName),
-      sourceRoomLabel: clean(raw.roomName),
+      sourceRoomLabel:
+        config.dateTimeFormat === "fresha-en" &&
+        headers[mapping.roomName] === "Resource" &&
+        clean(raw.roomName) === "No resource"
+          ? null
+          : clean(raw.roomName),
       scheduledLocalDate: scheduled?.localDate ?? null,
       startMinute,
       durationMinutes,

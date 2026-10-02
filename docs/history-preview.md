@@ -1,6 +1,6 @@
 # Appointment history preview
 
-Release 0.14.0 (MBA-197 / MBA-198 / MBA-199 / MBA-200) connects the pure MBA-194 / MBA-195 / MBA-196 foundation to an owner-only **Clients → Preview history** screen and temporary D1 review storage. It implements the preview step of the [history import contract](history-import-contract.md). It does not create archived visits, permanent client/source links, live appointments, profile history, financial totals or bonuses. All automated fixtures are fictional.
+The preview foundation (0.14.0, MBA-197–200) provides an owner-only **Clients → Import history** screen and temporary D1 review storage. Release 0.15.0 adds the separately confirmed [permanent archive](history-archive.md). Preparing a preview or saving client matches does not itself import any visits. All automated fixtures are fictional.
 
 ## Owner workflow and runtime boundary
 
@@ -63,14 +63,14 @@ Limits: 50,000 data rows, 128 columns, 16 KiB per UTF-8 cell and 25 MiB of decod
 
 Source-ID links use the existing `id:` plus SHA-256 of the trimmed external ID convention. Leading zeros and source namespaces remain significant. File-row import keys are not person identities. Contradictory contacts, missing linked profiles or multiple links are conflicts. Compatible contact matches are only proposals; name matches always require a person to choose. No clients are created or merged.
 
-Verified appointment references use stable reference keys. Service-line mode additionally requires a line reference. Unverified or missing references use file digest plus row position and protect only exact-file retries. The caller must not select verified mode solely because references happen to be unique in one sample. Same key plus unchanged payload is a duplicate; changed content conflicts every matching input row. Payload fingerprints retain interpretation evidence but exclude file position and diagnostic text, so reordered verified references remain detectable. Potential native appointment overlaps require explicit review.
+Verified appointment references use stable reference keys. Service-line mode additionally requires a line reference. In the pure candidate planner, unverified or missing references use file digest plus row position and protect only exact-file retries. The archive boundary applies stricter rules: it requires a reference and conservatively reserves that reference across files, with explicit acknowledgement for unverified scope. The caller must not select verified mode solely because references happen to be unique in one sample. Same key plus unchanged payload is a duplicate; changed content conflicts every matching input row. Payload fingerprints retain interpretation evidence but exclude file position and diagnostic text, so reordered verified references remain detectable. Potential native appointment overlaps require explicit review.
 
 The result is `{ rows, summary }`. Each preview row includes `record`, `sourceKey`, `keyScope`, `payloadDigest`, `identity`, `disposition`, `issues`, `duplicateOf`, `nativeOverlapIds` and `eligibility`. Dispositions are `ready`, `unresolved`, `conflict`, `duplicate` and `invalid`. Every row starts with `selected: false`; `ready` means validation readiness only and never authorizes a write. Eligibility fields and summary values are counts, not financial totals. Bonus eligibility is always false in this slice.
 
 Bounds: 50,000 normalized rows, 100,000 entries per reference snapshot and 1,000,000 combined identity/native candidate visits. Excessive ambiguity fails explicitly instead of truncating results. Both modules preserve caller inputs and perform no database, network, clock or filesystem operations.
 
-## Next integration boundary
+## Confirmed archive boundary
 
-The next slice is a separately reviewed archive confirmation path. It must revalidate current client versions/links, enforce atomic repeat protection, and record approvals. Unknown values need visible labels. The pure planner is not a security or persistence boundary. Confirmed archive history and its profile display remain separate from live appointments and reports.
+Release 0.15.0 provides a separately reviewed archive confirmation path that revalidates current client versions, enforces atomic repeat protection, and records approvals. See [history archive](history-archive.md). Unknown values need visible labels. The pure planner is not a security or persistence boundary. Confirmed archive history and its profile display remain separate from live appointments and reports.
 
 Run focused checks with `node --test tests/history-*.test.mjs`. The existing full `npm run check`, `npm test` and build/browser CI gates still apply when merging.

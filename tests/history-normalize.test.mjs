@@ -523,6 +523,29 @@ test("explicit mapping preserves leading-zero external IDs and raw contact evide
   assert.equal(item.sourceRoomLabel, "Original room label");
 });
 
+test("Fresha No resource stays raw evidence while absent room remains unknown", () => {
+  const input = {
+    headers: [...headers, "Resource"],
+    rows: [
+      [...values(), "No resource"],
+      [...values(), "Fictional room"],
+    ],
+    mapping: { ...mapping, roomName: headers.length },
+    source,
+    fileDigest,
+    format,
+  };
+  const result = normalizeHistoryRows(input).rows;
+  assert.equal(result[0].sourceRoomLabel, null);
+  assert.equal(result[0].raw.roomName, "No resource");
+  assert.equal(result[1].sourceRoomLabel, "Fictional room");
+  assert.equal(
+    normalizeHistoryRows({ ...input, headers: [...headers, "Room"] }).rows[0]
+      .sourceRoomLabel,
+    "No resource",
+  );
+});
+
 test("shape, mapping, timezone and bounded cells reject safely without repeating private source text", () => {
   for (const overrides of [
     { rows: [["PRIVATE"]] },

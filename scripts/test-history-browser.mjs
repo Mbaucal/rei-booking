@@ -68,6 +68,9 @@ function fixture() {
     ],
     catalogue: { therapists: [], rooms: [], services: [] },
     previews: new Map(),
+    archive: [],
+    archiveReviews: new Map(),
+    archiveReceipts: new Map(),
     failures: new Map(),
     delays: new Map(),
   };
@@ -97,6 +100,47 @@ async function fixtureAPI(f, url, method, body, json) {
     return json({ appointments: [], blocks: [] });
   if (url.pathname === "/api/clients" && method === "GET")
     return json({ clients: f.clients });
+  if (
+    /^\/api\/clients\/[^/]+\/history$/.test(url.pathname) &&
+    method === "GET"
+  ) {
+    if (f.role === "therapist") return json({ error: "Access denied" }, 403);
+    const id = url.pathname.split("/")[3],
+      page = Number(url.searchParams.get("page") || 0);
+    const records = f.archive.filter((r) => r.clientId === id);
+    return json({
+      clientId: id,
+      page,
+      pageSize: 25,
+      total: records.length,
+      totalPages: Math.ceil(records.length / 25),
+      statusCounts: statusCounts(records),
+      rows: records.slice(page * 25, (page + 1) * 25).map((row) => ({
+        id: row.id,
+        date: row.date,
+        start: row.start,
+        duration: row.duration,
+        serviceName: row.serviceName,
+        therapistName: row.therapistName,
+        roomName: null,
+        sourceStatus: row.sourceStatus,
+        completionState: row.record?.completionState || "unknown",
+        requestState: "unknown",
+        importedAt: "2026-10-02T12:00:00.000Z",
+        ...(f.role === "owner"
+          ? {
+              record: row.record || null,
+              provenance: {
+                source: "fictional-source",
+                sourceAppointmentRef: row.key,
+              },
+              sourceNetSalesMinor: null,
+              currency: null,
+            }
+          : {}),
+      })),
+    });
+  }
   if (/^\/api\/clients\/[^/]+$/.test(url.pathname) && method === "GET") {
     const found = f.clients.find(
       (c) => c.id === url.pathname.split("/").at(-1),
@@ -105,8 +149,193 @@ async function fixtureAPI(f, url, method, body, json) {
       ? json({ client: found, appointments: [] })
       : json({ error: "Unknown fictional client" }, 404);
   }
-  // The history fixture follows the published preview-only route contract.
+  if (url.pathname.startsWith("/api/history/imports/"))
+    return archiveAPI(f, url, method, body, json);
+  // The history fixture follows the published preview route contract.
   return historyAPI(f, url, method, body, json);
+}
+function statusCounts(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    const status = row.sourceStatus || "Unknown";
+    counts.set(status, (counts.get(status) || 0) + 1);
+  }
+  return [...counts].map(([status, count]) => ({ status, count }));
+}
+// This small fictional service drives UI responses, not database safety assertions.
+// Real Worker/D1 tests independently cover atomicity and permanent uniqueness.
+async function archiveAPI(f, url, method, body, json) {
+  if (f.role !== "owner") return json({ error: "Owner access required" }, 403);
+  assert.equal(method, "POST");
+  assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
+  assert.ok(body.rows.length > 0 && body.rows.length <= 50);
+  if (url.pathname === "/api/history/imports/review") {
+    const preview = f.previews.get(body.previewId);
+    assert.ok(preview, "Review uses an existing fictional preview");
+    assert.equal(body.version, preview.version);
+    const rows = body.rows.map((number) => {
+      const entry = preview.plan.rows.find((r) => r.record.row === number);
+      assert.ok(entry, "Review selects a real source row");
+      const record = entry.record;
+      const choice = preview.choices.get(number);
+      const client = f.clients.find((c) => c.id === choice?.clientId);
+      const key = record.source + "/" + record.sourceAppointmentRef;
+      const fingerprint = JSON.stringify({
+        raw: record.raw,
+        clientId: client?.id,
+      });
+      const existing = f.archive.find((r) => r.key === key);
+      const issues = [];
+      if (!client)
+        issues.push({
+          code: "client_unresolved",
+          message: "Choose a current client explicitly.",
+        });
+      if (!record.sourceAppointmentRef)
+        issues.push({
+          code: "reference_missing",
+          message: "A stable source reference is required.",
+        });
+      if (choice && choice.clientVersion !== client?.version)
+        issues.push({
+          code: "client_changed",
+          message: "The chosen client changed. Review again.",
+        });
+      if (existing && existing.fingerprint !== fingerprint)
+        issues.push({
+          code: "archive_conflict",
+          message:
+            "This source reference has changed content or another client. Existing history was not changed.",
+        });
+      return {
+        row: number,
+        client: client ? structuredClone(client) : null,
+        sourceStatus: record.sourceStatus,
+        date: record.scheduledLocalDate,
+        start: record.startMinute,
+        duration: record.durationMinutes,
+        serviceName: record.sourceServiceLabel,
+        therapistName: record.sourceTherapistLabel,
+        disposition: issues.length
+          ? "blocked"
+          : existing
+            ? "duplicate"
+            : "import",
+        issues,
+        nativeOverlapIds: [],
+        // Internal fixture-only evidence is removed from the HTTP response.
+        fixtureEvidence: { key, fingerprint, record, existing },
+      };
+    });
+    const response = {
+      reviewId: "fictional-review-" + body.requestId,
+      confirmationToken: "fictional-token-" + body.requestId,
+      expiresAt: Date.now() + 600000,
+      ...structuredClone(body),
+      canConfirm: rows.every((row) => row.disposition !== "blocked"),
+      counts: {
+        selected: rows.length,
+        importable: rows.filter((r) => r.disposition === "import").length,
+        duplicates: rows.filter((r) => r.disposition === "duplicate").length,
+        blocked: rows.filter((r) => r.disposition === "blocked").length,
+      },
+      statusCounts: statusCounts(rows),
+      rows: rows.map(({ fixtureEvidence, ...row }) => row),
+      warnings: [
+        "Original source statuses are retained; this does not update live appointments or financial reports.",
+        "Unverified appointment references are reserved conservatively. Source timezone is unconfirmed; local time is retained without an instant.",
+      ],
+    };
+    f.archiveReviews.set(body.requestId, {
+      request: structuredClone(body),
+      response,
+      rows,
+      clientRevision: f.clientRevision,
+    });
+    return json(response);
+  }
+  if (url.pathname === "/api/history/imports/confirm") {
+    const receipt = f.archiveReceipts.get(body.requestId);
+    if (receipt) {
+      assert.deepEqual(
+        body,
+        receipt.request,
+        "Lost acknowledgement repeats the exact confirmation request",
+      );
+      return json({ ...receipt.response, repeated: true });
+    }
+    const review = f.archiveReviews.get(body.requestId);
+    assert.ok(review, "Confirmation follows an explicit review");
+    assert.equal(body.confirmationToken, review.response.confirmationToken);
+    assert.equal(body.acknowledgeReview, true);
+    for (const field of ["previewId", "version", "rows", "requestId"])
+      assert.deepEqual(body[field], review.request[field]);
+    assert.equal(
+      review.response.canConfirm,
+      true,
+      "Blocked rows are never confirmed",
+    );
+    if (f.rejectConfirm || review.clientRevision !== f.clientRevision) {
+      f.rejectConfirm = false;
+      return json(
+        {
+          error:
+            "History or client data changed. Review the selected rows again.",
+        },
+        409,
+      );
+    }
+    const result = [];
+    for (const row of review.rows) {
+      const evidence = row.fixtureEvidence;
+      if (row.disposition === "import") {
+        const id = "fictional-archive-" + (f.archive.length + 1);
+        f.archive.push({
+          ...evidence,
+          id,
+          clientId: row.client.id,
+          sourceStatus: row.sourceStatus,
+          date: row.date,
+          start: row.start,
+          duration: row.duration,
+          serviceName: row.serviceName,
+          therapistName: row.therapistName,
+        });
+        result.push({ row: row.row, id, disposition: "imported" });
+      } else
+        result.push({
+          row: row.row,
+          id: evidence.existing.id,
+          disposition: "duplicate",
+        });
+    }
+    const response = {
+      importId: "fictional-import-" + body.requestId,
+      created: review.response.counts.importable,
+      duplicates: review.response.counts.duplicates,
+      statusCounts: review.response.statusCounts,
+      rows: result,
+      repeated: false,
+    };
+    f.archiveReceipts.set(body.requestId, {
+      request: structuredClone(body),
+      response,
+    });
+    if (f.loseArchiveAcknowledgement) {
+      f.loseArchiveAcknowledgement = false;
+      f.previews.delete(body.previewId);
+      return json(
+        {
+          error:
+            "Fictional lost import acknowledgement. Check the result safely.",
+        },
+        503,
+      );
+    }
+    return json(response);
+  }
+  f.unexpected.push(`${method} ${url.pathname}`);
+  return json({ error: "Unexpected archive fixture route" }, 404);
 }
 async function historyAPI(f, url, method, body, json) {
   const prefix = "/api/history/previews";
@@ -446,9 +675,13 @@ function fictionalCSV(count = 3, changes = {}) {
     "utf8",
   );
 }
-async function readColumns(page, bytes = fictionalCSV()) {
+async function readColumns(
+  page,
+  bytes = fictionalCSV(),
+  filename = "fictional-history.csv",
+) {
   await page.locator("#history-csv").setInputFiles({
-    name: "fictional-history.csv",
+    name: filename,
     mimeType: "text/csv",
     buffer: bytes,
   });
@@ -458,6 +691,122 @@ async function readColumns(page, bytes = fictionalCSV()) {
 async function buildPreview(page) {
   await page.locator("#history-build-preview").click();
   await page.locator("[data-history-row]").first().waitFor();
+}
+function archiveCSV({
+  reordered = false,
+  changedStatus = false,
+  missingReference = false,
+} = {}) {
+  const content = fictionalCSV(3, {
+    0: {
+      0: missingReference ? "" : "ARCHIVE-0001",
+      3: "No Show",
+      7: "Original no-show treatment",
+    },
+    1: {
+      0: "ARCHIVE-0002",
+      3: "Cancelled",
+      6: "14 Jan 2026, 5:43pm",
+      7: "Original cancelled treatment",
+    },
+    2: {
+      0: "ARCHIVE-0003",
+      3: changedStatus ? "Confirmed" : "Started",
+      7: "Original started treatment",
+    },
+  }).toString();
+  const [header, ...rows] = content.split("\r\n");
+  return Buffer.from(
+    [header, ...(reordered ? rows.reverse() : rows)].join("\r\n"),
+  );
+}
+async function prepareArchivePreview(
+  page,
+  {
+    bytes = archiveCSV(),
+    filename,
+    clientId = client.id,
+    referenceMode = "unverified",
+  } = {},
+) {
+  await readColumns(page, bytes, filename);
+  if (!(await page.locator("#history-advanced").evaluate((node) => node.open)))
+    await page.locator("#history-advanced > summary").click();
+  await page.locator("#history-reference-mode").selectOption(referenceMode);
+  await buildPreview(page);
+  for (const row of [2, 3, 4])
+    await page.locator(`[data-history-select="${row}"]`).check();
+  await page.locator("#history-choose-client").click();
+  await page
+    .locator("#history-client-search")
+    .fill(clientId === "history-qa-other" ? "Milo" : "Nora");
+  await page.locator("#history-client-search-button").click();
+  await page.locator(`[data-history-client-id="${clientId}"]`).check();
+  await page.locator("#history-apply-choice").click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector('[data-history-row="2"]')
+      ?.textContent.includes("Draft match:"),
+  );
+  for (const row of [2, 3, 4])
+    await page.locator(`[data-history-select="${row}"]`).check();
+}
+function seedProfileArchive(f) {
+  for (let i = 0; i < 28; i++)
+    f.archive.push({
+      id: `profile-archive-${i}`,
+      key: `profile-ref-${i}`,
+      clientId: client.id,
+      date: "2026-01-" + String(i + 1).padStart(2, "0"),
+      start: 600,
+      duration: 60,
+      serviceName:
+        i === 27
+          ? "Final paginated source treatment"
+          : `Archived source treatment ${i + 1}`,
+      therapistName: "Former QA Therapist",
+      sourceStatus: ["No Show", "Cancelled", "Started", "Confirmed"][i % 4],
+      record: {
+        completionState: i % 4 < 2 ? "not_completed" : "unknown",
+        raw: {
+          netSales: "OWNER-ONLY-SOURCE-RAW",
+          clientName: "Historical source label",
+        },
+      },
+    });
+}
+async function openClientHistory(page) {
+  await navigate(page, "clients");
+  await page.locator(`[data-profile="${client.id}"]`).click();
+  await page.locator("#drawer[open] .client-history").waitFor();
+  await page.locator("#client-history-summary").waitFor();
+}
+async function reviewArchive(page) {
+  await page.locator("#history-review-import").click();
+  await page.locator("#history-import-review").waitFor({ state: "visible" });
+}
+async function confirmArchive(page) {
+  await page.locator("#history-import-ack").check();
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/history/imports/confirm" &&
+        response.request().method() === "POST",
+    ),
+    page.locator("#history-confirm-import").click(),
+  ]);
+  assert.ok(response.ok(), "The current confirmation succeeds");
+  const receipt = await response.json();
+  assert.ok(receipt.importId, "Confirmation returns a durable receipt ID");
+  await page.waitForFunction(
+    (id) =>
+      document.querySelector(
+        "#history-import-receipt .history-receipt-id strong",
+      )?.textContent === id,
+    receipt.importId,
+  );
+  await page.locator("#history-import-receipt").waitFor({ state: "visible" });
+  return receipt;
 }
 async function inViewport(page, locator, label) {
   await locator.scrollIntoViewIfNeeded();
@@ -553,7 +902,7 @@ try {
         await openHistory(page, f);
         assert.match(
           await page.locator(".history-preview").innerText(),
-          /Preview only/,
+          /Review before import/,
         );
         await readColumns(
           page,
@@ -902,6 +1251,372 @@ try {
       );
     },
   );
+
+  for (const device of [desktop, phone]) {
+    await scenario(
+      "archive requires acknowledgement, preserves original statuses and keeps client data unchanged",
+      device,
+      async ({ page, f }) => {
+        const beforeClients = structuredClone(f.clients);
+        await openHistory(page, f);
+        await prepareArchivePreview(page);
+        await reviewArchive(page);
+        assert.equal(f.archive.length, 0, "Review never writes archived rows");
+        assert.equal(
+          await page.locator("#history-confirm-import").isEnabled(),
+          false,
+          "Confirmation needs explicit acknowledgement",
+        );
+        for (const status of ["No Show", "Cancelled", "Started"])
+          assert.ok(
+            (
+              await page.locator("#history-import-status-counts").innerText()
+            ).includes(status),
+          );
+        assert.match(
+          await page.locator("#history-import-review").innerText(),
+          /original|source status/i,
+        );
+        await inViewport(
+          page,
+          page.locator("#history-import-ack"),
+          "Archive acknowledgement",
+        );
+        await noHorizontalOverflow(page);
+        await capture(page, device.name + "-history-archive-confirmation");
+        await confirmArchive(page);
+        assert.equal(f.archive.length, 3);
+        assert.deepEqual(
+          f.archive.map((row) => row.sourceStatus),
+          ["No Show", "Cancelled", "Started"],
+        );
+        assert.deepEqual(
+          f.archive.map((row) => row.record.completionState),
+          ["not_completed", "not_completed", "unknown"],
+        );
+        assert.ok(
+          f.archive.every((row) => row.record.scheduledAt === null),
+          "Unknown source timezone remains unknown",
+        );
+        assert.deepEqual(
+          f.clients,
+          beforeClients,
+          "Archive confirmation never rewrites client notes or contacts",
+        );
+        assert.equal(
+          f.writes.filter((r) => r.path.endsWith("/confirm")).length,
+          1,
+        );
+        await inViewport(
+          page,
+          page.locator("#history-import-receipt"),
+          "Archive receipt",
+        );
+        await capture(page, device.name + "-history-archive-receipt");
+        await openClientHistory(page);
+        await page.waitForFunction(
+          () =>
+            document.querySelectorAll("[data-client-history-row]").length === 3,
+        );
+        const archived = await page.locator(".client-history").innerText();
+        for (const status of ["No Show", "Cancelled", "Started"])
+          assert.ok(archived.includes(status));
+        assert.match(archived, /Original no-show treatment/);
+        assert.match(
+          await page.locator("#drawer-content").innerText(),
+          /0 completed visits/,
+        );
+        await page.locator("#client-history-summary").scrollIntoViewIfNeeded();
+        await noHorizontalOverflow(page);
+        await capture(page, device.name + "-history-newly-archived-profile");
+      },
+    );
+  }
+
+  await scenario(
+    "renamed and reordered reports show duplicates while changed status and client remain visible conflicts",
+    desktop,
+    async ({ page, f }) => {
+      await openHistory(page, f);
+      await prepareArchivePreview(page);
+      await reviewArchive(page);
+      const firstReceipt = await confirmArchive(page);
+      await page.locator("#history-new-file").click();
+      assert.equal(
+        await page.locator("#history-import-receipt").count(),
+        0,
+        "A new report clears the preceding receipt",
+      );
+      await prepareArchivePreview(page, {
+        bytes: archiveCSV({ reordered: true }),
+        filename: "overlapping-renamed-report.csv",
+      });
+      await reviewArchive(page);
+      const repeated = [...f.archiveReviews.values()].at(-1).response;
+      assert.deepEqual(repeated.counts, {
+        selected: 3,
+        importable: 0,
+        duplicates: 3,
+        blocked: 0,
+      });
+      assert.match(
+        await page.locator("#history-import-counts").innerText(),
+        /Already imported/i,
+      );
+      assert.equal(f.archive.length, 3);
+      await page.locator("#history-cancel-import-review").click();
+      assert.equal(
+        f.writes.filter((r) => r.path.endsWith("/confirm")).length,
+        1,
+        "Cancelling duplicate review does not reconfirm",
+      );
+      await reviewArchive(page);
+      const duplicateReceipt = await confirmArchive(page);
+      assert.notEqual(duplicateReceipt.importId, firstReceipt.importId);
+      assert.equal(duplicateReceipt.created, 0);
+      assert.equal(duplicateReceipt.duplicates, 3);
+      assert.equal(
+        f.writes.filter((r) => r.path.endsWith("/confirm")).length,
+        2,
+        "The second confirmation response is consumed before checking its receipt",
+      );
+      assert.equal(
+        f.archive.length,
+        3,
+        "An all-duplicate confirmation does not append records",
+      );
+      assert.match(
+        await page.locator("#history-import-receipt").innerText(),
+        /0 imported[\s\S]*3 already imported/,
+      );
+      await page.locator("#history-new-file").click();
+      await prepareArchivePreview(page, {
+        bytes: archiveCSV({ changedStatus: true }),
+        filename: "updated-report.csv",
+      });
+      await reviewArchive(page);
+      assert.match(
+        await page.locator("#history-import-review").innerText(),
+        /changed content|conflict/i,
+      );
+      assert.equal(
+        await page.locator("#history-confirm-import").isEnabled(),
+        false,
+      );
+      assert.deepEqual(
+        f.archive.map((r) => r.sourceStatus),
+        ["No Show", "Cancelled", "Started"],
+      );
+      await capture(page, "desktop-history-archive-conflict");
+      await page.locator("#history-cancel-import-review").click();
+      await page.locator("#history-new-file").click();
+      await prepareArchivePreview(page, { clientId: "history-qa-other" });
+      await reviewArchive(page);
+      assert.equal(
+        [...f.archiveReviews.values()].at(-1).response.counts.blocked,
+        3,
+      );
+      assert.equal(
+        await page.locator("#history-confirm-import").isEnabled(),
+        false,
+      );
+      assert.ok(f.archive.every((r) => r.clientId === client.id));
+      await page.locator("#history-cancel-import-review").click();
+      await page.locator("#history-new-file").click();
+      await prepareArchivePreview(page, {
+        bytes: archiveCSV({ missingReference: true }),
+      });
+      await reviewArchive(page);
+      assert.match(
+        await page.locator("#history-import-review").innerText(),
+        /stable source reference/i,
+      );
+      assert.equal(
+        await page.locator("#history-confirm-import").isEnabled(),
+        false,
+      );
+      assert.equal(
+        f.archive.length,
+        3,
+        "A missing reference cannot append ambiguous history",
+      );
+    },
+  );
+
+  await scenario(
+    "lost archive acknowledgement retries the exact request after preview removal",
+    phone,
+    async ({ page, f }) => {
+      await openHistory(page, f);
+      await prepareArchivePreview(page);
+      await reviewArchive(page);
+      f.loseArchiveAcknowledgement = true;
+      await page.locator("#history-import-ack").check();
+      await page.locator("#history-confirm-import").click();
+      await page.locator("#history-error").waitFor({ state: "visible" });
+      assert.equal(f.archive.length, 3);
+      assert.equal(
+        f.previews.size,
+        0,
+        "Expired or removed preview does not invalidate a stored receipt",
+      );
+      await page.locator("#history-retry").click();
+      await page
+        .locator("#history-import-receipt")
+        .waitFor({ state: "visible" });
+      await page
+        .locator("#history-after-import-new-file")
+        .waitFor({ state: "visible" });
+      assert.equal(
+        await page.locator("#history-error").isVisible(),
+        false,
+        "A recovered receipt is success even when its temporary preview is gone",
+      );
+      assert.equal(
+        await page.locator("[data-history-receipt-client]").first().isEnabled(),
+        true,
+      );
+      const requests = f.writes.filter((r) => r.path.endsWith("/confirm"));
+      assert.equal(requests.length, 2);
+      assert.deepEqual(requests[0].body, requests[1].body);
+      assert.equal(f.archive.length, 3);
+      assert.equal(
+        f.writes.filter((r) => r.path.endsWith("/review")).length,
+        1,
+        "Checking receipt does not create a new confirmation",
+      );
+    },
+  );
+
+  await scenario(
+    "expired review renews its request, stale confirmation stays uncommitted and delayed review cannot replace navigation",
+    phone,
+    async ({ page, f }) => {
+      await openHistory(page, f);
+      await prepareArchivePreview(page);
+      f.failures.set("POST /api/history/imports/review", {
+        status: 410,
+        message: "This import review expired. Prepare a new review.",
+      });
+      await page.locator("#history-review-import").click();
+      await page.locator("#history-error").waitFor({ state: "visible" });
+      const expiredRequest = f.writes
+        .filter((r) => r.path.endsWith("/review"))
+        .at(-1).body.requestId;
+      await page.locator("#history-retry").click();
+      await page.locator('[data-history-row="2"]').waitFor();
+      await reviewArchive(page);
+      assert.notEqual(
+        f.writes.filter((r) => r.path.endsWith("/review")).at(-1).body
+          .requestId,
+        expiredRequest,
+        "An expired review cannot trap the user on its old request ID",
+      );
+      f.rejectConfirm = true;
+      await page.locator("#history-import-ack").check();
+      await page.locator("#history-confirm-import").click();
+      await page.locator("#history-error").waitFor({ state: "visible" });
+      assert.equal(f.archive.length, 0);
+      assert.match(
+        await page.locator("#history-error-text").innerText(),
+        /changed/,
+      );
+      assert.equal(
+        await page.locator("#history-import-review").isVisible(),
+        false,
+        "A stale confirmation cannot keep an actionable old review",
+      );
+      const delay = deferred();
+      f.waits.push(delay);
+      f.delays.set("POST /api/history/imports/review", delay);
+      await page.locator("#history-review-import").click();
+      await navigate(page, "calendar");
+      await page.locator("#calendar-grid").waitFor();
+      const response = page.waitForResponse((r) =>
+        r.url().endsWith("/api/history/imports/review"),
+      );
+      delay.release();
+      await response;
+      await page.evaluate(
+        () =>
+          new Promise((done) =>
+            requestAnimationFrame(() => requestAnimationFrame(done)),
+          ),
+      );
+      assert.equal(await page.locator("#calendar-grid").isVisible(), true);
+      assert.equal(await page.locator("#history-import-review").count(), 0);
+      assert.equal(f.archive.length, 0);
+      assert.equal(
+        f.writes.filter((r) => r.path.endsWith("/confirm")).length,
+        1,
+      );
+    },
+  );
+
+  for (const role of ["owner", "reception"]) {
+    await scenario(
+      `${role} client profile pages original source statuses without implying completed visits`,
+      phone,
+      async ({ page, f }) => {
+        f.role = role;
+        seedProfileArchive(f);
+        await openApp(page, f);
+        await openClientHistory(page);
+        await page.locator("[data-client-history-row]").first().waitFor();
+        assert.equal(
+          await page.locator("[data-client-history-row]").count(),
+          25,
+        );
+        const summary = await page
+          .locator("#client-history-summary")
+          .innerText();
+        for (const status of ["No Show", "Cancelled", "Started", "Confirmed"])
+          assert.ok(summary.includes(status));
+        assert.ok(summary.includes("28"));
+        assert.match(
+          await page.locator("#drawer-content").innerText(),
+          /0 completed visits/,
+          "Native completed visits are not inflated by historical source statuses",
+        );
+        assert.equal(await page.locator("#history-confirm-import").count(), 0);
+        if (role === "reception") {
+          assert.doesNotMatch(
+            await page.locator(".client-history").innerText(),
+            /OWNER-ONLY-SOURCE-RAW|source net sales/i,
+          );
+          assert.equal(await page.locator("#history-preview-open").count(), 0);
+        }
+        await inViewport(
+          page,
+          page.locator("#client-history-next"),
+          "Next source-history page",
+        );
+        await page.locator("#client-history-next").click();
+        await page.waitForFunction(
+          () =>
+            document.querySelectorAll("[data-client-history-row]").length === 3,
+        );
+        assert.match(
+          await page.locator(".client-history").innerText(),
+          /Final paginated source treatment/,
+        );
+        await noHorizontalOverflow(page);
+        await page.locator("#client-history-summary").scrollIntoViewIfNeeded();
+        await capture(page, `phone-${role}-archived-profile-history`);
+        await page.locator("#client-history-prev").click();
+        await page.waitForFunction(
+          () =>
+            document.querySelectorAll("[data-client-history-row]").length ===
+            25,
+        );
+        assert.equal(
+          f.writes.length,
+          0,
+          "Viewing profile history performs no mutations",
+        );
+      },
+    );
+  }
 
   for (const role of ["reception", "therapist"]) {
     await scenario(

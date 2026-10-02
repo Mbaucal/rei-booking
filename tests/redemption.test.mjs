@@ -35,6 +35,8 @@ test("Voucher Worker + D1: balances, linked treatments, concurrent use and corre
       modules: [
         "worker.mjs",
         "history-preview.mjs",
+        "history-archive.mjs",
+        "history-archive-schema.mjs",
         "history-preview-schema.mjs",
         "history-normalize.mjs",
         "history-import-plan.mjs",
