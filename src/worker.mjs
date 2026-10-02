@@ -8,6 +8,7 @@ import {
 } from "./client-contacts.mjs";
 import { clientTransferRoutes } from "./client-transfer.mjs";
 import { historyPreviewRoutes } from "./history-preview.mjs";
+import { historyArchiveRoutes } from "./history-archive.mjs";
 import { monthlyRoutes, runMonthly } from "./monthly-reports.mjs";
 import { ensurePhotoSchema } from "./photo-schema.mjs";
 import {
@@ -469,7 +470,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.14.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.15.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -628,6 +629,8 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
   }
   const historyPreview = await historyPreviewRoutes(request, db, user);
   if (historyPreview) return historyPreview;
+  const historyArchive = await historyArchiveRoutes(request, db, user);
+  if (historyArchive) return historyArchive;
   const transfer = await clientTransferRoutes(request, db, user);
   if (transfer) return transfer;
   if (path === "/api/clients" && method === "GET") {

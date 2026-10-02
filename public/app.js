@@ -23,6 +23,7 @@ import {
 } from "./appointment-preview.js";
 import { renderClientTransfer } from "./client-transfer.js";
 import { renderHistoryPreview } from "./history-preview.js";
+import { mountClientHistory } from "./client-history.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
@@ -130,7 +131,8 @@ let state = {
   calendarViewEpoch = 0,
   calendarLoadEpoch = 0,
   sessionEpoch = 0;
-let historyPreviewCleanup = null;
+let historyPreviewCleanup = null,
+  clientHistoryCleanup = null;
 const owner = () => state.user?.role === "owner",
   operator = () => ["owner", "reception"].includes(state.user?.role);
 const therapist = (id) => state.catalogue.therapists.find((t) => t.id === id),
@@ -219,6 +221,8 @@ function signOutView() {
 let drawerEpoch = 0,
   drawerReturnFocus = null;
 function closeDrawer() {
+  clientHistoryCleanup?.();
+  clientHistoryCleanup = null;
   drawerEpoch++;
   const wasOpen = $("drawer").open;
   if (wasOpen) $("drawer").close();
@@ -243,6 +247,8 @@ function closeDrawer() {
   scheduleCalendarLayoutSync();
 }
 function showDrawer(title, kicker, html) {
+  clientHistoryCleanup?.();
+  clientHistoryCleanup = null;
   calendarReschedule?.cancel();
   appointmentPreview?.dismiss();
   calendarInteractions?.dismiss();
@@ -1648,7 +1654,7 @@ async function renderClients() {
   if (owner()) {
     $("client-add").insertAdjacentHTML(
       "beforebegin",
-      '<button class="btn" id="client-import">Import clients</button><button class="btn" id="history-preview-open">Preview history</button><button class="btn" id="client-export">Export CSV</button>',
+      '<button class="btn" id="client-import">Import clients</button><button class="btn" id="history-preview-open">Import history</button><button class="btn" id="client-export">Export CSV</button>',
     );
     $("client-import").onclick = () => setPage("client-transfer");
     $("history-preview-open").onclick = () => setPage("history-preview");
@@ -1763,8 +1769,26 @@ async function clientProfile(id, back = null) {
     showDrawer(
       c.name,
       "Client profile",
-      `<div class="profile-top">${avatar("clients", c, esc)}<div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}${c.instagram ? `<br><a href="https://www.instagram.com/${encodeURIComponent(c.instagram)}/" target="_blank" rel="noopener noreferrer">@${esc(c.instagram)}</a>` : ""}</p></div></div><h3 class="form-section">Client note</h3><p class="client-note">${esc(c.note || "No client note yet.")}</p><strong>${items.filter((a) => a.status === "done").length} completed visits</strong><h3 class="form-section">Appointment history</h3><div class="history">${items.map((a) => `<article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}</strong><p>${esc(a.serviceName)} · ${a.duration} min</p><p>${esc(therapist(a.therapistId)?.name)} · ${esc(room(a.roomId)?.name)}</p><p><span class="status ${a.status}">${statusName(a.status)}</span>${a.requestedTherapistId ? " · ♥ Requested" : ""}</p></article>`).join("") || '<p class="hint">No appointments yet.</p>'}</div>`,
+      `<div class="profile-top">${avatar("clients", c, esc)}<div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}${c.instagram ? `<br><a href="https://www.instagram.com/${encodeURIComponent(c.instagram)}/" target="_blank" rel="noopener noreferrer">@${esc(c.instagram)}</a>` : ""}</p></div></div><h3 class="form-section">Client note</h3><p class="client-note">${esc(c.note || "No client note yet.")}</p><strong>${items.filter((a) => a.status === "done").length} completed visits</strong><p class="hint">${items.filter((a) => a.status === "cancelled").length} cancelled · ${items.filter((a) => a.status === "no_show").length} no-shows</p><h3 class="form-section">Bookings in Rei</h3><div class="history">${items.map((a) => `<article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}</strong><p>${esc(a.serviceName)} · ${a.duration} min</p><p>${esc(therapist(a.therapistId)?.name)} · ${esc(room(a.roomId)?.name)}</p><p><span class="status ${a.status}">${statusName(a.status)}</span>${a.requestedTherapistId ? " · ♥ Requested" : ""}</p></article>`).join("") || '<p class="hint">No appointments yet.</p>'}</div>`,
     );
+    const historyRoot = document.createElement("section");
+    historyRoot.id = "client-imported-history";
+    $("drawer-content").append(historyRoot);
+    const profileEpoch = drawerEpoch,
+      profileSession = sessionEpoch;
+    clientHistoryCleanup = mountClientHistory({
+      root: historyRoot,
+      api,
+      esc,
+      clientId: c.id,
+      canViewSource: owner(),
+      isCurrent: () =>
+        historyRoot.isConnected &&
+        $("drawer").open &&
+        drawerEpoch === profileEpoch &&
+        sessionEpoch === profileSession &&
+        operator(),
+    });
     $("drawer-footer").innerHTML =
       `${back ? '<button class="btn" id="profile-back">Back to appointment</button>' : ""}<button class="btn" id="profile-photo">Upload / change photo</button><button class="btn primary" id="profile-edit">Edit client</button>`;
     if (back) $("profile-back").onclick = back;

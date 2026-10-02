@@ -34,6 +34,8 @@ test("Private profile photos: processing, transactional storage and role boundar
     modules: [
       "worker.mjs",
       "history-preview.mjs",
+      "history-archive.mjs",
+      "history-archive-schema.mjs",
       "history-preview-schema.mjs",
       "history-normalize.mjs",
       "history-import-plan.mjs",

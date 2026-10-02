@@ -143,6 +143,28 @@ test("mapping requires distinct source columns and an explicit schedule/duration
   );
 });
 
+test("Fresha Resource is optional and survives reordered report headers", () => {
+  const oldHeaders = [
+    "Appt. ref.",
+    "Client",
+    "Status",
+    "Scheduled date",
+    "Service",
+    "Duration (mins)",
+  ];
+  const original = freshaHistoryPreset(oldHeaders);
+  assert.equal(original.mapping.roomName, undefined);
+  const reordered = ["Resource", ...oldHeaders.toReversed()];
+  const current = freshaHistoryPreset(reordered);
+  for (const [field, index] of Object.entries(original.mapping))
+    assert.equal(reordered[current.mapping[field]], oldHeaders[index]);
+  assert.equal(current.mapping.roomName, 0);
+  assert.equal(
+    freshaHistoryPreset(["Resource", "Resource"]).mapping.roomName,
+    undefined,
+  );
+});
+
 test("status values are textual evidence, bounded and never inferred from past dates", () => {
   assert.deepEqual(
     historySourceValues(

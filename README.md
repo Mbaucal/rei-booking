@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.14.0** — 2 October 2026.
+Current implementation release, **0.15.0** — 2 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -42,11 +42,13 @@ The browser interface has scoped desktop, tablet and phone viewport checks using
 
 The `calendar-browser` CI job checks new-booking resource suggestions in Chromium at desktop, phone and tablet viewport sizes using fictional API fixtures and the real application assets. It covers slot clicks/taps, duration changes, explicit selections, keyboard entry, failed saves and delayed responses. The contextual-menu checks also cover popup and drawer geometry, hover times, loading/retry and stale opening responses. Calendar interaction scenarios cover the quarter-hour grid, appointment previews, summary/edit flow, draft rescheduling, Save/Cancel and Today navigation. Native touch behavior still needs a physical-device check. This is scoped browser emulation, not a full product visual review or physical-device certification. Run the same script locally with `REI_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/test-calendar-browser.mjs` when Chromium is installed. Browser test tools are installed separately from application dependencies.
 
-## Appointment history preview
+## Appointment history import
 
-Owners can open **Clients → Preview history**, read one appointment CSV up to 50,000 rows / 25 MiB, map columns, review issues and named client candidates, and save explicit draft matches for selected rows. Uploads use bounded, retry-safe parts; ready previews can be reopened without uploading the file again. An interrupted upload requires the same original file. The screen includes page-by-page review, profile links, stale-client rebuild and discard.
+Owners can open **Clients → Import history**, read one appointment CSV up to 50,000 rows / 25 MiB, confirm column mappings and save explicit client matches. The optional Fresha `Resource` column is recognized; `No resource` remains raw evidence with an unknown room. Uploads are bounded and resumable, and review remains paginated.
 
-This is a **preview only**: it saves temporary private review data, not imported visits, permanent identity links or changes to current appointments, reports or bonuses. Each preview becomes inaccessible after 24 hours; expired records are physically removed when another preview starts. Up to three recent previews are retained per owner. Missing completion, request, currency and timezone evidence stays visible and unresolved. See the [source contract](docs/history-import-contract.md) and [preview API and limits](docs/history-preview.md). Independent history browser checks use fictional records and the real UI assets in desktop and phone viewports.
+Choose up to 50 matched rows, **Review import**, acknowledge the review, then **Confirm import**. Confirmed history is permanent and appears in client profiles with counts of the original source statuses, including **Cancelled** and **No Show**. Exact repeats from renamed, reordered or overlapping reports are skipped; changed content or a different client for the same source reference is blocked. Missing/ambiguous references and possible overlaps with existing bookings must be resolved before importing that batch. No real history is imported automatically.
+
+Temporary previews expire after 24 hours; confirmed archives and import receipts survive their deletion. Historical records remain separate from current bookings, financial reports and bonuses. Unknown completion, request, currency and timezone stay unknown; past New/Confirmed/Started records do not become completed visits. Owners can inspect source evidence; reception sees operational history only, and therapists cannot access client history. See the [archive API and duplicate rules](docs/history-archive.md), [source contract](docs/history-import-contract.md) and [preview details](docs/history-preview.md).
 
 ## Local setup
 
