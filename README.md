@@ -42,6 +42,10 @@ The browser interface has scoped desktop, tablet and phone viewport checks using
 
 The `calendar-browser` CI job checks new-booking resource suggestions in Chromium at desktop, phone and tablet viewport sizes using fictional API fixtures and the real application assets. It covers slot clicks/taps, duration changes, explicit selections, keyboard entry, failed saves and delayed responses. The contextual-menu checks also cover popup and drawer geometry, hover times, loading/retry and stale opening responses. Calendar interaction scenarios cover the quarter-hour grid, appointment previews, summary/edit flow, draft rescheduling, Save/Cancel and Today navigation. Native touch behavior still needs a physical-device check. This is scoped browser emulation, not a full product visual review or physical-device certification. Run the same script locally with `REI_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/test-calendar-browser.mjs` when Chromium is installed. Browser test tools are installed separately from application dependencies.
 
+## Historical import preparation
+
+Historical Fresha appointment import is being prepared separately from the existing client CSV importer. Pure normalization and preview-planning modules validate mapped rows, preserve unknown values, propose client matches and identify duplicate/conflicting source records without database writes. They are not connected to a runtime route or an import screen yet. See the [source contract](docs/history-import-contract.md) and [preview module API](docs/history-preview.md). Application version 0.13.3 is unchanged by this preparatory work.
+
 ## Local setup
 
 Requires Node.js 24 and npm. Do not load this application's `index.html` directly from disk; it requires its API. The standalone prototype under `docs/reference/` is separate.

@@ -2,37 +2,57 @@
 
 Task: [MBA-174](https://linear.app/mbaucal/issue/MBA-174/history-migration-confirm-source-mapping-and-client-identity-links), under [MBA-75](https://linear.app/mbaucal/issue/MBA-75/migracija-uvoz-i-izvoz-klijenata-i-dostupne-istorije).
 
-Baseline: main `6b8a52fa7e82617b3de029c8af84b24d16a367b6`, application 0.9.0. Prepared 30 September 2026 (Belgrade). This is an implementation contract, not a shipped importer. No records, schema, reports or current appointment behavior change in this task.
+Prepared 30 September 2026; source evidence refreshed 2 October 2026 (Belgrade), on main `b217e61c68727c7cd20e8000c3ccbc81f64bb75e`, application 0.13.3. This is an implementation contract, not a shipped importer. The pure normalization/planning foundation is tracked in MBA-194 / MBA-195 / MBA-196. No records, schema, reports or current appointment behavior change in this slice.
 
 ## Evidence and remaining source access
 
 The application already displays native Rei appointments in client profiles. Its CSV workflow imports client profiles only. Fresha appointment history requires a separate workflow.
 
-The earlier file **report_appointment-list_2026-01-27.csv** was located again on 29 September: filename and 86,063-byte size verified from file metadata. It has no readable extracted text; both download attempts failed with HTTP 502. Its current bytes and complete header list have therefore **not** been rechecked. The original client export was not located by the scoped project searches. No unrelated files were opened.
+The previously supplied **report_appointment-list_2026-01-27.csv** was recovered and read on 2 October. Earlier transfer failures no longer block source-format verification. Private source bytes remain outside the repository; no client identities or source rows are used in fixtures.
 
-The following facts are **secondary evidence from the previous source inspection in MBA-75**, not a new inspection or a guaranteed format for every Fresha export:
+Verified format: UTF-8 without BOM, comma-separated, 86,063 bytes, 337 data rows, 18 columns and 337 distinct appointment references in this sample. This does not establish reference uniqueness for all exports or prove that every reference identifies one service line.
 
-- 337 data rows, 18 columns and 337 distinct `Appt. ref.` values in that sample.
-- Scheduled dates cover 2–27 January 2026, not a full month. Created dates span August 2025–January 2026.
-- Five team members and seventeen treatment labels.
-- Client identity is a name only: no client ID, phone or email in that report.
-- `Requested` is absent. Status counts were New 196, Confirmed 68, Started 30, Cancelled 37 and No Show 6. There was no explicit Completed status.
-- Timestamps have no timezone offset. `Net sales` remains nonzero on some cancelled/no-show rows.
+Exact headers, in order:
 
-Recover the bytes before accepting a source adapter: record the exact headers, delimiter, encoding, date/decimal syntax and file digest. Do not extrapolate all 18 headers from the partial inspection. Keep private source files and client values outside the repository and tests.
+1. `Appt. ref.`
+2. `Client`
+3. `Team member`
+4. `Status`
+5. `Created date`
+6. `Scheduled date`
+7. `Cancelled date`
+8. `Category`
+9. `Service`
+10. `Duration (mins)`
+11. `Appt. slot`
+12. `Created by`
+13. `Cancelled by`
+14. `Location`
+15. `Net sales`
+16. `Cancellation reason`
+17. `Fees charged`
+18. `Upfront payments`
+
+Dates use an English abbreviated month and 12-hour clock (`D/DD Mon YYYY, h:mmam/pm`). Slots use `HH:mm:ss-HH:mm:ss`, with zero seconds in this sample. Durations are textual hours/minutes. Net sales contains integer decimal strings; the file provides no currency or timezone metadata. Those facts are still required before interpreting money or deriving instants.
+
+The sample has name-only client identity, with no client ID, phone, email, Instagram or Requested column. Status counts are New 196, Confirmed 68, Started 30, Cancelled 37 and No Show 6; no explicit Completed status exists. There is a cancelled timestamp on each of the 37 Cancelled rows. Source net sales is not payment or completion evidence. Extra columns such as Fees charged and Upfront payments are not mapped by this preparatory slice.
+
+The original client export and identity crosswalk remain unresolved. The sample can therefore be normalized and reviewed, but name-only rows cannot be attached automatically to existing clients.
+
+The integrated pure preview was exercised privately against those bytes: all 337 rows parsed without structural/date/duration errors. All remain unresolved with no selected rows or eligible totals because identity/reference scope and source timezone are not confirmed. Five source creation timestamps are later than their scheduled appointments and receive review flags. No records were written; these aggregate observations are the only source-derived test results retained in the repository.
 
 ## Source-to-record mapping
 
-The names in the first column below come from the earlier inspection. They remain provisional until reinspection. Preserve original text alongside parsed values and mapping decisions.
+These headers are verified for the recovered sample. Other files require explicit mapping; do not silently assume the same export format. Preserve original text alongside parsed values and mapping decisions.
 
 | Source evidence                                    | Historical field                                            | Rule                                                                                                                                                      |
 | -------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Appt. ref.`                                       | `sourceAppointmentRef`                                      | Preserve as text. Unique in one sample does not prove one row per appointment in all exports.                                                             |
-| Client name column                                 | `sourceClientLabel`, `clientId`                             | Label is provenance; `clientId` stays unresolved until identity is established.                                                                           |
+| `Client`                                           | `sourceClientLabel`, `clientId`                             | Label is provenance; `clientId` stays unresolved until identity is established.                                                                           |
 | `Team member`                                      | `sourceTherapistLabel`, optional `therapistId`              | Map explicitly to an existing therapist; preserve original label. Never infer a request from a name or emoji.                                             |
-| Treatment label                                    | `sourceServiceLabel`, optional `serviceId`                  | Exact source header still needs verification. Preserve the historical label and duration even after menu edits.                                           |
+| `Service`                                          | `sourceServiceLabel`, optional `serviceId`                  | Preserve the historical label and duration even after menu edits.                                                                                         |
 | `Scheduled date` / `Appt. slot`                    | `scheduledLocalDate`, `startMinute`, optional `scheduledAt` | Validate that fields agree; retain raw text. Derive an instant only with a confirmed source timezone.                                                     |
-| `Duration (mins)`                                  | `durationMinutes`                                           | Earlier values included `1h 0min`, `1h 30min`, `30min`, `45min`, `2h 0min`. Parse to integer minutes; do not treat the header as proof cells are numeric. |
+| `Duration (mins)`                                  | `durationMinutes`                                           | Verified values include `1h 0min`, `1h 30min`, `30min`, `45min`, `2h 0min`. Parse to integer minutes; do not treat the header as proof cells are numeric. |
 | `Created date`                                     | `sourceCreatedAt`                                           | Original booking creation time, separate from import time and appointment time. Unknown or invalid is not replaced by the import timestamp.               |
 | `Cancelled date`                                   | `sourceCancelledAt`                                         | Preserve if present; disagreement with status is a review flag.                                                                                           |
 | `Status`                                           | `sourceStatus`, `completionState`                           | Preserve source status verbatim. Completion is `completed`, `not_completed` or `unknown`, with the basis recorded.                                        |
@@ -113,17 +133,17 @@ Owner-only preview/import APIs must enforce role, origin and CSRF checks. Recept
 
 ## Gates and next bounded task
 
-| Gate                                                 | Current state                      | Safe behavior until resolved                                                                              |
-| ---------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Current report bytes / exact headers                 | Located; transfer failed twice     | Use prior inspection only as provisional evidence. Retry recovery later; do not claim adapter acceptance. |
-| Original client export / identity crosswalk          | Not located in scoped searches     | Preview known Rei candidates; do not attach by name automatically.                                        |
-| Export timezone and date syntax                      | Not confirmed                      | Preserve raw local values; block time-dependent confirmation.                                             |
-| Meaning of historical New / Confirmed / Started      | Not confirmed                      | Leave completion unknown; do not count worked hours or bonuses.                                           |
-| Source reference and service-line uniqueness         | Unique only in the recorded sample | Require full-export verification or collision review.                                                     |
-| Historical gross price / payments / requests / rates | Not established                    | Keep unknown; no automatic financial backfill.                                                            |
+| Gate                                                 | Current state                            | Safe behavior until resolved                                                                             |
+| ---------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Current report bytes / exact headers                 | Verified 2 October                       | Explicit mapping supported for the inspected sample; no claim that all exports use this format.          |
+| Original client export / identity crosswalk          | Not located in scoped searches           | Preview known Rei candidates; do not attach by name automatically.                                       |
+| Export timezone and currency                         | Not confirmed; date/slot syntax verified | Preserve local values and raw money; leave instants and minor-unit amounts unavailable until configured. |
+| Meaning of historical New / Confirmed / Started      | Not confirmed                            | Leave completion unknown; do not count worked hours or bonuses.                                          |
+| Source reference and service-line uniqueness         | Unique only in the recorded sample       | Require full-export verification or collision review.                                                    |
+| Historical gross price / payments / requests / rates | Not established                          | Keep unknown; no automatic financial backfill.                                                           |
 
 None of these gates blocks unrelated calendar/client UI work. Do not ask for the same report again while its located copy may be recoverable. Escalate only the small set of facts that cannot be recovered, with the exact affected behavior explained.
 
-**Next backend slice:** a pure, non-writing history normalizer and preview planner using an explicit column mapping and synthetic fixtures. Proposed ownership: `src/history-import-plan.mjs`, `tests/history-import-plan.test.mjs` and this contract. No schema, live appointment writes, routes, reports, email or voucher edits in that slice. It can exercise the safe unresolved states now; final source-adapter acceptance still requires the report bytes. PM must assign implementation ownership before starting it.
+**Current backend slice (MBA-194 / MBA-195 / MBA-196):** pure, non-writing normalization and preview planning using explicit mappings and synthetic fixtures. Worker 1 owns the normalizer, Worker 2 owns the identity/duplicate planner, and the independent tester checks their integrated contract. No schema, live appointment writes, routes, reports, email or voucher changes. An owner-facing preview and durable reviewed identity/archive confirmation remain separate later work; this foundation alone does not put imported history into profiles.
 
 Independent tester cases: name twins; shared/contradictory contacts; an existing skipped profile missing a source key; leading-zero IDs; same key/different content; repeated/reordered/overlapping files; multi-service references; explicit versus unknown completion/request; decimal and malformed amounts; textual durations; DST and date/slot conflicts; current-menu edits; missing/deactivated therapist/resource; native-history overlap; role privacy; stale previews; concurrent identity claims; lost confirmation response; atomic rollback. Only synthetic records belong in repository fixtures. This document has no runtime behavior to test; later implementations require the relevant Worker/D1 checks as well as pure planner tests.
