@@ -830,6 +830,40 @@ test("Whole-report history jobs: complete review, durable progress and exactly-o
           archiveQueryPlan: archiveQueryPlan.map((r) => r.detail),
         }),
       );
+      const jobKeyQueryPlan = (
+        await sql(
+          "EXPLAIN QUERY PLAN SELECT k.* FROM json_each(?) p CROSS JOIN history_import_job_keys k ON k.job_id=? AND k.ref_hash=json_extract(p.value,'$.refHash') AND k.line_key=json_extract(p.value,'$.lineKey')",
+          JSON.stringify([{ refHash: digest("capacity-0"), lineKey: "" }]),
+          "synthetic-job",
+        ).all()
+      ).results;
+      assert.ok(
+        jobKeyQueryPlan.some((r) =>
+          r.detail.includes("job_id=? AND ref_hash=? AND line_key=?"),
+        ),
+      );
+      t.diagnostic(
+        JSON.stringify({
+          jobKeyQueryPlan: jobKeyQueryPlan.map((r) => r.detail),
+        }),
+      );
+      const frozenQueryPlan = (
+        await sql(
+          "EXPLAIN QUERY PLAN SELECT x.record_json FROM json_each(?) p CROSS JOIN history_preview_rows x ON x.preview_id=? AND x.row_num=json_extract(p.value,'$.row')",
+          JSON.stringify([{ row: 2 }]),
+          p.id,
+        ).all()
+      ).results;
+      assert.ok(
+        frozenQueryPlan.some((r) =>
+          r.detail.includes("preview_id=? AND row_num=?"),
+        ),
+      );
+      t.diagnostic(
+        JSON.stringify({
+          frozenQueryPlan: frozenQueryPlan.map((r) => r.detail),
+        }),
+      );
       let j = await start(p),
         reviewSteps = 0,
         importSteps = 0;

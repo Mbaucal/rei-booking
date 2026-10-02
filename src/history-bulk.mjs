@@ -319,7 +319,7 @@ async function prepareStep(db, user, j, body) {
     keyRows = (
       await stmt(
         db,
-        `SELECT k.* FROM json_each(?) p JOIN history_import_job_keys k ON k.job_id=? AND k.ref_hash=json_extract(p.value,'$.refHash') AND k.line_key=json_extract(p.value,'$.lineKey')`,
+        `SELECT k.* FROM json_each(?) p CROSS JOIN history_import_job_keys k ON k.job_id=? AND k.ref_hash=json_extract(p.value,'$.refHash') AND k.line_key=json_extract(p.value,'$.lineKey')`,
         stored.plan_json,
         j.id,
       ).all()
@@ -421,7 +421,7 @@ async function prepareStep(db, user, j, body) {
     ),
     stmt(
       db,
-      `INSERT INTO history_import_job_rows(job_id,row_num,ref_hash,line_key,client_id,client_version,evidence_hash,archive_id,disposition,plan_json,review_json,record_json) SELECT ?,json_extract(p.value,'$.row'),json_extract(p.value,'$.refHash'),json_extract(p.value,'$.lineKey'),json_extract(p.value,'$.clientId'),json_extract(p.value,'$.clientVersion'),json_extract(p.value,'$.evidenceHash'),json_extract(p.value,'$.id'),json_extract(p.value,'$.disposition'),json_remove(p.value,'$.review'),json_extract(p.value,'$.review'),x.record_json FROM json_each(?) p JOIN history_preview_rows x ON x.preview_id=? AND x.row_num=json_extract(p.value,'$.row') WHERE ${guard}`,
+      `INSERT INTO history_import_job_rows(job_id,row_num,ref_hash,line_key,client_id,client_version,evidence_hash,archive_id,disposition,plan_json,review_json,record_json) SELECT ?,json_extract(p.value,'$.row'),json_extract(p.value,'$.refHash'),json_extract(p.value,'$.lineKey'),json_extract(p.value,'$.clientId'),json_extract(p.value,'$.clientVersion'),json_extract(p.value,'$.evidenceHash'),json_extract(p.value,'$.id'),json_extract(p.value,'$.disposition'),json_remove(p.value,'$.review'),json_extract(p.value,'$.review'),x.record_json FROM json_each(?) p CROSS JOIN history_preview_rows x ON x.preview_id=? AND x.row_num=json_extract(p.value,'$.row') WHERE ${guard}`,
       j.id,
       packed,
       j.preview_id,
