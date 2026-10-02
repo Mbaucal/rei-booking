@@ -196,9 +196,10 @@ export function renderHistoryPreview({
   }
   async function readFile(event) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || importPending) return;
     const file = $("history-csv").files[0];
     if (!file) return;
+    $("history-import-result").innerHTML = "";
     const version = ++generation;
     clearError();
     setBusy(true);
@@ -1005,6 +1006,7 @@ export function renderHistoryPreview({
   }
   async function reviewImport() {
     if (busy || importPending || !selected.size) return;
+    $("history-import-result").innerHTML = "";
     const version = generation;
     const selection = {
       previewId: draft.id,
@@ -1196,6 +1198,8 @@ export function renderHistoryPreview({
     prepare(++generation);
   }
   function reset() {
+    if (importPending) return;
+    $("history-import-result").innerHTML = "";
     generation++;
     searchGeneration++;
     draft = null;

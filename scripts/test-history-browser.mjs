@@ -787,8 +787,26 @@ async function reviewArchive(page) {
 }
 async function confirmArchive(page) {
   await page.locator("#history-import-ack").check();
-  await page.locator("#history-confirm-import").click();
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/history/imports/confirm" &&
+        response.request().method() === "POST",
+    ),
+    page.locator("#history-confirm-import").click(),
+  ]);
+  assert.ok(response.ok(), "The current confirmation succeeds");
+  const receipt = await response.json();
+  assert.ok(receipt.importId, "Confirmation returns a durable receipt ID");
+  await page.waitForFunction(
+    (id) =>
+      document.querySelector(
+        "#history-import-receipt .history-receipt-id strong",
+      )?.textContent === id,
+    receipt.importId,
+  );
   await page.locator("#history-import-receipt").waitFor({ state: "visible" });
+  return receipt;
 }
 async function inViewport(page, locator, label) {
   await locator.scrollIntoViewIfNeeded();
@@ -1322,8 +1340,13 @@ try {
       await openHistory(page, f);
       await prepareArchivePreview(page);
       await reviewArchive(page);
-      await confirmArchive(page);
+      const firstReceipt = await confirmArchive(page);
       await page.locator("#history-new-file").click();
+      assert.equal(
+        await page.locator("#history-import-receipt").count(),
+        0,
+        "A new report clears the preceding receipt",
+      );
       await prepareArchivePreview(page, {
         bytes: archiveCSV({ reordered: true }),
         filename: "overlapping-renamed-report.csv",
@@ -1348,7 +1371,15 @@ try {
         "Cancelling duplicate review does not reconfirm",
       );
       await reviewArchive(page);
-      await confirmArchive(page);
+      const duplicateReceipt = await confirmArchive(page);
+      assert.notEqual(duplicateReceipt.importId, firstReceipt.importId);
+      assert.equal(duplicateReceipt.created, 0);
+      assert.equal(duplicateReceipt.duplicates, 3);
+      assert.equal(
+        f.writes.filter((r) => r.path.endsWith("/confirm")).length,
+        2,
+        "The second confirmation response is consumed before checking its receipt",
+      );
       assert.equal(
         f.archive.length,
         3,
