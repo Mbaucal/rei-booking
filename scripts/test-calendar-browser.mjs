@@ -3002,6 +3002,18 @@ try {
       await blockMoveView(page, "rooms", 0);
       await page.locator('[data-calendar-block="midnight"]').click();
       await page.locator("#calendar-block-reschedule").click();
+      await page
+        .locator('.calendar-reschedule-preview[data-calendar-block="midnight"]')
+        .focus();
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowDown");
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /00:10–00:40/,
+        "Repeated arrow keys retain focus on the rebuilt preview",
+      );
+      await page.keyboard.press("ArrowUp");
+      await page.keyboard.press("ArrowUp");
       await shiftKeyboardDraft(page, "ArrowUp");
       assert.match(
         await page.locator("#calendar-reschedule-time").textContent(),

@@ -377,6 +377,10 @@ export function mountCalendarReschedule({
   }
   function shift(delta) {
     if (!draft || saving || !current()) return;
+    const focusedPreview = draft.previews.find((el) =>
+      el.contains(doc.activeElement),
+    );
+    const focusedColumn = focusedPreview?.closest("[data-resource]");
     draft.candidate.start = clamp(
       draft.candidate.start + delta,
       START,
@@ -391,6 +395,12 @@ export function mountCalendarReschedule({
       );
     draft.error.hidden = true;
     redraw();
+    if (focusedPreview)
+      (
+        draft.previews.find(
+          (el) => el.closest("[data-resource]") === focusedColumn,
+        ) || draft.save
+      ).focus({ preventScroll: true });
   }
   function redraw() {
     if (!draft || !current()) return;
