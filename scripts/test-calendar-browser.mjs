@@ -111,6 +111,7 @@ function fixture() {
     appointments: [],
     blocks: [],
     blockWrites: [],
+    blockWriteWait: null,
     photoWrites: [],
     clientPhotos: new Map(),
     writes: [],
@@ -311,6 +312,12 @@ const server = createServer(async (req, res) => {
         const body = raw ? JSON.parse(raw) : {};
         assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
         f.blockWrites.push({ body, method: req.method, path: url.pathname });
+        if (f.role === "therapist")
+          return json(
+            { error: "Calendar entries are read-only for therapists." },
+            403,
+          );
+        if (f.blockWriteWait) await f.blockWriteWait.promise;
         const id = url.pathname.split("/").at(-1);
         const index = f.blocks.findIndex((b) => b.id === id);
         if (req.method !== "POST" && index < 0)
@@ -321,6 +328,67 @@ const server = createServer(async (req, res) => {
           f.blocks.splice(index, 1);
           return json({ ok: true });
         }
+        const resource = (
+          body.resourceType === "room"
+            ? f.catalogue.rooms
+            : f.catalogue.therapists
+        ).find((entry) => entry.id === body.resourceId);
+        if (
+          !resource ||
+          !Number.isInteger(body.start) ||
+          !Number.isInteger(body.duration) ||
+          body.start < 0 ||
+          body.duration < 5 ||
+          body.start % 5 ||
+          body.duration % 5 ||
+          body.start + body.duration > 1440 ||
+          (body.resourceType === "therapist" && body.bed !== null) ||
+          (body.resourceType === "room" &&
+            body.bed !== null &&
+            (!Number.isInteger(body.bed) ||
+              body.bed < 0 ||
+              body.bed >= resource.capacity))
+        )
+          return json(
+            {
+              error:
+                "Use a valid resource and 5-minute steps within a single day.",
+            },
+            400,
+          );
+        const overlaps = (entry) =>
+          entry.date === body.date &&
+          entry.start < body.start + body.duration &&
+          entry.start + entry.duration > body.start;
+        const occupied = f.appointments.some(
+          (entry) =>
+            !["cancelled", "no_show"].includes(entry.status) &&
+            overlaps(entry) &&
+            (body.resourceType === "therapist"
+              ? entry.therapistId === body.resourceId
+              : entry.roomId === body.resourceId &&
+                (body.bed === null || body.bed === entry.bed)),
+        );
+        const blocked = f.blocks.some(
+          (entry) =>
+            entry.id !== id &&
+            entry.blocksAvailability &&
+            overlaps(entry) &&
+            entry.resourceType === body.resourceType &&
+            entry.resourceId === body.resourceId &&
+            (body.resourceType === "therapist" ||
+              body.bed === null ||
+              entry.bed === null ||
+              entry.bed === body.bed),
+        );
+        if (body.blocksAvailability && (occupied || blocked))
+          return json(
+            {
+              error:
+                "This time overlaps a booking or blocked time. Choose another time or resource.",
+            },
+            409,
+          );
         const previous = f.blocks[index];
         const saved = {
           ...body,
@@ -507,6 +575,7 @@ async function scenario(name, device, run) {
   } finally {
     for (const delay of f.delayed.values()) delay.release();
     f.writeWait?.release();
+    f.blockWriteWait?.release();
     await context.close();
     fixtures.delete(id);
   }
@@ -1006,6 +1075,71 @@ async function renderedFrames(page) {
         requestAnimationFrame(() => requestAnimationFrame(done)),
       ),
   );
+}
+
+async function blockMoveView(page, mode = "rooms", minute = 600) {
+  await selectMode(page, mode);
+  await page.locator("#calendar-scroll").evaluate(
+    (el, top) => {
+      el.scrollTop = top;
+      el.scrollLeft = 0;
+    },
+    await pixelAt(page, Math.max(0, minute - 60)),
+  );
+  await renderedFrames(page);
+}
+async function moveBlockPointer(
+  page,
+  id,
+  resourceType,
+  resourceId,
+  start,
+  touch = false,
+) {
+  const preview = page.locator(
+      `.calendar-reschedule-preview[data-calendar-block="${id}"]`,
+    ),
+    card = (await preview.count())
+      ? preview
+      : page.locator(`[data-calendar-block="${id}"]`),
+    source = await bodyPoint(card),
+    sourceBox = await card.boundingBox(),
+    target = await page
+      .locator(`[data-kind="${resourceType}"][data-resource="${resourceId}"]`)
+      .boundingBox();
+  assert.ok(target, "Move target column is rendered");
+  const point = {
+    x: target.x + target.width / 2,
+    y: target.y + (await pixelAt(page, start)) + source.y - sourceBox.y,
+  };
+  if (touch) {
+    const gesture = await touchStart(page, source);
+    await gesture.move(point);
+    await gesture.end();
+  } else {
+    await page.mouse.move(source.x, source.y);
+    await page.mouse.down();
+    await page.mouse.move(point.x, point.y, { steps: 8 });
+    await page.mouse.up();
+  }
+}
+
+function assertBlockSnapshot(saved, original, target) {
+  for (const key of [
+    "date",
+    "duration",
+    "title",
+    "note",
+    "blocksAvailability",
+    "createdAt",
+  ])
+    assert.equal(
+      saved[key],
+      original[key],
+      `${key} survives the calendar move`,
+    );
+  for (const [key, value] of Object.entries(target))
+    assert.equal(saved[key], value, key);
 }
 
 try {
@@ -2486,6 +2620,400 @@ try {
       }
     },
   );
+  for (const resourceType of ["therapist", "room"])
+    await scenario(
+      `mouse moves ${resourceType} entries up, down and across columns with one PUT per drop`,
+      desktop,
+      async ({ page, f, open }) => {
+        const first = resourceType === "room" ? "r1" : "tA",
+          second = resourceType === "room" ? "r2" : "tB",
+          original = calendarBlock("mouse-block", {
+            start: 660,
+            duration: 90,
+            resourceType,
+            resourceId: first,
+            bed: null,
+            title: "QA preparation <text>",
+            note: "Preserve the complete note\nAfter a move.",
+          });
+        f.blocks = [structuredClone(original)];
+        await open();
+        await blockMoveView(
+          page,
+          resourceType === "room" ? "rooms" : "therapists",
+          660,
+        );
+        for (const [index, target] of [
+          { start: 655, resourceId: first },
+          { start: 665, resourceId: first },
+          { start: 665, resourceId: second },
+          { start: 660, resourceId: first },
+        ].entries()) {
+          const response = page.waitForResponse(
+            (r) =>
+              r.request().method() === "PUT" &&
+              r.url().endsWith("/api/calendar-blocks/mouse-block"),
+          );
+          await moveBlockPointer(
+            page,
+            original.id,
+            resourceType,
+            target.resourceId,
+            target.start,
+          );
+          assert.equal((await response).status(), 200);
+          await page
+            .locator("#calendar-reschedule-bar")
+            .waitFor({ state: "hidden" });
+          await page
+            .locator(
+              `[data-resource="${target.resourceId}"] [data-calendar-block="${original.id}"]`,
+            )
+            .waitFor();
+          assert.equal(f.blockWrites.length, index + 1);
+          assert.equal(f.blockWrites[index].body.version, index + 1);
+          assertBlockSnapshot(f.blocks[0], original, {
+            ...target,
+            resourceType,
+            bed: null,
+            version: index + 2,
+          });
+          assert.equal(f.writes.length, 0);
+          assert.equal(await page.locator("#drawer").isVisible(), false);
+          assert.equal(
+            await page.locator("#calendar-slot-menu").isVisible(),
+            false,
+          );
+        }
+        await capture(page, `desktop-moved-${resourceType}-block`);
+        await open();
+        await blockMoveView(
+          page,
+          resourceType === "room" ? "rooms" : "therapists",
+          660,
+        );
+        await page.locator(`[data-calendar-block="${original.id}"]`).click();
+        assert.match(
+          await page.locator(".calendar-block-details").textContent(),
+          /11:00–12:30/,
+        );
+        assert.match(
+          await page.locator(".calendar-block-details").textContent(),
+          /Preserve the complete note/,
+        );
+        assert.equal(
+          f.blockWrites.length,
+          4,
+          "A plain details click adds no write",
+        );
+      },
+    );
+  await scenario(
+    "scope-changing block drops require Save and restore original table when dragged back",
+    desktop,
+    async ({ page, f, open }) => {
+      const original = calendarBlock("scope-block", {
+        start: 660,
+        duration: 60,
+      });
+      f.blocks = [structuredClone(original)];
+      await open();
+      await blockMoveView(page, "all", 660);
+      await moveBlockPointer(page, original.id, "room", "r2", 660);
+      await page.locator("#calendar-reschedule-bar").waitFor();
+      assert.equal(f.blockWrites.length, 0);
+      assert.match(
+        await page.locator("#calendar-reschedule-resource").textContent(),
+        /QA Single.*Table 1/i,
+      );
+      await moveBlockPointer(page, original.id, "room", "r1", 660);
+      assert.equal(f.blockWrites.length, 0);
+      assert.match(
+        await page.locator("#calendar-reschedule-resource").textContent(),
+        /QA Couple.*Table 2/i,
+      );
+      assert.match(
+        await page.locator("#calendar-reschedule-instruction").textContent(),
+        /Save move to confirm/i,
+        "The restored target still explains the latched review step",
+      );
+      await moveBlockPointer(page, original.id, "room", "r2", 660);
+      const save = async (target) => {
+        const response = page.waitForResponse(
+          (r) =>
+            r.request().method() === "PUT" &&
+            r.url().endsWith("/api/calendar-blocks/scope-block"),
+        );
+        await page.locator("#calendar-reschedule-save").click();
+        assert.equal((await response).status(), 200);
+        await page
+          .locator("#calendar-reschedule-bar")
+          .waitFor({ state: "hidden" });
+        assertBlockSnapshot(f.blocks[0], original, target);
+        await page
+          .locator(
+            `[data-resource="${target.resourceId}"] [data-calendar-block="scope-block"]`,
+          )
+          .waitFor();
+      };
+      await save({ resourceType: "room", resourceId: "r2", bed: 0 });
+      await moveBlockPointer(page, original.id, "therapist", "tB", 660);
+      await page.locator("#calendar-reschedule-bar").waitFor();
+      assert.equal(
+        f.blockWrites.length,
+        1,
+        "Cross-kind mouse drop remains a draft",
+      );
+      assert.match(
+        await page.locator("#calendar-reschedule-resource").textContent(),
+        /QA Therapist B/,
+      );
+      await save({ resourceType: "therapist", resourceId: "tB", bed: null });
+      await moveBlockPointer(page, original.id, "room", "r1", 660);
+      await page.locator("#calendar-reschedule-bar").waitFor();
+      assert.equal(f.blockWrites.length, 2);
+      assert.match(
+        await page.locator("#calendar-reschedule-resource").textContent(),
+        /All tables/i,
+      );
+      await save({ resourceType: "room", resourceId: "r1", bed: null });
+      assert.equal(f.writes.length, 0);
+    },
+  );
+  for (const device of [phone, tablet])
+    await scenario(
+      "touch block tap and scroll stay safe; long press supports Cancel, Save once and persistent resource movement",
+      device,
+      async ({ page, f, open }) => {
+        if (device.name === "tablet") f.role = "reception";
+        const original = calendarBlock("touch-block", {
+          start: 660,
+          duration: 90,
+          bed: null,
+          blocksAvailability: false,
+          title: "QA call reminder",
+        });
+        f.blocks = [structuredClone(original)];
+        f.appointments = [booking("adjacent", "tA", "r1", 0, 600, 60)];
+        await open();
+        await blockMoveView(page, "rooms", 660);
+        const card = page.locator('[data-calendar-block="touch-block"]');
+        const before = await page
+          .locator("#calendar-scroll")
+          .evaluate((el) => el.scrollTop);
+        const swipePoint = await bodyPoint(card),
+          swipe = await touchStart(page, swipePoint);
+        await swipe.move({ x: swipePoint.x, y: swipePoint.y - 40 });
+        await swipe.move({ x: swipePoint.x, y: swipePoint.y - 90 });
+        await swipe.end();
+        await renderedFrames(page);
+        assert.ok(
+          (await page
+            .locator("#calendar-scroll")
+            .evaluate((el) => el.scrollTop)) >
+            before + 20,
+        );
+        assert.equal(await page.locator("#calendar-reschedule-bar").count(), 0);
+        assert.equal(f.blockWrites.length, 0);
+        await blockMoveView(page, "rooms", 660);
+        await card.tap();
+        await page.locator(".calendar-block-details").waitFor();
+        await page.locator("#drawer-close").click();
+        assert.equal(f.blockWrites.length, 0);
+        const neighbor = page.locator('[data-appointment="adjacent"]'),
+          neighborBefore = await neighbor.boundingBox();
+        await longPress(page, card);
+        assert.equal(f.blockWrites.length, 0, "First long press only selects");
+        await moveBlockPointer(page, original.id, "room", "r1", 655, true);
+        await page
+          .locator("#calendar-reschedule-time")
+          .filter({ hasText: "10:55–12:25" })
+          .waitFor();
+        assert.equal(f.blockWrites.length, 0);
+        assert.ok(
+          (await neighbor.boundingBox()).width < neighborBefore.width * 0.7,
+          "The draft reflows the neighboring appointment instead of covering it",
+        );
+        await capture(page, `${device.name}-selected-block-draft`);
+        await page.locator("#calendar-reschedule-cancel").click();
+        await page
+          .locator("#calendar-reschedule-bar")
+          .waitFor({ state: "hidden" });
+        assert.equal(f.blockWrites.length, 0);
+        assert.ok(
+          Math.abs(
+            (await neighbor.boundingBox()).width - neighborBefore.width,
+          ) < 1,
+          "Cancel restores adjacent appointment width",
+        );
+        assert.equal(
+          await page
+            .locator(".is-reschedule-source,.calendar-reschedule-preview")
+            .count(),
+          0,
+        );
+        await longPress(page, card);
+        await moveBlockPointer(page, original.id, "room", "r2", 665, true);
+        assert.equal(f.blockWrites.length, 0);
+        const wait = deferred();
+        f.blockWriteWait = wait;
+        const response = page.waitForResponse(
+          (r) =>
+            r.request().method() === "PUT" &&
+            r.url().endsWith("/api/calendar-blocks/touch-block"),
+        );
+        await page.locator("#calendar-reschedule-save").click();
+        assert.equal(
+          await page.locator("#calendar-reschedule-save").isDisabled(),
+          true,
+        );
+        await page.locator("#calendar-reschedule-save").dispatchEvent("click");
+        wait.release();
+        assert.equal((await response).status(), 200);
+        f.blockWriteWait = null;
+        await page
+          .locator("#calendar-reschedule-bar")
+          .waitFor({ state: "hidden" });
+        assert.equal(f.blockWrites.length, 1);
+        assert.equal(f.blockWrites[0].body.version, 1);
+        assertBlockSnapshot(f.blocks[0], original, {
+          start: 665,
+          resourceType: "room",
+          resourceId: "r2",
+          bed: null,
+        });
+        assert.equal(f.writes.length, 0);
+        await open();
+        await blockMoveView(page, "rooms", 665);
+        await page
+          .locator('[data-resource="r2"] [data-calendar-block="touch-block"]')
+          .tap();
+        assert.match(
+          await page.locator(".calendar-block-details").textContent(),
+          /11:05–12:35/,
+        );
+        assert.match(
+          await page.locator(".calendar-block-details").textContent(),
+          /QA call reminder/,
+        );
+      },
+    );
+  await scenario(
+    "occupied and stale block moves keep a recoverable draft and do not change the saved entry",
+    desktop,
+    async ({ page, f, open }) => {
+      const original = calendarBlock("conflict-block", {
+        start: 660,
+        duration: 60,
+        bed: null,
+      });
+      f.blocks = [structuredClone(original)];
+      f.appointments = [booking("occupied", "tB", "r2", 0, 600, 90)];
+      await open();
+      await blockMoveView(page, "rooms", 660);
+      const rejected = page.waitForResponse(
+        (r) =>
+          r.request().method() === "PUT" &&
+          r.url().endsWith("/api/calendar-blocks/conflict-block"),
+      );
+      await moveBlockPointer(page, original.id, "room", "r2", 600);
+      assert.equal((await rejected).status(), 409);
+      await page.locator("#calendar-reschedule-error").waitFor();
+      assert.equal(
+        await page.locator("#calendar-reschedule-save").isEnabled(),
+        true,
+      );
+      assert.deepEqual(f.blocks[0], original);
+      await page.locator("#calendar-reschedule-cancel").click();
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      await page.locator('[data-calendar-block="conflict-block"]').click();
+      await page.locator("#calendar-block-reschedule").click();
+      await page.locator("#calendar-reschedule-later").click();
+      f.blocks[0].version = 2;
+      const stale = page.waitForResponse(
+        (r) =>
+          r.request().method() === "PUT" &&
+          r.url().endsWith("/api/calendar-blocks/conflict-block"),
+      );
+      await page.locator("#calendar-reschedule-save").click();
+      assert.equal((await stale).status(), 409);
+      await page.locator("#calendar-reschedule-error").waitFor();
+      assert.match(
+        await page.locator("#calendar-reschedule-error").textContent(),
+        /version changed/,
+      );
+      assert.equal(f.blocks[0].start, original.start);
+      await page.locator("#calendar-reschedule-cancel").click();
+      assert.equal(f.writes.length, 0);
+    },
+  );
+  await scenario(
+    "full-day block moves clamp at midnight boundaries and retain duration through keyboard controls",
+    desktop,
+    async ({ page, f, open }) => {
+      f.blocks = [
+        calendarBlock("whole-day", {
+          start: 0,
+          duration: 1440,
+          bed: null,
+          blocksAvailability: false,
+        }),
+      ];
+      await open();
+      await blockMoveView(page, "rooms", 660);
+      await page.locator('[data-calendar-block="whole-day"]').click();
+      await page.locator("#calendar-block-reschedule").click();
+      assert.equal(
+        await page.locator("#calendar-reschedule-earlier").isDisabled(),
+        true,
+      );
+      assert.equal(
+        await page.locator("#calendar-reschedule-later").isDisabled(),
+        true,
+      );
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /00:00–24:00/,
+      );
+      await page.locator("#calendar-reschedule-cancel").click();
+      assert.equal(f.blockWrites.length, 0);
+      f.blocks = [
+        calendarBlock("midnight", {
+          start: 0,
+          duration: 30,
+          bed: null,
+          blocksAvailability: false,
+        }),
+      ];
+      await open();
+      await blockMoveView(page, "rooms", 0);
+      await page.locator('[data-calendar-block="midnight"]').click();
+      await page.locator("#calendar-block-reschedule").click();
+      assert.equal(
+        await page.locator("#calendar-reschedule-earlier").isDisabled(),
+        true,
+      );
+      await page.locator("#calendar-reschedule-later").click();
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /00:05–00:35/,
+      );
+      const response = page.waitForResponse(
+        (r) =>
+          r.request().method() === "PUT" &&
+          r.url().endsWith("/api/calendar-blocks/midnight"),
+      );
+      await page.locator("#calendar-reschedule-save").click();
+      assert.equal((await response).status(), 200);
+      await page
+        .locator("#calendar-reschedule-bar")
+        .waitFor({ state: "hidden" });
+      assert.equal(f.blocks[0].duration, 30);
+      assert.equal(f.blocks[0].start, 5);
+    },
+  );
   for (const device of [desktop, phone, tablet])
     await scenario(
       "grey full-day entries support selected-table create, edit, remove and reload",
@@ -2747,13 +3275,37 @@ try {
         assert.equal(
           await page
             .locator(
-              "#calendar-block-edit,#calendar-block-remove,#calendar-block-form",
+              "#calendar-block-edit,#calendar-block-remove,#calendar-block-reschedule,#calendar-block-form",
             )
             .count(),
           0,
         );
         assert.equal(f.blockWrites.length, 0);
         await capture(page, `${device.name}-therapist-block-details`);
+        await page.locator("#drawer-close").click();
+        const point = await bodyPoint(block);
+        if (device.mobile) {
+          const gesture = await touchStart(page, point);
+          await new Promise((done) => setTimeout(done, 520));
+          await gesture.move({ x: point.x, y: point.y + 20 });
+          await gesture.end();
+        } else {
+          await page.mouse.move(point.x, point.y);
+          await page.mouse.down();
+          await page.mouse.move(point.x, point.y + 20, { steps: 4 });
+          await page.mouse.up();
+        }
+        assert.equal(
+          await page
+            .locator("#calendar-reschedule-bar,.calendar-reschedule-preview")
+            .count(),
+          0,
+        );
+        assert.equal(
+          f.blockWrites.length,
+          0,
+          "Read-only gestures never send a mutation",
+        );
       },
     );
   for (const device of [phone, tablet])

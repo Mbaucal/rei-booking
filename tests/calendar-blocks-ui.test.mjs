@@ -176,13 +176,18 @@ test("therapist rendering removes private text and actions even with owner-shape
   ]) {
     assert.doesNotMatch(
       html,
-      /PRIVATE|calendar-block-edit|calendar-block-remove/,
+      /PRIVATE|calendar-block-edit|calendar-block-remove|calendar-block-reschedule/,
     );
     assert.match(html, /Calendar note/);
   }
   const owner = calendarBlockHTML(item, "owner");
   assert.match(owner, /PRIVATE call note/);
   assert.match(owner, /is-short/);
+  for (const role of ["owner", "reception"])
+    assert.match(
+      calendarBlockDetailsHTML(block, { role, catalogue }),
+      /id="calendar-block-reschedule"/,
+    );
 });
 
 test("block cards expose overlap styling and split times without changing accessible time or physical metadata", () => {
