@@ -373,12 +373,24 @@ export function mountCalendarReschedule({
     draft.bar.setAttribute("aria-busy", String(busy));
     for (const control of draft.bar.querySelectorAll("button"))
       control.disabled = busy;
-    draft.save.textContent = busy ? "Saving…" : "Save move";
-    if (!busy) {
-      draft.earlier.disabled = draft.candidate.start <= START;
-      draft.later.disabled =
-        draft.candidate.start + draft.candidate.duration >= END;
-    }
+    draft.save.textContent = busy ? "Saving…" : "Save";
+  }
+  function shift(delta) {
+    if (!draft || saving || !current()) return;
+    draft.candidate.start = clamp(
+      draft.candidate.start + delta,
+      START,
+      END - draft.candidate.duration,
+    );
+    if (draft.kind === "appointment")
+      draft.candidate = allocateTable(
+        draft.candidate,
+        getContext(),
+        undefined,
+        draft.original,
+      );
+    draft.error.hidden = true;
+    redraw();
   }
   function redraw() {
     if (!draft || !current()) return;
@@ -482,16 +494,6 @@ export function mountCalendarReschedule({
       ]
         .filter(Boolean)
         .join(" · ");
-      draft.instruction.textContent = calendarBlockScopeChanged(
-        draft.original,
-        a,
-      )
-        ? `This move changes ${blockScope(draft.original).toLowerCase()} to ${blockScope(a).toLowerCase()}. Save move to confirm.`
-        : draft.touch
-          ? "Lift your finger, then drag the selected entry, or use the time buttons. Save move to confirm."
-          : draft.requiresConfirmation
-            ? "Drag the selected entry or use the time buttons. Save move to confirm."
-            : "Drag the selected entry to another time or resource.";
     } else {
       draft.resource.textContent = [
         therapist?.name,
@@ -542,61 +544,27 @@ export function mountCalendarReschedule({
     );
     const time = doc.createElement("strong"),
       resource = doc.createElement("p"),
-      instruction = doc.createElement("p"),
       error = doc.createElement("p");
     time.id = "calendar-reschedule-time";
     time.setAttribute("aria-live", "polite");
     resource.id = "calendar-reschedule-resource";
-    instruction.id = "calendar-reschedule-instruction";
-    instruction.textContent = touch
-      ? "Lift your finger, then drag the selected appointment, or use the time buttons. Save move to confirm."
-      : "Drag the selected appointment to another time, therapist or room.";
+    time.className = resource.className = "calendar-move-announcement";
+    resource.setAttribute("aria-live", "polite");
+    bar.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown Escape");
     error.id = "calendar-reschedule-error";
     error.className = "error";
     error.hidden = true;
     error.setAttribute("role", "alert");
-    const shift = (delta) => {
-      if (!draft || saving || !current()) return;
-      draft.candidate.start = clamp(
-        draft.candidate.start + delta,
-        START,
-        END - draft.candidate.duration,
-      );
-      if (draft.kind === "appointment")
-        draft.candidate = allocateTable(
-          draft.candidate,
-          getContext(),
-          undefined,
-          draft.original,
-        );
-      draft.error.hidden = true;
-      redraw();
-    };
-    const earlier = button("−5 min", "calendar-reschedule-earlier", () =>
-      shift(-STEP),
-    );
-    const later = button("+5 min", "calendar-reschedule-later", () =>
-      shift(STEP),
-    );
     const cancelButton = button("Cancel", "calendar-reschedule-cancel", () => {
       if (!saving) cancel({ restoreFocus: true });
     });
     const save = button(
-      "Save move",
+      "Save",
       "calendar-reschedule-save",
       () => void commit(),
     );
     save.classList.add("primary");
-    bar.append(
-      time,
-      resource,
-      instruction,
-      error,
-      earlier,
-      later,
-      cancelButton,
-      save,
-    );
+    bar.append(time, resource, error, cancelButton, save);
     const writeState = { started: false };
     const saver = createCalendarMoveSaver({
       kind,
@@ -619,10 +587,7 @@ export function mountCalendarReschedule({
       bar,
       time,
       resource,
-      instruction,
       error,
-      earlier,
-      later,
       save,
       saver,
       writeState,
@@ -851,10 +816,30 @@ export function mountCalendarReschedule({
     if (doc.hidden) cancel();
   });
   listen(doc, "keydown", (event) => {
-    if (event.key === "Escape" && draft && !saving) {
+    if (!draft || saving || !current()) return;
+    if (event.key === "Escape") {
       event.preventDefault();
       cancel({ restoreFocus: true });
+      return;
     }
+    const target = event.target;
+    if (
+      !["ArrowUp", "ArrowDown"].includes(event.key) ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.isComposing ||
+      !(target instanceof win.Element) ||
+      target.closest(
+        "input, textarea, select, [contenteditable], [role='textbox'], [role='combobox'], [role='menu']",
+      ) ||
+      (!draft.bar.contains(target) &&
+        !target.closest(".calendar-reschedule-preview"))
+    )
+      return;
+    event.preventDefault();
+    shift(event.key === "ArrowUp" ? -STEP : STEP);
   });
   listen(root, "contextmenu", (event) => {
     if (gesture?.touch || draft) event.preventDefault();
