@@ -19,10 +19,41 @@ const date = "2026-10-01",
 // one pixel per minute on the compact phone UI and two on desktop/tablet.
 const displayStart = 0;
 async function pixelsPerMinute(page) {
-  return page
-    .locator(".calendar-column")
-    .first()
-    .evaluate((el) => el.getBoundingClientRect().height / 1440);
+  return page.evaluate(
+    () =>
+      document
+        .querySelector("#calendar-body .calendar-column")
+        .getBoundingClientRect().height / 1440,
+  );
+}
+function calendarDensityReady({
+  fixtureDate,
+  summaryDate,
+  expectedScale,
+  diagnostic = false,
+}) {
+  // Re-query and measure in one browser task: renderCalendar replaces columns.
+  // A previously resolved element handle may describe the detached old grid.
+  const column = document.querySelector("#calendar-body .calendar-column"),
+    rect = column?.getBoundingClientRect(),
+    snapshot = {
+      date: document.querySelector("#calendar-date")?.value ?? null,
+      summary: document.querySelector("#calendar-summary")?.textContent ?? null,
+      connected: column?.isConnected ?? false,
+      width: rect?.width ?? 0,
+      height: rect?.height ?? 0,
+      density: (rect?.height ?? 0) / 1440,
+      expectedScale,
+    };
+  if (diagnostic) return snapshot;
+  return snapshot.date === fixtureDate &&
+    snapshot.summary?.includes(summaryDate) &&
+    snapshot.connected &&
+    snapshot.width > 0 &&
+    snapshot.height > 0 &&
+    Math.abs(snapshot.density - expectedScale) < 0.001
+    ? snapshot
+    : false;
 }
 const pixelAt = async (page, minute) =>
   (minute - displayStart) * (await pixelsPerMinute(page));
@@ -422,13 +453,38 @@ async function scenario(name, device, run) {
     } else await page.locator("#calendar-grid").waitFor();
     await page.locator("#calendar-date").fill(date);
     await page.locator("#calendar-date").dispatchEvent("change");
-    await page
-      .locator("#calendar-summary")
-      .filter({ hasText: "1 Oct 2026" })
-      .waitFor({ state: "attached" });
-    await page.locator(".calendar-column").first().waitFor();
+    const geometryArgs = {
+      fixtureDate: date,
+      summaryDate: "1 Oct 2026",
+      expectedScale: compact ? 1 : 2,
+    };
+    let geometry;
+    try {
+      const ready = await page.waitForFunction(
+        calendarDensityReady,
+        geometryArgs,
+        { polling: "raf", timeout: 10000 },
+      );
+      geometry = await ready.jsonValue();
+      await ready.dispose();
+    } catch (error) {
+      const actual = await page.evaluate(calendarDensityReady, {
+        ...geometryArgs,
+        diagnostic: true,
+      });
+      throw new Error(
+        `Calendar did not reach the expected date and density: ${JSON.stringify(
+          {
+            fixtureDate: date,
+            ...actual,
+            pageErrors: errors,
+          },
+        )}`,
+        { cause: error },
+      );
+    }
     assert.ok(
-      Math.abs((await pixelsPerMinute(page)) - (compact ? 1 : 2)) < 0.001,
+      Math.abs(geometry.density - (compact ? 1 : 2)) < 0.001,
       "Rendered calendar density matches compact 60px/hour or desktop 120px/hour",
     );
   };
