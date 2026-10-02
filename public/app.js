@@ -22,6 +22,7 @@ import {
   appointmentDetailsHTML,
 } from "./appointment-preview.js";
 import { renderClientTransfer } from "./client-transfer.js";
+import { renderHistoryPreview } from "./history-preview.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
@@ -129,6 +130,7 @@ let state = {
   calendarViewEpoch = 0,
   calendarLoadEpoch = 0,
   sessionEpoch = 0;
+let historyPreviewCleanup = null;
 const owner = () => state.user?.role === "owner",
   operator = () => ["owner", "reception"].includes(state.user?.role);
 const therapist = (id) => state.catalogue.therapists.find((t) => t.id === id),
@@ -188,6 +190,8 @@ function disposeCalendarUI() {
   preview?.dispose();
 }
 function signOutView() {
+  historyPreviewCleanup?.();
+  historyPreviewCleanup = null;
   disposeCalendarUI();
   sessionEpoch++;
   state = {
@@ -366,6 +370,8 @@ async function setPage(page, monthlyFilters = null) {
   if (!state.user) return;
   if (page !== "calendar" && (!operator() || (page !== "clients" && !owner())))
     return;
+  historyPreviewCleanup?.();
+  historyPreviewCleanup = null;
   disposeCalendarUI();
   state.page = page;
   updateMobileNavigation();
@@ -390,6 +396,7 @@ async function setPage(page, monthlyFilters = null) {
     sales: "Sales",
     clients: "Clients",
     "client-transfer": "Clients",
+    "history-preview": "Appointment history",
     team: "Team",
     services: "Treatments",
     users: "Accounts",
@@ -402,7 +409,7 @@ async function setPage(page, monthlyFilters = null) {
         b.dataset.page ===
           (page === "monthly"
             ? "reports"
-            : page === "client-transfer"
+            : ["client-transfer", "history-preview"].includes(page)
               ? "clients"
               : page),
       ),
@@ -466,6 +473,16 @@ async function setPage(page, monthlyFilters = null) {
         toast,
         openProfile: clientProfile,
         download: (query) => downloadReport(query, "/api/sales/vouchers.csv?"),
+      });
+    } else if (page === "history-preview") {
+      const version = state.version;
+      historyPreviewCleanup = renderHistoryPreview({
+        root: $("page-content"),
+        api,
+        esc,
+        isCurrent: () => state.version === version && owner(),
+        back: () => setPage("clients"),
+        openProfile: clientProfile,
       });
     } else if (page === "client-transfer") {
       const version = state.version;
@@ -534,7 +551,7 @@ function updateMobileNavigation() {
   const activePage =
     state.page === "monthly"
       ? "reports"
-      : state.page === "client-transfer"
+      : ["client-transfer", "history-preview"].includes(state.page)
         ? "clients"
         : state.page;
   $("mobile-navigation")
@@ -1631,9 +1648,10 @@ async function renderClients() {
   if (owner()) {
     $("client-add").insertAdjacentHTML(
       "beforebegin",
-      '<button class="btn" id="client-import">Import clients</button><button class="btn" id="client-export">Export CSV</button>',
+      '<button class="btn" id="client-import">Import clients</button><button class="btn" id="history-preview-open">Preview history</button><button class="btn" id="client-export">Export CSV</button>',
     );
     $("client-import").onclick = () => setPage("client-transfer");
+    $("history-preview-open").onclick = () => setPage("history-preview");
     $("client-export").onclick = () => {
       showDrawer(
         "Export clients",

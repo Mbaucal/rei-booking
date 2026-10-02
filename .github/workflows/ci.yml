@@ -49,3 +49,15 @@ jobs:
           path: browser-artifacts/
           if-no-files-found: ignore
           retention-days: 7
+      - name: Check history preview in desktop and phone browsers
+        env:
+          REI_BROWSER_ARTIFACTS: history-browser-artifacts
+        run: REI_PLAYWRIGHT_MODULE="$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/index.mjs" node scripts/test-history-browser.mjs
+      - name: Keep fictional history screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: history-browser-screenshots
+          path: history-browser-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

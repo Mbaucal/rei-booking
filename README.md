@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.13.3** — 2 October 2026.
+Current implementation release, **0.14.0** — 2 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -42,9 +42,11 @@ The browser interface has scoped desktop, tablet and phone viewport checks using
 
 The `calendar-browser` CI job checks new-booking resource suggestions in Chromium at desktop, phone and tablet viewport sizes using fictional API fixtures and the real application assets. It covers slot clicks/taps, duration changes, explicit selections, keyboard entry, failed saves and delayed responses. The contextual-menu checks also cover popup and drawer geometry, hover times, loading/retry and stale opening responses. Calendar interaction scenarios cover the quarter-hour grid, appointment previews, summary/edit flow, draft rescheduling, Save/Cancel and Today navigation. Native touch behavior still needs a physical-device check. This is scoped browser emulation, not a full product visual review or physical-device certification. Run the same script locally with `REI_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/test-calendar-browser.mjs` when Chromium is installed. Browser test tools are installed separately from application dependencies.
 
-## Historical import preparation
+## Appointment history preview
 
-Historical Fresha appointment import is being prepared separately from the existing client CSV importer. Pure normalization and preview-planning modules validate mapped rows, preserve unknown values, propose client matches and identify duplicate/conflicting source records without database writes. They are not connected to a runtime route or an import screen yet. See the [source contract](docs/history-import-contract.md) and [preview module API](docs/history-preview.md). Application version 0.13.3 is unchanged by this preparatory work.
+Owners can open **Clients → Preview history**, read one appointment CSV up to 50,000 rows / 25 MiB, map columns, review issues and named client candidates, and save explicit draft matches for selected rows. Uploads use bounded, retry-safe parts; ready previews can be reopened without uploading the file again. An interrupted upload requires the same original file. The screen includes page-by-page review, profile links, stale-client rebuild and discard.
+
+This is a **preview only**: it saves temporary private review data, not imported visits, permanent identity links or changes to current appointments, reports or bonuses. Each preview becomes inaccessible after 24 hours; expired records are physically removed when another preview starts. Up to three recent previews are retained per owner. Missing completion, request, currency and timezone evidence stays visible and unresolved. See the [source contract](docs/history-import-contract.md) and [preview API and limits](docs/history-preview.md). Independent history browser checks use fictional records and the real UI assets in desktop and phone viewports.
 
 ## Local setup
 
