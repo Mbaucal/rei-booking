@@ -11,6 +11,7 @@ import {
   calendarHeight,
   calendarSlotAtPoint,
   calendarStartAtY,
+  setCalendarScale,
 } from "../public/calendar-geometry.js";
 import {
   calendarMovedAppointment,
@@ -18,6 +19,9 @@ import {
   calendarMoveLayout,
   createCalendarMoveSaver,
   sameCalendarPosition,
+  calendarMovedBlock,
+  calendarBlockScopeChanged,
+  calendarBlockMoveRequiresSave,
 } from "../public/calendar-reschedule.js";
 
 const appointment = () => ({
@@ -45,6 +49,21 @@ const deferred = () => {
   });
   return { promise, resolve, reject };
 };
+const calendarBlock = () => ({
+  id: "b1",
+  date: "2026-10-01",
+  start: 1140,
+  duration: 90,
+  resourceType: "room",
+  resourceId: "r1",
+  bed: 1,
+  title: "Room preparation",
+  note: "Keep the original note",
+  blocksAvailability: true,
+  createdAt: "2026-09-01T12:00:00Z",
+  updatedAt: "2026-09-01T12:00:00Z",
+  version: 4,
+});
 
 test("shared geometry selects quarter-hour booking starts while dragging still resolves every five minutes", () => {
   assert.deepEqual([START, END, SCALE, STEP, BAND], [0, 1440, 2, 5, 15]);
@@ -436,4 +455,282 @@ test("late save success or failure after navigation produces only a stale result
     assert.equal(await result, "stale");
     assert.equal(saver.busy, false);
   }
+});
+
+test("moving notes and blocks snaps to five minutes at either density and preserves every non-position field", () => {
+  const room = { id: "r1", kind: "room", capacity: 2 },
+    rect = { top: -800, left: 40, width: 120 };
+  try {
+    for (const scale of [1, 2]) {
+      setCalendarScale(scale);
+      for (const blocksAvailability of [true, false]) {
+        const original = { ...calendarBlock(), blocksAvailability };
+        const moved = calendarMovedBlock(
+          original,
+          room,
+          rect,
+          { x: 80, y: rect.top + calendarTop(1135) + 15 * scale },
+          15,
+        );
+        assert.deepEqual(moved, { ...original, start: 1135 });
+        assert.deepEqual(original, { ...calendarBlock(), blocksAvailability });
+        assert.equal(moved.start + moved.duration, 1225);
+      }
+    }
+  } finally {
+    setCalendarScale(2);
+  }
+});
+
+test("whole blocks clamp to midnight boundaries, including a full-day block", () => {
+  const resource = { id: "r1", kind: "room", capacity: 2 },
+    rect = { top: 50, left: 0, width: 120 },
+    original = calendarBlock();
+  assert.equal(
+    calendarMovedBlock(original, resource, rect, { x: 10, y: -900 }).start,
+    0,
+  );
+  const late = calendarMovedBlock(original, resource, rect, { x: 10, y: 9999 });
+  assert.equal(late.start, 1350);
+  assert.equal(late.start + late.duration, 1440);
+  const fullDay = { ...original, start: 0, duration: 1440, bed: null };
+  assert.deepEqual(
+    calendarMovedBlock(fullDay, resource, rect, { x: 10, y: 1500 }),
+    fullDay,
+  );
+});
+
+test("room block moves preserve explicit table or all-table scope across the full column", () => {
+  const resource = { id: "r2", kind: "room", capacity: 2 },
+    rect = { top: 0, left: 0, width: 120 };
+  for (const bed of [null, 0, 1]) {
+    const original = { ...calendarBlock(), bed };
+    for (const x of [1, 60, 119]) {
+      const moved = calendarMovedBlock(original, resource, rect, {
+        x,
+        y: calendarTop(original.start),
+      });
+      assert.deepEqual(moved, { ...original, resourceId: "r2" });
+      assert.equal(calendarBlockScopeChanged(original, moved), false);
+      assert.equal(sameCalendarPosition(original, moved, "block"), false);
+    }
+  }
+});
+
+test("cross-kind and smaller-room changes are marked for explicit review and returning restores original scope", () => {
+  const original = calendarBlock(),
+    rect = { top: 0, left: 0, width: 120 },
+    point = { x: 20, y: calendarTop(original.start) },
+    therapist = { id: "t2", kind: "therapist", capacity: 1 },
+    smallRoom = { id: "r3", kind: "room", capacity: 1 },
+    originalRoom = { id: "r1", kind: "room", capacity: 2 };
+  const toTherapist = calendarMovedBlock(original, therapist, rect, point);
+  assert.equal(toTherapist.resourceType, "therapist");
+  assert.equal(toTherapist.resourceId, "t2");
+  assert.equal(toTherapist.bed, null);
+  assert.equal(calendarBlockScopeChanged(original, toTherapist), true);
+  const toSmallRoom = calendarMovedBlock(original, smallRoom, rect, point);
+  assert.equal(toSmallRoom.bed, 0);
+  assert.equal(calendarBlockScopeChanged(original, toSmallRoom), true);
+  const back = calendarMovedBlock(original, originalRoom, rect, point);
+  assert.deepEqual(
+    back,
+    original,
+    "provisional detours do not replace the original scope",
+  );
+  assert.equal(calendarBlockScopeChanged(original, back), false);
+  const all = { ...original, bed: null };
+  const allToSmallRoom = calendarMovedBlock(all, smallRoom, rect, point);
+  assert.equal(allToSmallRoom.bed, null);
+  assert.equal(calendarBlockScopeChanged(all, allToSmallRoom), false);
+  const therapistOriginal = {
+    ...original,
+    resourceType: "therapist",
+    resourceId: "t1",
+    bed: null,
+  };
+  const toRoom = calendarMovedBlock(
+    therapistOriginal,
+    originalRoom,
+    rect,
+    point,
+  );
+  assert.equal(toRoom.bed, null);
+  assert.equal(calendarBlockScopeChanged(therapistOriginal, toRoom), true);
+  const toOtherTherapist = calendarMovedBlock(
+    therapistOriginal,
+    therapist,
+    rect,
+    point,
+  );
+  assert.equal(
+    calendarBlockScopeChanged(therapistOriginal, toOtherTherapist),
+    false,
+  );
+});
+
+test("block preview layout replaces only its typed identity and reflows both old and new resources", () => {
+  const original = {
+      ...calendarBlock(),
+      id: "shared-id",
+      start: 600,
+      duration: 60,
+      bed: null,
+    },
+    appointmentWithSameId = {
+      ...appointment(),
+      id: original.id,
+      start: 720,
+      duration: 60,
+    },
+    room = { id: "r1", kind: "room", capacity: 2 },
+    target = { id: "r2", kind: "room", capacity: 2 },
+    other = {
+      ...original,
+      id: "other-note",
+      start: 720,
+      resourceId: target.id,
+    },
+    context = {
+      blockingAppointments: [appointmentWithSameId],
+      blocks: [original, other],
+    },
+    candidate = { ...original, start: 720, resourceId: target.id };
+  const oldItems = calendarMoveLayout(room, candidate, context, "block");
+  assert.equal(oldItems.length, 1);
+  assert.equal(oldItems[0].kind, "appointment");
+  assert.equal(oldItems[0].record, appointmentWithSameId);
+  assert.equal(oldItems[0].width, 100);
+  const targetItems = calendarMoveLayout(target, candidate, context, "block");
+  assert.equal(targetItems.length, 2);
+  assert.ok(targetItems.every((item) => item.width === 50));
+  assert.equal(
+    targetItems.find((item) => item.record.id === candidate.id).record,
+    candidate,
+  );
+  const sameRoom = calendarMoveLayout(
+    room,
+    { ...candidate, resourceId: room.id },
+    context,
+    "block",
+  );
+  assert.equal(sameRoom.length, 2);
+  assert.deepEqual(
+    new Set(sameRoom.map((item) => item.kind)),
+    new Set(["appointment", "block"]),
+  );
+  assert.ok(sameRoom.every((item) => item.width === 50));
+  const therapistCandidate = {
+    ...candidate,
+    resourceType: "therapist",
+    resourceId: "t1",
+    bed: null,
+  };
+  const therapistItems = calendarMoveLayout(
+    { id: "t1", kind: "therapist", capacity: 1 },
+    therapistCandidate,
+    context,
+    "block",
+  );
+  assert.equal(therapistItems.length, 2);
+  assert.ok(therapistItems.every((item) => item.width === 50));
+});
+
+test("block saver compares resource identity and scope and sends no appointment-only fields", async () => {
+  const original = calendarBlock(),
+    writes = [];
+  const saver = createCalendarMoveSaver({
+    kind: "block",
+    isCurrent: () => true,
+    confirmTherapistChange: () =>
+      assert.fail("Blocks never request a therapist"),
+    onSave: (...args) => writes.push(args),
+  });
+  assert.equal(await saver.save(original, { ...original }), "unchanged");
+  const candidate = { ...original, resourceId: "r2" };
+  assert.equal(await saver.save(original, candidate), "saved");
+  assert.deepEqual(writes, [[candidate, original, { kind: "block" }]]);
+  assert.equal(Object.hasOwn(writes[0][0], "requestedTherapistId"), false);
+  assert.equal(
+    sameCalendarPosition(original, { ...original, bed: null }, "block"),
+    false,
+  );
+  assert.equal(
+    sameCalendarPosition(
+      original,
+      { ...original, resourceType: "therapist", resourceId: "t1", bed: null },
+      "block",
+    ),
+    false,
+  );
+});
+
+test("block save rejects duplicate concurrent writes, retains its version for conflict retry and suppresses stale results", async () => {
+  const original = calendarBlock(),
+    candidate = { ...original, start: 1135 },
+    pending = deferred(),
+    writes = [];
+  const saver = createCalendarMoveSaver({
+    kind: "block",
+    isCurrent: () => true,
+    onSave: (value) => {
+      writes.push(value);
+      if (writes.length === 1) return pending.promise;
+    },
+  });
+  const first = saver.save(original, candidate);
+  assert.equal(await saver.save(original, candidate), "busy");
+  assert.equal(writes.length, 1);
+  pending.reject(new Error("Calendar entry conflicts with another booking"));
+  await assert.rejects(first, /conflicts/);
+  assert.equal(saver.busy, false);
+  assert.equal(await saver.save(original, candidate), "saved");
+  assert.deepEqual(writes, [candidate, candidate]);
+  for (const fail of [false, true]) {
+    let current = true;
+    const late = deferred();
+    const staleSaver = createCalendarMoveSaver({
+      kind: "block",
+      isCurrent: () => current,
+      onSave: () => late.promise,
+    });
+    const result = staleSaver.save(original, candidate);
+    current = false;
+    if (fail) late.reject(new Error("Late conflict"));
+    else late.resolve();
+    assert.equal(await result, "stale");
+    assert.equal(staleSaver.busy, false);
+  }
+});
+
+test("a scope-changing mouse drop latches explicit Save through later moves and return to the original position", async () => {
+  const original = calendarBlock();
+  assert.equal(
+    calendarBlockMoveRequiresSave(original, { ...original, start: 1135 }),
+    false,
+  );
+  let requiresSave = calendarBlockMoveRequiresSave(original, {
+    ...original,
+    resourceId: "single-room",
+    bed: 0,
+  });
+  assert.equal(requiresSave, true);
+  requiresSave = calendarBlockMoveRequiresSave(
+    original,
+    { ...original, start: 1135 },
+    requiresSave,
+  );
+  assert.equal(requiresSave, true);
+  requiresSave = calendarBlockMoveRequiresSave(
+    original,
+    original,
+    requiresSave,
+  );
+  assert.equal(requiresSave, true);
+  const saver = createCalendarMoveSaver({
+    kind: "block",
+    isCurrent: () => true,
+    onSave: () => assert.fail("Returning unchanged must not write"),
+  });
+  assert.equal(await saver.save(original, original), "unchanged");
 });

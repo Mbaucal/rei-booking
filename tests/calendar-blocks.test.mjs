@@ -714,6 +714,128 @@ test("Calendar blocks Worker + D1: full-day notes, private projections and atomi
   );
 
   await t.test(
+    "full-day note reassignment preserves text, duration and creation while incrementing the version",
+    async () => {
+      const date = "2026-10-11",
+        original = await addBlock(date, {
+          start: 0,
+          duration: 1440,
+          blocksAvailability: false,
+          title: "Whole-day follow-up",
+          note: "Preserve this multiline note\nAfter resource moves.",
+        });
+      let current = original;
+      for (const target of [
+        { resourceType: "therapist", resourceId: "t2", bed: null },
+        { resourceType: "room", resourceId: "r1", bed: null },
+        { resourceType: "room", resourceId: "r1", bed: 1 },
+        { resourceType: "room", resourceId: "r2", bed: 0 },
+      ]) {
+        const moved = expect(
+          await request("/calendar-blocks/" + original.id, "PUT", {
+            ...current,
+            ...target,
+          }),
+          200,
+        ).block;
+        assert.equal(moved.version, current.version + 1);
+        for (const key of [
+          "id",
+          "date",
+          "start",
+          "duration",
+          "title",
+          "note",
+          "blocksAvailability",
+          "createdAt",
+        ])
+          assert.equal(
+            moved[key],
+            original[key],
+            `${key} survives reassignment`,
+          );
+        for (const key of ["resourceType", "resourceId", "bed"])
+          assert.equal(moved[key], target[key]);
+        current = moved;
+      }
+      assert.deepEqual(
+        expect(await request("/calendar-blocks?from=" + date), 200).blocks,
+        [current],
+      );
+      expect(
+        await request("/calendar-blocks/" + original.id, "PUT", original),
+        409,
+      );
+      assert.equal(
+        (
+          await sql(
+            "SELECT count(*) n FROM audit_log WHERE entity_id=?",
+            original.id,
+          ).first()
+        ).n,
+        5,
+      );
+    },
+  );
+
+  await t.test(
+    "cross-resource blocking moves reject occupied scope atomically and release the old resource after success",
+    async () => {
+      const date = "2026-10-12";
+      await addAppointment(date, { therapistId: "t2", bed: 0 });
+      const original = await addBlock(date);
+      expect(
+        await request("/calendar-blocks/" + original.id, "PUT", {
+          ...original,
+          resourceType: "room",
+          resourceId: "r1",
+          bed: null,
+        }),
+        409,
+      );
+      assert.deepEqual(
+        expect(await request("/calendar-blocks?from=" + date), 200).blocks,
+        [original],
+      );
+      assert.equal(
+        (
+          await sql(
+            "SELECT count(*) n FROM audit_log WHERE entity_id=?",
+            original.id,
+          ).first()
+        ).n,
+        1,
+      );
+      const moved = expect(
+        await request("/calendar-blocks/" + original.id, "PUT", {
+          ...original,
+          resourceType: "room",
+          resourceId: "r1",
+          bed: 1,
+        }),
+        200,
+      ).block;
+      assert.equal(moved.version, 2);
+      assert.equal(moved.note, original.note);
+      assert.equal(moved.duration, original.duration);
+      await addAppointment(date, { therapistId: "t1", roomId: "r2", bed: 0 });
+      expect(
+        await request("/calendar-blocks/" + original.id, "PUT", {
+          ...moved,
+          resourceType: "therapist",
+          resourceId: "t1",
+          bed: null,
+        }),
+        409,
+      );
+      assert.deepEqual(
+        expect(await request("/calendar-blocks?from=" + date), 200).blocks,
+        [moved],
+      );
+    },
+  );
+
+  await t.test(
     "concurrent block/block and block/appointment writes have exactly one winner",
     async () => {
       const date = "2026-10-09";

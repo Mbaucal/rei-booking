@@ -9,7 +9,10 @@ import {
   calendarTime,
   calendarStartAtY,
 } from "./calendar-geometry.js";
-import { calendarResourceItems } from "./calendar-blocks.js";
+import {
+  calendarResourceItems,
+  calendarBlockLabel,
+} from "./calendar-blocks.js";
 
 export const MOVE_THRESHOLD = 5;
 export const TOUCH_TOLERANCE = 8;
@@ -75,16 +78,30 @@ function allocateTable(candidate, context, room, original = candidate) {
   };
 }
 
-export function calendarMoveLayout(resource, candidate, context) {
+export function calendarMoveLayout(
+  resource,
+  candidate,
+  context,
+  kind = "appointment",
+) {
   return calendarResourceItems(
     resource,
     [
       ...(context.blockingAppointments || context.appointments || []).filter(
-        (entry) => entry.id !== candidate.id && entry.date === candidate.date,
+        (entry) =>
+          (kind !== "appointment" || entry.id !== candidate.id) &&
+          entry.date === candidate.date,
       ),
-      candidate,
+      ...(kind === "appointment" ? [candidate] : []),
     ],
-    (context.blocks || []).filter((entry) => entry.date === candidate.date),
+    [
+      ...(context.blocks || []).filter(
+        (entry) =>
+          (kind !== "block" || entry.id !== candidate.id) &&
+          entry.date === candidate.date,
+      ),
+      ...(kind === "block" ? [candidate] : []),
+    ],
   );
 }
 
@@ -120,10 +137,62 @@ export function calendarMovedAppointment(
   );
 }
 
-export function sameCalendarPosition(a, b) {
-  return ["date", "start", "therapistId", "roomId", "bed"].every(
-    (key) => a[key] === b[key],
+// Keep the original scope preference across provisional detours. A therapist
+// has no table; a smaller room can use Table 1, but that scope change requires
+// explicit Save in the controller rather than a desktop drop writing silently.
+export function calendarMovedBlock(
+  original,
+  resource,
+  rect,
+  point,
+  offset = 0,
+) {
+  const explicitBed =
+    original.resourceType === "room" && Number.isInteger(original.bed);
+  return {
+    ...original,
+    start: calendarStartAtY(rect, point.y, original.duration, offset),
+    resourceType: resource.kind,
+    resourceId: resource.id,
+    bed:
+      resource.kind === "room" && explicitBed
+        ? original.bed < resource.capacity
+          ? original.bed
+          : 0
+        : null,
+  };
+}
+
+export function calendarBlockScopeChanged(original, candidate) {
+  return (
+    original.resourceType !== candidate.resourceType ||
+    original.bed !== candidate.bed
   );
+}
+
+// Once a mouse drop needs review, subsequent adjustments stay in that draft
+// until Save or Cancel, including a return to the original unchanged position.
+export function calendarBlockMoveRequiresSave(
+  original,
+  candidate,
+  alreadyRequired = false,
+) {
+  return alreadyRequired || calendarBlockScopeChanged(original, candidate);
+}
+
+const blockScope = (block) =>
+  block.resourceType === "therapist"
+    ? "Therapist"
+    : block.bed === null
+      ? "All tables"
+      : `Table ${block.bed + 1}`;
+
+export function sameCalendarPosition(a, b, kind = "appointment") {
+  return (
+    kind === "block"
+      ? ["date", "start", "resourceType", "resourceId", "bed"]
+      : ["date", "start", "therapistId", "roomId", "bed"]
+  ).every((key) => a[key] === b[key]);
 }
 
 // A save/confirmation can outlive its view. Callers receive a stale result
@@ -132,6 +201,7 @@ export function createCalendarMoveSaver({
   onSave,
   isCurrent,
   confirmTherapistChange,
+  kind = "appointment",
 }) {
   let busy = false;
   return {
@@ -141,10 +211,11 @@ export function createCalendarMoveSaver({
     async save(original, candidate) {
       if (busy) return "busy";
       if (!isCurrent()) return "stale";
-      if (sameCalendarPosition(original, candidate)) return "unchanged";
+      if (sameCalendarPosition(original, candidate, kind)) return "unchanged";
       busy = true;
       try {
         if (
+          kind === "appointment" &&
           original.requestedTherapistId &&
           original.therapistId !== candidate.therapistId
         ) {
@@ -154,8 +225,14 @@ export function createCalendarMoveSaver({
         }
         if (!isCurrent()) return "stale";
         await onSave(
-          { ...candidate, requestedTherapistId: original.requestedTherapistId },
+          kind === "block"
+            ? { ...candidate }
+            : {
+                ...candidate,
+                requestedTherapistId: original.requestedTherapistId,
+              },
           { ...original },
+          { kind },
         );
         return isCurrent() ? "saved" : "stale";
       } catch (error) {
@@ -201,13 +278,28 @@ export function mountCalendarReschedule({
     saving = false,
     pendingCommit = false;
   const current = () => !disposed && root.isConnected && isCurrent();
-  const cards = () => [...root.querySelectorAll("[data-appointment]")];
+  const cards = () => [
+    ...root.querySelectorAll("[data-appointment], [data-calendar-block]"),
+  ];
+  const identity = (card) =>
+    card.dataset.calendarBlock !== undefined
+      ? { kind: "block", id: card.dataset.calendarBlock }
+      : { kind: "appointment", id: card.dataset.appointment };
+  const matches = (card, kind, id) => {
+    const selected = identity(card);
+    return selected.kind === kind && selected.id === id;
+  };
+  const record = (kind, id) =>
+    (kind === "block" ? getContext().blocks : getContext().appointments)?.find(
+      (entry) => entry.id === id,
+    );
   const columns = () => [...root.querySelectorAll("[data-resource]")];
   const byResource = (column) =>
     getContext().resources.find(
       (r) => r.id === column.dataset.resource && r.kind === column.dataset.kind,
     );
-  const selectedCard = (target) => target?.closest?.("[data-appointment]");
+  const selectedCard = (target) =>
+    target?.closest?.("[data-appointment], [data-calendar-block]");
   const activeCard = (target) => {
     const card = selectedCard(target);
     return card && root.contains(card) ? card : null;
@@ -298,13 +390,13 @@ export function mountCalendarReschedule({
     for (const column of columns()) {
       const r = byResource(column);
       if (!r) continue;
-      const items = calendarMoveLayout(r, a, context);
-      // Moving one appointment can merge or split a visual collision group.
+      const items = calendarMoveLayout(r, a, context, draft.kind);
+      // Moving an entry can merge or split a visual collision group.
       // Reflow its neighbors for the draft, then restore them on cancellation.
       for (const card of column.querySelectorAll(
         "[data-appointment], [data-calendar-block]",
       )) {
-        if (card.dataset.appointment === a.id) continue;
+        if (matches(card, draft.kind, a.id)) continue;
         const item = items.find((entry) =>
           entry.kind === "appointment"
             ? entry.record.id === card.dataset.appointment
@@ -320,8 +412,10 @@ export function mountCalendarReschedule({
         card.style.width = `calc(${item.width}% - 6px)`;
         card.classList.toggle("is-overlapping", item.width < 100);
       }
-      if (r.kind === "therapist" ? r.id !== a.therapistId : r.id !== a.roomId)
-        continue;
+      const item = items.find(
+        (entry) => entry.kind === draft.kind && entry.record.id === a.id,
+      );
+      if (!item) continue;
       const template =
         draft.originals.find(
           ([card]) => card.closest("[data-resource]")?.dataset.kind === r.kind,
@@ -337,17 +431,16 @@ export function mountCalendarReschedule({
       preview.style.visibility = "";
       preview.style.touchAction = "none";
       preview.style.top = `${calendarTop(a.start)}px`;
-      preview.style.height = `${calendarHeight(a.duration, 3)}px`;
-      const item = items.find(
-        (entry) => entry.kind === "appointment" && entry.record.id === a.id,
-      );
+      preview.style.height = `${calendarHeight(a.duration, draft.kind === "block" ? 2 : 3)}px`;
+      if (draft.kind === "block") preview.dataset.blockBed = String(a.bed);
       preview.style.left = `calc(${item?.left ?? 0}% + 3px)`;
       preview.style.width = `calc(${item?.width ?? 100}% - 6px)`;
       preview.classList.toggle("is-overlapping", (item?.width ?? 100) < 100);
-      const time = preview.querySelector(".event-time");
+      const timeClass = draft.kind === "block" ? "block" : "event";
+      const time = preview.querySelector(`.${timeClass}-time`);
       if (time) {
-        const start = time.querySelector(".event-start"),
-          end = time.querySelector(".event-end");
+        const start = time.querySelector(`.${timeClass}-start`),
+          end = time.querySelector(`.${timeClass}-end`);
         if (start && end) {
           start.textContent = calendarTime(a.start);
           end.textContent = calendarTime(a.start + a.duration);
@@ -366,7 +459,7 @@ export function mountCalendarReschedule({
           (r.kind === "therapist" ? ` · table ${a.bed + 1}` : "");
       preview.setAttribute(
         "aria-label",
-        `${a.serviceName}. Move draft ${calendarTime(a.start)} to ${calendarTime(a.start + a.duration)}. ${r.name}.`,
+        `${draft.kind === "block" ? calendarBlockLabel(a, context.role) : a.serviceName}. Move draft ${calendarTime(a.start)} to ${calendarTime(a.start + a.duration)}. ${r.name}${draft.kind === "block" ? ` · ${blockScope(a)}` : ""}.`,
       );
       column.append(preview);
       draft.previews.push(preview);
@@ -378,14 +471,38 @@ export function mountCalendarReschedule({
         (r) => r.kind === "room" && r.id === a.roomId,
       );
     draft.time.textContent = `${calendarTime(a.start)}–${calendarTime(a.start + a.duration)} · ${a.duration} min`;
-    draft.resource.textContent = [
-      therapist?.name,
-      room?.name,
-      `Table ${a.bed + 1}`,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    if (draft.kind === "block") {
+      const target = context.resources.find(
+        (r) => r.kind === a.resourceType && r.id === a.resourceId,
+      );
+      draft.resource.textContent = [
+        target?.name,
+        blockScope(a),
+        a.blocksAvailability ? "Blocked time" : "Note only",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      draft.instruction.textContent = calendarBlockScopeChanged(
+        draft.original,
+        a,
+      )
+        ? `This move changes ${blockScope(draft.original).toLowerCase()} to ${blockScope(a).toLowerCase()}. Save move to confirm.`
+        : draft.touch
+          ? "Lift your finger, then drag the selected entry, or use the time buttons. Save move to confirm."
+          : draft.requiresConfirmation
+            ? "Drag the selected entry or use the time buttons. Save move to confirm."
+            : "Drag the selected entry to another time or resource.";
+    } else {
+      draft.resource.textContent = [
+        therapist?.name,
+        room?.name,
+        `Table ${a.bed + 1}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    }
     if (
+      draft.kind === "appointment" &&
       room &&
       calendarAvailableTable(
         a,
@@ -400,12 +517,16 @@ export function mountCalendarReschedule({
     }
     setBusy(saving);
   }
-  function start(id, { touch = true, focus = true } = {}) {
+  function start(
+    id,
+    { touch = true, focus = true, kind = "appointment" } = {},
+  ) {
     if (!current() || saving || pendingCommit) return false;
-    const original = getContext().appointments.find((a) => a.id === id);
+    if (!["appointment", "block"].includes(kind)) return false;
+    const original = record(kind, id);
     const originals = cards().filter(
       (card) =>
-        card.dataset.appointment === id &&
+        matches(card, kind, id) &&
         !card.classList.contains("calendar-reschedule-preview"),
     );
     if (!original || !originals.length) return false;
@@ -415,7 +536,10 @@ export function mountCalendarReschedule({
     bar.id = "calendar-reschedule-bar";
     bar.className = "calendar-reschedule-bar";
     bar.setAttribute("role", "region");
-    bar.setAttribute("aria-label", "Reschedule appointment");
+    bar.setAttribute(
+      "aria-label",
+      kind === "block" ? "Move calendar entry" : "Reschedule appointment",
+    );
     const time = doc.createElement("strong"),
       resource = doc.createElement("p"),
       instruction = doc.createElement("p"),
@@ -438,12 +562,13 @@ export function mountCalendarReschedule({
         START,
         END - draft.candidate.duration,
       );
-      draft.candidate = allocateTable(
-        draft.candidate,
-        getContext(),
-        undefined,
-        draft.original,
-      );
+      if (draft.kind === "appointment")
+        draft.candidate = allocateTable(
+          draft.candidate,
+          getContext(),
+          undefined,
+          draft.original,
+        );
       draft.error.hidden = true;
       redraw();
     };
@@ -474,6 +599,7 @@ export function mountCalendarReschedule({
     );
     const writeState = { started: false };
     const saver = createCalendarMoveSaver({
+      kind,
       onSave: async (...args) => {
         writeState.started = true;
         await onSave(...args);
@@ -482,15 +608,18 @@ export function mountCalendarReschedule({
       confirmTherapistChange: confirmMove,
     });
     draft = {
+      kind,
       original: { ...original },
       candidate: { ...original },
       touch,
+      requiresConfirmation: false,
       originals: originals.map((card) => [card, card.style.visibility]),
       previews: [],
       layout: new Map(),
       bar,
       time,
       resource,
+      instruction,
       error,
       earlier,
       later,
@@ -546,7 +675,7 @@ export function mountCalendarReschedule({
     } catch (error) {
       if (!current() || draft !== selected) return;
       selected.error.textContent =
-        error.message || "This appointment could not be moved. Try again.";
+        error.message || "This calendar entry could not be moved. Try again.";
       selected.error.hidden = false;
       setBusy(false);
       onError(error);
@@ -570,15 +699,24 @@ export function mountCalendarReschedule({
     if (!column || !root.contains(column)) return false;
     const resource = byResource(column);
     if (!resource) return false;
-    draft.candidate = calendarMovedAppointment(
-      draft.original,
-      draft.candidate,
-      resource,
-      column.getBoundingClientRect(),
-      { x: event.clientX, y: event.clientY },
-      gesture.offset,
-      getContext(),
-    );
+    draft.candidate =
+      draft.kind === "block"
+        ? calendarMovedBlock(
+            draft.original,
+            resource,
+            column.getBoundingClientRect(),
+            { x: event.clientX, y: event.clientY },
+            gesture.offset,
+          )
+        : calendarMovedAppointment(
+            draft.original,
+            draft.candidate,
+            resource,
+            column.getBoundingClientRect(),
+            { x: event.clientX, y: event.clientY },
+            gesture.offset,
+            getContext(),
+          );
     draft.error.hidden = true;
     redraw();
     return true;
@@ -597,15 +735,12 @@ export function mountCalendarReschedule({
     if (!draft) suppressUntil = 0;
     const card = activeCard(event.target);
     if (!card) return;
-    if (draft && card.dataset.appointment !== draft.original.id) {
+    if (draft && !matches(card, draft.kind, draft.original.id)) {
       event.preventDefault();
       return;
     }
-    const a =
-      draft?.candidate ||
-      getContext().appointments.find(
-        (item) => item.id === card.dataset.appointment,
-      );
+    const selected = identity(card);
+    const a = draft?.candidate || record(selected.kind, selected.id);
     if (!a) return;
     suppressUntil = 0;
     releaseGesture();
@@ -613,7 +748,8 @@ export function mountCalendarReschedule({
       id: event.pointerId,
       x: event.clientX,
       y: event.clientY,
-      appointmentId: a.id,
+      entryId: a.id,
+      kind: selected.kind,
       touch: event.pointerType === "touch",
       moved: false,
       selectedOnly: false,
@@ -631,7 +767,13 @@ export function mountCalendarReschedule({
         if (gesture !== pending || !current()) return;
         // touch-action for this gesture was chosen before long-press. Select
         // now; the next drag starts on a touch-action:none preview.
-        if (start(pending.appointmentId, { touch: true, focus: false })) {
+        if (
+          start(pending.entryId, {
+            touch: true,
+            focus: false,
+            kind: pending.kind,
+          })
+        ) {
           gesture = { ...pending, selectedOnly: true };
           suppressClick();
         }
@@ -658,7 +800,13 @@ export function mountCalendarReschedule({
       if (!gesture.moved && distance < MOVE_THRESHOLD) return;
       if (!draft) {
         const pending = gesture;
-        if (!start(pending.appointmentId, { touch: false, focus: false })) {
+        if (
+          !start(pending.entryId, {
+            touch: false,
+            focus: false,
+            kind: pending.kind,
+          })
+        ) {
           releaseGesture();
           return;
         }
@@ -678,8 +826,18 @@ export function mountCalendarReschedule({
     releaseGesture();
     if (ended.moved || ended.selectedOnly) suppressClick();
     if (ended.moved && draft && !draft.touch && current()) {
-      if (droppedInside) void commit();
-      else cancel();
+      if (droppedInside) {
+        if (draft.kind === "block")
+          draft.requiresConfirmation = calendarBlockMoveRequiresSave(
+            draft.original,
+            draft.candidate,
+            draft.requiresConfirmation,
+          );
+        if (draft.requiresConfirmation) {
+          redraw();
+          draft.save.focus({ preventScroll: true });
+        } else void commit();
+      } else cancel();
     }
   });
   listen(doc, "pointercancel", (event) => {
@@ -717,6 +875,7 @@ export function mountCalendarReschedule({
   return {
     start,
     begin: start,
+    beginBlock: (id, options) => start(id, { ...options, kind: "block" }),
     cancel,
     isActive: () => !!draft || !!gesture || pendingCommit,
     shouldSuppressClick,

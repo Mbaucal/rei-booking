@@ -549,6 +549,7 @@ main {
   line-height: 1.35;
   font-size: 11px;
   touch-action: pan-x pan-y;
+  user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
 .calendar-block.is-note-only {
@@ -615,7 +616,7 @@ main {
 .calendar-block:focus-visible {
   outline-offset: -3px;
 }
-.is-rescheduling .calendar-block {
+.is-rescheduling .calendar-block:not(.is-reschedule-selected) {
   opacity: 0.4;
 }
 .calendar-block-details {
@@ -1905,7 +1906,8 @@ tr:last-child td {
 .is-rescheduling .calendar-column {
   cursor: crosshair;
 }
-.is-rescheduling .calendar-event.is-reschedule-selected {
+.is-rescheduling .calendar-event.is-reschedule-selected,
+.is-rescheduling .calendar-block.is-reschedule-selected {
   opacity: 1;
   z-index: 7;
   outline: 2px solid var(--green);
@@ -1915,7 +1917,8 @@ tr:last-child td {
     0 6px 18px #16302a22;
   filter: none;
 }
-.calendar-event.calendar-reschedule-preview {
+.calendar-event.calendar-reschedule-preview,
+.calendar-block.calendar-reschedule-preview {
   pointer-events: auto;
   touch-action: none;
   user-select: none;

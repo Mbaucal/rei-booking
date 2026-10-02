@@ -1,10 +1,14 @@
 # Calendar blocks
 
-The calendar displays a full local day, from 00:00 through 24:00. It opens near the salon's working day and can be scrolled to either midnight boundary. Empty-slot selection uses quarter-hour starts; appointment movement still snaps to five minutes.
+The calendar displays a full local day, from 00:00 through 24:00. It opens near the salon's working day and can be scrolled to either midnight boundary. Empty-slot selection uses quarter-hour starts; appointment, block and note movement snaps to five minutes.
 
 ## Use
 
 Choose **Add blocked time** from a calendar slot. The form retains that slot's date, time and therapist or room. A room slot defaults to all tables; choose a specific table in the form when needed. Set the title, optional note and duration, then save. Click a grey card to view it, edit it or remove it. This does not require a treatment or client record.
+
+Drag a grey card with the mouse to move its time or resource in five-minute steps. On touch, hold the card until it is selected, lift your finger, then drag the selected card. Use **Save move** to keep a touch move or **Cancel** to restore the original. The five-minute time buttons are also available, and **Move calendar entry** in the details opens the same move controls without a long press. A normal click or tap still opens the details. The title, note, duration and **Block availability** setting are preserved.
+
+The move bar names the destination therapist or room and table scope. A therapist destination has no table; a whole-room block stays whole-room when moved to another room. A specific table is preserved if available in the destination room; Table 2 maps to Table 1 in a single-table room. Moving from a therapist to a room selects all tables. Moves that change resource type or table scope require an explicit **Save move** even with a mouse. Once such a drop opens the confirmation controls, later adjustments stay unsaved until Save or Cancel; returning to the original position writes nothing. Conflicting saves keep the draft available for correction.
 
 **Block availability** reserves the selected resource for the full interval. Turn it off for a call reminder or other note that should not prevent a booking. Note-only entries can overlap appointments and other notes. A room entry can cover one table or all tables; a therapist entry reserves only that therapist.
 

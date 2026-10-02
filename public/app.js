@@ -917,17 +917,22 @@ function renderCalendar() {
       root: scroll,
       getContext: () => ({
         date,
+        role: state.user.role,
         resources: resources("all"),
         appointments: state.appointments.filter(eligible),
         blockingAppointments: state.appointments,
         blocks: state.blocks,
       }),
       isCurrent: () => current() && operator(),
-      onSave: (candidate) =>
-        api("/appointments/" + candidate.id, {
-          method: "PUT",
-          body: candidate,
-        }),
+      onSave: (candidate, original, { kind }) =>
+        api(
+          (kind === "block" ? "/calendar-blocks/" : "/appointments/") +
+            encodeURIComponent(candidate.id),
+          {
+            method: "PUT",
+            body: candidate,
+          },
+        ),
       onRefresh: () => loadCalendar(),
       onError: (error) => {
         if (current()) toast(error.message || String(error));
@@ -970,7 +975,7 @@ function renderCalendar() {
   scroll.querySelectorAll("[data-calendar-block]").forEach((el) => {
     el.onclick = (event) => {
       event.stopPropagation();
-      if (!current() || calendarReschedule?.isActive()) return;
+      if (!current() || calendarReschedule?.shouldSuppressClick(event)) return;
       const block = state.blocks.find((b) => b.id === el.dataset.calendarBlock);
       if (block) calendarBlockDetails(block);
     };
@@ -1427,16 +1432,22 @@ function calendarBlockDetails(block) {
   $("calendar-block-edit").onclick = () => {
     if (current()) calendarBlockDialog(block);
   };
+  $("calendar-block-reschedule").onclick = () => {
+    if (!current() || $("calendar-block-reschedule").disabled) return;
+    closeDrawer();
+    calendarReschedule?.beginBlock(block.id);
+  };
   $("calendar-block-remove").onclick = async () => {
     const remove = $("calendar-block-remove"),
-      edit = $("calendar-block-edit");
+      edit = $("calendar-block-edit"),
+      move = $("calendar-block-reschedule");
     if (
       !current() ||
       remove.disabled ||
       !confirm("Remove this calendar entry?")
     )
       return;
-    remove.disabled = edit.disabled = true;
+    remove.disabled = edit.disabled = move.disabled = true;
     $("calendar-block-error").hidden = true;
     try {
       await api("/calendar-blocks/" + encodeURIComponent(block.id), {
@@ -1456,7 +1467,7 @@ function calendarBlockDetails(block) {
       if (!current()) return;
       $("calendar-block-error").textContent = error.message;
       $("calendar-block-error").hidden = false;
-      remove.disabled = edit.disabled = false;
+      remove.disabled = edit.disabled = move.disabled = false;
     }
   };
 }
