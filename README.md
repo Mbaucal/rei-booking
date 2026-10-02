@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.13.2** — 2 October 2026.
+Current implementation release, **0.13.3** — 2 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -29,7 +29,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Calendar uses four 15-minute divisions per hour. Empty-slot selection uses 15-minute starts; existing appointment movement uses independent 5-minute steps. The full-day grid runs from 00:00 to 24:00, with visible boundary labels and an initial view near working hours.
 - Grey blocked-time cards store breaks, comments and call reminders, including outside working hours. The Block availability switch reserves a therapist, one table or a whole room; note-only entries do not prevent appointments. Blocks can be moved in 5-minute steps, edited or removed, and never count toward massage reports or bonuses. Free text is hidden from therapist accounts. See [calendar blocks](docs/calendar-blocks.md).
 - Desktop appointment cards offer a hover/focus information preview. Click or tap opens the appointment summary, with edit and reschedule actions for authorized roles. Therapist summaries exclude client identity, notes and financial data; reception excludes prices.
-- Mouse dragging moves appointments, blocked time and notes in 5-minute steps. On touch, hold a card to select a reschedule draft, lift your finger, then drag the selected card. The draft dims other appointments and remains unsaved until Save; Cancel restores the original placement. The Reschedule action and 5-minute adjustment controls provide an alternative to dragging. Server conflict errors retain the draft for correction.
+- Mouse dragging moves appointments, blocked time and notes in 5-minute steps. On touch, hold a card to select a reschedule draft, lift your finger, then drag the selected card. The draft dims other appointments and remains unsaved until Save; Cancel restores the original placement. The compact move footer shows only Cancel and Save. Time stays visible on the moving card and is announced to screen readers. The Reschedule action and ArrowUp/ArrowDown in the selected draft provide a keyboard alternative in five-minute steps. Server conflict errors retain the draft for correction.
 - A floating Today button on narrow screens returns other dates to today in Europe/Belgrade.
 - Calendar hover and keyboard selection show the containing quarter-hour start; clicking an empty slot opens quick actions next to that slot. Add appointment retains the selected time, therapist or room. The popover stays in the viewport and closes on Escape, outside interaction, scrolling or navigation.
 - Booking forms give immediate loading and retry feedback, open at the top, and ignore stale responses after closing or navigation. Add a new client while booking, edit appointments and move bookings with a pointer-based drag handle using 5-minute snapping.

@@ -1052,6 +1052,21 @@ async function longPress(page, locator) {
   await touch.end();
   await page.locator("#calendar-reschedule-bar").waitFor();
 }
+async function shiftKeyboardDraft(page, key) {
+  await page.locator("#calendar-reschedule-save").focus();
+  await page.keyboard.press(key);
+}
+async function compactMoveBar(page) {
+  const bar = page.locator("#calendar-reschedule-bar");
+  assert.deepEqual(await bar.locator("button:visible").allTextContents(), [
+    "Cancel",
+    "Save",
+  ]);
+  assert.ok(
+    (await bar.boundingBox()).height <= 80,
+    "Move footer stays compact",
+  );
+}
 async function shiftTouchDraft(page) {
   const preview = page.locator(
     '.calendar-reschedule-preview[data-appointment="dense-target"]',
@@ -2223,6 +2238,7 @@ try {
         "Long press must not open summary",
       );
       await shiftTouchDraft(page);
+      await compactMoveBar(page);
       await capture(page, "phone-selected-draft-footer");
       await page.locator("#calendar-reschedule-cancel").click();
       await page
@@ -2262,8 +2278,9 @@ try {
       await withinViewport(
         page,
         page.locator("#calendar-reschedule-save"),
-        "Tablet Save move action",
+        "Tablet Save action",
       );
+      await compactMoveBar(page);
       await capture(page, "tablet-768-selected-draft-footer");
       const hold = deferred();
       f.writeWait = hold;
@@ -2302,7 +2319,7 @@ try {
       await open();
       await denseView(page);
       await longPress(page, page.locator('[data-appointment="dense-target"]'));
-      await page.locator("#calendar-reschedule-earlier").click();
+      await shiftKeyboardDraft(page, "ArrowUp");
       f.failNextWrite = true;
       await page.locator("#calendar-reschedule-save").click();
       await page
@@ -2359,7 +2376,7 @@ try {
       await refreshCalendar(page);
       const request = await started;
       await longPress(page, page.locator('[data-appointment="dense-target"]'));
-      await page.locator("#calendar-reschedule-earlier").click();
+      await shiftKeyboardDraft(page, "ArrowUp");
       const finished = page.waitForResponse((r) => r.request() === request);
       hold.release();
       await finished;
@@ -2394,7 +2411,7 @@ try {
       await denseView(page);
       await page.locator('[data-appointment="dense-target"]').click();
       await page.locator("#appointment-summary-reschedule").click();
-      await page.locator("#calendar-reschedule-earlier").click();
+      await shiftKeyboardDraft(page, "ArrowUp");
       const hold = deferred();
       f.writeWait = hold;
       const started = page.waitForRequest((r) => r.method() === "PUT");
@@ -2431,7 +2448,7 @@ try {
       const event = page.locator('[data-appointment="dense-target"]');
       await event.click();
       await page.locator("#appointment-summary-reschedule").click();
-      await page.locator("#calendar-reschedule-earlier").click();
+      await shiftKeyboardDraft(page, "ArrowUp");
       const hold = deferred();
       f.writeWait = hold;
       const started = page.waitForRequest((r) => r.method() === "PUT");
@@ -2732,11 +2749,7 @@ try {
         await page.locator("#calendar-reschedule-resource").textContent(),
         /QA Couple.*Table 2/i,
       );
-      assert.match(
-        await page.locator("#calendar-reschedule-instruction").textContent(),
-        /Save move to confirm/i,
-        "The restored target still explains the latched review step",
-      );
+      await compactMoveBar(page);
       await moveBlockPointer(page, original.id, "room", "r2", 660);
       const save = async (target) => {
         const response = page.waitForResponse(
@@ -2930,7 +2943,7 @@ try {
         .waitFor({ state: "hidden" });
       await page.locator('[data-calendar-block="conflict-block"]').click();
       await page.locator("#calendar-block-reschedule").click();
-      await page.locator("#calendar-reschedule-later").click();
+      await shiftKeyboardDraft(page, "ArrowDown");
       f.blocks[0].version = 2;
       const stale = page.waitForResponse(
         (r) =>
@@ -2965,14 +2978,12 @@ try {
       await blockMoveView(page, "rooms", 660);
       await page.locator('[data-calendar-block="whole-day"]').click();
       await page.locator("#calendar-block-reschedule").click();
-      assert.equal(
-        await page.locator("#calendar-reschedule-earlier").isDisabled(),
-        true,
+      await shiftKeyboardDraft(page, "ArrowUp");
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /00:00–24:00/,
       );
-      assert.equal(
-        await page.locator("#calendar-reschedule-later").isDisabled(),
-        true,
-      );
+      await shiftKeyboardDraft(page, "ArrowDown");
       assert.match(
         await page.locator("#calendar-reschedule-time").textContent(),
         /00:00–24:00/,
@@ -2991,11 +3002,24 @@ try {
       await blockMoveView(page, "rooms", 0);
       await page.locator('[data-calendar-block="midnight"]').click();
       await page.locator("#calendar-block-reschedule").click();
-      assert.equal(
-        await page.locator("#calendar-reschedule-earlier").isDisabled(),
-        true,
+      await page
+        .locator('.calendar-reschedule-preview[data-calendar-block="midnight"]')
+        .focus();
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowDown");
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /00:10–00:40/,
+        "Repeated arrow keys retain focus on the rebuilt preview",
       );
-      await page.locator("#calendar-reschedule-later").click();
+      await page.keyboard.press("ArrowUp");
+      await page.keyboard.press("ArrowUp");
+      await shiftKeyboardDraft(page, "ArrowUp");
+      assert.match(
+        await page.locator("#calendar-reschedule-time").textContent(),
+        /00:00–00:30/,
+      );
+      await shiftKeyboardDraft(page, "ArrowDown");
       assert.match(
         await page.locator("#calendar-reschedule-time").textContent(),
         /00:05–00:35/,
