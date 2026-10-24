@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.16.0** — 2 October 2026.
+Current implementation release, **0.16.1** — 25 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -48,7 +48,11 @@ Owners can open **Clients → Import history**, read one appointment CSV up to 5
 
 Choose **Review full report**, inspect the totals and resolve any unmatched or conflicting rows, then explicitly confirm once. The application processes the entire report in bounded steps automatically, with saved progress and a Resume action after interruption. There is no per-50-row import confirmation or need to split the CSV. Keep the import screen open while processing; closing it pauses requests and preserves completed work. Confirmed history is permanent and appears in client profiles with counts of the original source statuses, including **Cancelled** and **No Show**. Exact repeats from renamed, reordered or overlapping reports are skipped; changed content or a different client for the same source reference is blocked. No real history is imported automatically.
 
-Temporary previews expire after 24 hours; confirmed jobs, archives and import receipts survive their deletion. Each processing step commits atomically; a later interruption preserves the completed steps. If underlying records change, processing stops for a new review rather than silently expanding the confirmed plan. Historical records remain separate from current bookings, financial reports and bonuses. Unknown completion, request, currency and timezone stay unknown; past New/Confirmed/Started records do not become completed visits. Owners can inspect source evidence; reception sees operational history only, and therapists cannot access client history. See the [archive API and duplicate rules](docs/history-archive.md), [source contract](docs/history-import-contract.md) and [preview details](docs/history-preview.md).
+Temporary previews expire after 24 hours; confirmed jobs, archives and import receipts survive their deletion. Each processing step commits atomically; a later interruption preserves the completed steps. If underlying records change, processing stops for a new review rather than silently expanding the confirmed plan.
+
+Imported visit counts follow the salon’s agreed rule: exclude only **No Show** and **Canceled/Cancelled**; every other supplied status counts, including **New**, **Confirmed** and **Started**. Missing status remains unknown. A client’s visit count covers the whole archive and counts each source appointment reference once, including multi-service appointments with at least one eligible line. This applies to already imported history without reimporting. Original status and completion evidence remain unchanged; a counted visit is not a claim of verified treatment completion.
+
+Current bookings, financial reports and bonuses are unchanged, and unknown request, currency and timezone fields stay unknown. Owners can inspect source evidence; reception sees operational history only, and therapists cannot access client history. See the [archive API and duplicate rules](docs/history-archive.md), [source contract](docs/history-import-contract.md) and [preview details](docs/history-preview.md).
 
 ## Local setup
 
@@ -111,7 +115,7 @@ The report update automatically creates two empty bonus-rule tables after authen
 ## Next implementation stages
 
 1. Confirm Reports/Team/Dashboard and Sales on the test URL and complete role/device acceptance.
-2. Prepare historical appointment migration using the [history import contract](docs/history-import-contract.md); client profile import is already implemented. Keep unknown identities, completion status and requested flags unresolved until supported by source data.
+2. Validate imported history and explicit client matches against the [history import contract](docs/history-import-contract.md). Apply the agreed imported-visit rule while keeping unknown source completion, requested flags and other missing evidence separate.
 3. Complete hosted monthly report acceptance and add an authenticated Google Sheets integration. Agree loyalty rules before implementing rewards.
 4. Last, finish [voucher email setup](docs/email-setup.md) and agree package, substitution and reception sales permissions, as requested by Marko. See [the implemented Sales scope](docs/sales.md).
 

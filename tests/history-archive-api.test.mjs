@@ -8,6 +8,7 @@ import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from "miniflare";
 import { token, digest } from "../src/security.mjs";
 import { defaultWeek } from "../src/domain.mjs";
 import { HISTORY_ARCHIVE_SCHEMA } from "../src/history-archive-schema.mjs";
+import { historyArchiveRoutes } from "../src/history-archive.mjs";
 
 function statements(sql) {
   const out = [];
@@ -389,11 +390,16 @@ test("Historical archive Worker + D1: explicit confirmation, durable deduplicati
       );
       const h = await expect("/clients/c1/history", "GET");
       assert.equal(h.total, 5);
+      assert.equal(h.visitCount, 3);
       assert.deepEqual(
         new Set(h.statusCounts.map((x) => x.status)),
         new Set(statuses),
       );
       for (const item of h.rows) {
+        assert.equal(
+          item.countsAsVisit,
+          !["Cancelled", "No Show"].includes(item.sourceStatus),
+        );
         assert.equal(item.roomName, null);
         assert.equal(item.record.raw.roomName, "No resource");
         assert.equal(item.record.sourceTimeZone, null);
@@ -554,7 +560,13 @@ test("Historical archive Worker + D1: explicit confirmation, durable deduplicati
       );
       const lines = await review(service, [2, 3]);
       assert.equal(lines.canConfirm, true);
+      const beforeVisits = (await expect("/clients/c1/history", "GET"))
+        .visitCount;
       assert.equal((await confirm(lines)).created, 2);
+      assert.equal(
+        (await expect("/clients/c1/history", "GET")).visitCount,
+        beforeVisits + 1,
+      );
       const opposite = await preview([row("line-valid")]);
       assert.ok(
         (await review(opposite)).rows[0].issues.some(
@@ -808,6 +820,12 @@ test("Historical archive Worker + D1: explicit confirmation, durable deduplicati
         owner.total,
       );
       assert.deepEqual(reception.statusCounts, owner.statusCounts);
+      assert.equal(reception.visitCount, owner.visitCount);
+      assert.ok(owner.visitCount > owner.rows.length);
+      assert.equal(
+        (await expect("/clients/c1/history?page=1", "GET")).visitCount,
+        owner.visitCount,
+      );
       for (const item of reception.rows) {
         assert.deepEqual(
           Object.keys(item).sort(),
@@ -821,6 +839,7 @@ test("Historical archive Worker + D1: explicit confirmation, durable deduplicati
             "roomName",
             "sourceStatus",
             "completionState",
+            "countsAsVisit",
             "requestState",
             "importedAt",
           ].sort(),
@@ -850,12 +869,167 @@ test("Historical archive Worker + D1: explicit confirmation, durable deduplicati
       await expect("/clients/c1/history?page=-1", "GET", undefined, 400);
       const empty = await expect("/clients/c2/history", "GET");
       assert.equal(empty.total, 0);
+      assert.equal(empty.visitCount, 0);
       assert.deepEqual(empty.rows, []);
       assert.equal(await count("clients"), 2);
       assert.equal(await count("appointments"), 0);
       assert.equal(await count("booking_slots"), 0);
       assert.equal(await count("client_import_keys"), 1);
       await db.batch(HISTORY_ARCHIVE_SCHEMA.map((q) => db.prepare(q)));
+    },
+  );
+  await t.test(
+    "salon attendance aliases, missing statuses and service lines preserve archive evidence and repeat safety",
+    async () => {
+      const cases = [
+        ["New", true],
+        ["Confirmed", true],
+        ["Started", true],
+        ["Completed", true],
+        ["Unknown", true],
+        ["Checked in", true],
+        ["-", true],
+        ["cAnCeLlEd", false],
+        [" CANCELED ", false],
+        ["No  Show", false],
+        ["no-show", false],
+        ["NO_SHOW", false],
+        ["Ｎｏ　Ｓｈｏｗ", false],
+        ["", null],
+        ["   ", null],
+      ];
+      const before = (await expect("/clients/c1/history", "GET")).visitCount;
+      const sourceRows = cases.map(([status], i) =>
+        row("visit-rule-" + i, status),
+      );
+      const p = await preview(sourceRows);
+      await confirm(
+        await review(
+          p,
+          sourceRows.map((_, i) => i + 2),
+        ),
+      );
+      const snapshot = async () => ({
+        archive: (
+          await sql(
+            "SELECT id,evidence_hash,record_json,completion_state FROM history_archive ORDER BY id",
+          ).all()
+        ).results,
+        revision: (
+          await sql(
+            "SELECT revision FROM history_archive_state WHERE id=1",
+          ).first()
+        ).revision,
+      });
+      const archivedBefore = await snapshot();
+      let all = [],
+        visits;
+      for (let page = 0; ; page++) {
+        const h = await expect("/clients/c1/history?page=" + page, "GET");
+        assert.equal(h.visitCount, before + 7);
+        visits = h.visitCount;
+        all.push(...h.rows);
+        if (page + 1 >= h.totalPages) break;
+      }
+      for (const [i, [status, expected]] of cases.entries()) {
+        const item = all.find(
+          (r) => r.record.sourceAppointmentRef === "visit-rule-" + i,
+        );
+        assert.equal(item.countsAsVisit, expected, status);
+        assert.equal(item.sourceStatus, status.trim() || null);
+        assert.equal(item.record.raw.status, status);
+      }
+      assert.deepEqual(
+        await snapshot(),
+        archivedBefore,
+        "Reading attendance never rewrites archived evidence or revisions",
+      );
+      const repeat = await preview(sourceRows);
+      const receipt = await confirm(
+        await review(
+          repeat,
+          sourceRows.map((_, i) => i + 2),
+        ),
+      );
+      assert.equal(receipt.created, 0);
+      assert.equal(receipt.duplicates, sourceRows.length);
+      assert.equal(
+        (await expect("/clients/c1/history", "GET")).visitCount,
+        visits,
+      );
+
+      const lines = await preview(
+        [
+          row("visit-mixed", "Cancelled", { 9: "1" }),
+          row("visit-mixed", "Started", { 9: "2" }),
+          row("visit-excluded", "Cancelled", { 9: "1" }),
+          row("visit-excluded", "No Show", { 9: "2" }),
+        ],
+        { referenceMode: "service-line" },
+      );
+      await confirm(await review(lines, [2, 3, 4, 5]));
+      assert.equal(
+        (await expect("/clients/c1/history", "GET")).visitCount,
+        visits + 1,
+      );
+      const anotherSource = await preview([row("visit-rule-0")], {
+        source: "second-source",
+      });
+      await confirm(await review(anotherSource));
+      assert.equal(
+        (await expect("/clients/c1/history", "GET")).visitCount,
+        visits + 2,
+      );
+      assert.equal(await count("appointments"), 0);
+      assert.equal(await count("booking_slots"), 0);
+    },
+  );
+  await t.test(
+    "an archive append between profile snapshots rejects inconsistent totals and a retry reads the new visit",
+    async () => {
+      const pending = await review(
+        await preview([row("concurrent-profile-read", "Started")]),
+      );
+      const before = await expect("/clients/c1/history", "GET");
+      let appended = false;
+      const interleavedDB = {
+        prepare: (query) => db.prepare(query),
+        async batch(statements) {
+          const results = await db.batch(statements);
+          if (
+            !appended &&
+            results.length === 4 &&
+            results[0].results[0]?.total === before.total &&
+            Number.isInteger(results[3].results[0]?.revision)
+          ) {
+            appended = true;
+            assert.equal((await confirm(pending)).created, 1);
+          }
+          return results;
+        },
+      };
+      await assert.rejects(
+        () =>
+          historyArchiveRoutes(
+            new Request(origin + "/api/clients/c1/history"),
+            interleavedDB,
+            { id: "owner", role: "owner" },
+          ),
+        (error) =>
+          error.status === 409 && /changed while loading/i.test(error.message),
+      );
+      assert.equal(
+        appended,
+        true,
+        "The write landed after the first read snapshot",
+      );
+      const after = await expect("/clients/c1/history", "GET");
+      assert.equal(after.total, before.total + 1);
+      assert.equal(after.visitCount, before.visitCount + 1);
+      assert.equal(
+        after.statusCounts.reduce((total, entry) => total + entry.count, 0),
+        after.total,
+      );
     },
   );
 });

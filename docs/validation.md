@@ -1,5 +1,13 @@
 # Development validation — 26 September 2026
 
+## Imported visit status rule 0.16.1 — 25 October 2026
+
+Marko confirmed that historical source statuses were not updated after visits. Client history now counts every supplied status except No Show and Canceled/Cancelled, preserving original source evidence. Visits are grouped by source and appointment reference within the client, so multiple service lines count once. Missing status remains unknown.
+
+Independent review and 21 focused renderer/real Worker+D1 tests passed. Coverage includes status aliases, supplied custom statuses, missing status, mixed service lines, source namespaces, whole-history pagination, reception privacy, unchanged archive evidence, repeat imports, and a deterministic concurrent-import read that returns a retryable conflict instead of inconsistent totals. JavaScript syntax checks and the test deployment dry-run passed. Existing full CI and browser gates remain required before merge.
+
+No database migration, real salon import, current-booking status change or financial backfill is part of this release.
+
 ## Full-report history import release 0.16.0 — 2 October 2026
 
 MBA-202 replaces manual 50-row confirmations with a single confirmation of a whole report, up to the existing 50,000-row / 25 MiB file limit. The actual Worker/D1 suite covers frozen full-report reviews, cross-step duplicate detection, explicit confirmation, atomic processing and progress, exact retries, competing jobs, source-link/client/native/archive changes, cancellation with retained partial progress, and confirmed jobs surviving preview removal and Worker restart. The large fixture defaults to 1,205 records and can be run at the 50,000-row boundary with `REI_BULK_TEST_ROWS=50000 node --test tests/history-bulk-api.test.mjs`.

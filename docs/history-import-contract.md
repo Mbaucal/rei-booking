@@ -2,11 +2,11 @@
 
 Task: [MBA-174](https://linear.app/mbaucal/issue/MBA-174/history-migration-confirm-source-mapping-and-client-identity-links), under [MBA-75](https://linear.app/mbaucal/issue/MBA-75/migracija-uvoz-i-izvoz-klijenata-i-dostupne-istorije).
 
-Prepared 30 September 2026; source evidence refreshed 2 October 2026 (Belgrade), on main `b217e61c68727c7cd20e8000c3ccbc81f64bb75e`, application 0.13.3. This is an implementation contract, not a shipped importer. The pure normalization/planning foundation is tracked in MBA-194 / MBA-195 / MBA-196. No records, schema, reports or current appointment behavior change in this slice.
+Prepared 30 September 2026; source evidence refreshed 2 October 2026 (Belgrade), on main `b217e61c68727c7cd20e8000c3ccbc81f64bb75e`, application 0.13.3. The pure normalization/planning foundation is tracked in MBA-194 / MBA-195 / MBA-196; the archive and full-report workflow are documented below. The salon-confirmed visit-count rule was added for release 0.16.1 on 25 October 2026. It does not rewrite source evidence, schema, reports or current appointments.
 
 ## Evidence and remaining source access
 
-The application already displays native Rei appointments in client profiles. Its CSV workflow imports client profiles only. Fresha appointment history requires a separate workflow.
+The application displays current Rei bookings separately from imported history in client profiles. Client-profile CSV import and appointment-history import use separate workflows.
 
 The previously supplied **report_appointment-list_2026-01-27.csv** was recovered and read on 2 October. Earlier transfer failures no longer block source-format verification. Private source bytes remain outside the repository; no client identities or source rows are used in fixtures.
 
@@ -82,21 +82,23 @@ That link operation must show the external identity and target profile, recheck 
 
 ## Status, time and financial eligibility
 
-Default interpretation preserves what is known:
+The salon has confirmed how imported history contributes to client visit counts. This rule is separate from evidence that a treatment completed:
 
-| Source status                                  | Completion default | Behavior                                                                                 |
-| ---------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------- |
-| Cancelled                                      | `not_completed`    | Show cancellation history; exclude from completed visits/hours/earned bonuses.           |
-| No Show                                        | `not_completed`    | Show no-show history; exclude from completed visits/hours/earned bonuses.                |
-| New / Confirmed / Started                      | `unknown`          | Preserve the source label. A past date or Started is not evidence the massage completed. |
-| Explicit Completed in a future verified export | `completed`        | Accept only after that source value is verified and mapped.                              |
-| Any other/unmapped status                      | `unknown`          | Keep visible for review; never silently map to completed.                                |
+| Source status | `countsAsVisit` | Imported-history behavior |
+| --- | --- | --- |
+| Canceled / Cancelled | `false` | Keep the cancellation record and original status; exclude from visits. |
+| No Show | `false` | Keep the no-show record and original status; exclude from visits. |
+| New / Confirmed / Started | `true` | Count as a visit; preserve source completion as recorded, including `unknown`. |
+| Every other supplied, nonempty status | `true` | Count as a visit without silently mapping the source status to Completed. |
+| Missing or empty status | `null` | Display unknown and exclude from the visit count. |
 
-An owner may later approve an evidence-based historical completion rule for a specified source/date range. Record the rule version and affected rows, preserve original statuses, and preview changed totals. No such rule has been approved yet.
+Status matching ignores case and spacing/hyphen/underscore variations. Whole-client `visitCount` counts distinct `(source, ref_hash)` appointment references, not service lines or the current page. Any eligible service line makes its appointment one counted visit. Raw record totals and original-status counts remain separate.
+
+Apply this projection to already imported records without reimporting or changing immutable archive evidence, payload fingerprints, reference reservations or duplicate protection. `completionState`, `completionBasis` and raw status retain their existing meaning: a counted visit does not prove completion. Missing timezone, money, request and bonus fields remain independently unknown. The agreed visit rule does not authorize rewriting those fields or changing worked-hour, revenue or bonus calculations.
 
 The application uses Europe/Belgrade reporting days, but that does not establish the export timezone. Retain local date/time and a nullable source timezone until confirmed. Validate day/month order, midnight/date boundaries, ambiguous/nonexistent daylight-saving times and contradictory date/slot values; never use the machine's timezone as a fallback.
 
-Historical visit display and financial eligibility are separate. Known completed history can contribute to completed-visit counts once identity/time mapping is accepted; missing request/rate data still makes bonuses unavailable. Missing financial fields stay unavailable and are excluded from the corresponding totals with a visible excluded-record count. Do not report unknown amounts or bonuses as zero. Imported net sales must have a distinctly labeled metric, not silently enter received-payment or full-price totals. No historical financial backfill is authorized by this contract.
+Imported visit display follows the status rule above after a record is explicitly matched and archived. It is independent of source completion and financial eligibility; missing request/rate data still makes bonuses unavailable. Missing financial fields stay unavailable and are excluded from the corresponding totals with a visible excluded-record count. Do not report unknown amounts or bonuses as zero. Imported net sales must have a distinctly labeled metric, not silently enter received-payment or full-price totals. No historical financial backfill is authorized by this contract.
 
 ## Persistence boundary and repeat safety
 
@@ -121,7 +123,7 @@ Proposed idempotency rules:
 
 This is a proposed interface for the next phase, not an existing endpoint. Each row has a stable preview `rowId`, raw-source provenance, normalized values, candidate links, review reasons and a selected flag. Server-generated decisions are authoritative.
 
-`disposition` is exactly one of `ready`, `unresolved`, `conflict`, `duplicate` or `invalid`. Aggregate counts for those states must sum to input row count. `linked` is a separate identity metric, not another mutually exclusive disposition. Show selected-ready count and separate eligibility counts for visits, source net sales and bonuses. Unknown-value counts prevent an apparently complete total from hiding gaps.
+`disposition` is exactly one of `ready`, `unresolved`, `conflict`, `duplicate` or `invalid`. Aggregate counts for those states must sum to input row count. `linked` is a separate identity metric, not another mutually exclusive disposition. Show selected-ready count and separate planner eligibility counts for source completion, net sales and bonuses; planner metrics do not replace the archive’s agreed status-based `visitCount`. Unknown-value counts prevent an apparently complete total from hiding gaps.
 
 - `ready`: required source fields and accepted mapping are sufficient for the intended archive operation; all review decisions resolved.
 - `unresolved`: missing identity, timezone or other required decision; stays unselected.
@@ -138,12 +140,12 @@ Owner-only preview/import APIs must enforce role, origin and CSRF checks. Recept
 | Current report bytes / exact headers                 | Verified 2 October                       | Explicit mapping supported for the inspected sample; no claim that all exports use this format.          |
 | Original client export / identity crosswalk          | Not located in scoped searches           | Preview known Rei candidates; do not attach by name automatically.                                       |
 | Export timezone and currency                         | Not confirmed; date/slot syntax verified | Preserve local values and raw money; leave instants and minor-unit amounts unavailable until configured. |
-| Meaning of historical New / Confirmed / Started      | Not confirmed                            | Leave completion unknown; do not count worked hours or bonuses.                                          |
+| Imported visit treatment of New / Confirmed / Started | Confirmed for 0.16.1 | Count as visits; preserve source completion evidence and leave worked hours and bonuses unchanged. |
 | Source reference and service-line uniqueness         | Unique only in the recorded sample       | Require full-export verification or collision review.                                                    |
 | Historical gross price / payments / requests / rates | Not established                          | Keep unknown; no automatic financial backfill.                                                           |
 
 None of these gates blocks unrelated calendar/client UI work. Do not ask for the same report again while its located copy may be recoverable. Escalate only the small set of facts that cannot be recovered, with the exact affected behavior explained.
 
-**Current slice (0.16.0, MBA-202, following MBA-201):** owner-reviewed archive confirmation preserves source statuses and durable import receipts, prevents repeated source references across files, and shows permanent imported history in client profiles. Full-report review and one explicit confirmation cover up to 50,000 source rows / 25 MiB; processing uses bounded, resumable steps. The entire report is reviewed before confirmation, and unmatched/conflicting evidence prevents confirmation. Previously committed steps remain visible if processing later pauses. See [archive behavior and limits](history-archive.md). Unknown timezone, completion, request and currency remain visible unknowns. This slice does not establish global source identity mappings, alter live bookings, backfill reports/bonuses, or send email.
+**Current slice (0.16.1, following MBA-202 and MBA-201):** owner-reviewed archive confirmation preserves source statuses and durable import receipts, prevents repeated source references across files, and shows permanent imported history in client profiles. Full-report review and one explicit confirmation cover up to 50,000 source rows / 25 MiB; processing uses bounded, resumable steps. The entire report is reviewed before confirmation, and unmatched/conflicting evidence prevents confirmation. Previously committed steps remain visible if processing later pauses. See [archive behavior and limits](history-archive.md). The salon-confirmed status rule supplies the whole-client imported visit count, including already archived records; source completion remains separate. Unknown timezone, completion, request and currency remain visible unknowns. This slice does not establish global source identity mappings, alter live bookings, backfill reports/bonuses, or send email.
 
 Independent tester cases: name twins; shared/contradictory contacts; an existing skipped profile missing a source key; leading-zero IDs; same key/different content; repeated/reordered/overlapping files; multi-service references; explicit versus unknown completion/request; decimal and malformed amounts; textual durations; DST and date/slot conflicts; current-menu edits; missing/deactivated therapist/resource; native-history overlap; role privacy; stale previews; concurrent identity claims; lost confirmation response; atomic rollback. Only synthetic records belong in repository fixtures. This document has no runtime behavior to test; later implementations require the relevant Worker/D1 checks as well as pure planner tests.

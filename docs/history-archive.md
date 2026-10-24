@@ -1,6 +1,6 @@
 # Confirmed appointment history
 
-Release 0.15.0 (MBA-201) added a permanent archive after the CSV preview and explicit client matching. Release 0.16.0 (MBA-202) adds one confirmation for a complete report with durable progress. The archive is separate from live calendar appointments, slots, treatment reports and bonuses. No import occurs merely by uploading a report, preparing a review or matching a client.
+Release 0.15.0 (MBA-201) added a permanent archive after the CSV preview and explicit client matching. Release 0.16.0 (MBA-202) added one confirmation for a complete report with durable progress. Release 0.16.1 applies the salon-confirmed imported-visit counting rule to existing and new archive records. The archive is separate from live calendar appointments, slots, treatment reports and bonuses. No import occurs merely by uploading a report, preparing a review or matching a client.
 
 ## Owner workflow
 
@@ -18,7 +18,11 @@ Each step commits its archive rows, receipt and progress atomically. The complet
 
 ## Preserved status and unknown fields
 
-Original status text is retained, including `Cancelled`, `No Show`, `New`, `Confirmed` and `Started`. Counts cover the entire client's imported archive, not just the current page. An absent status is labelled unknown. Cancelled and No Show remain non-completed. New, Confirmed and Started remain of unknown completion in this archive release, even when the preview contains a supplied completion mapping; their operational meaning has not been established for this source.
+Original status text and saved completion evidence are retained. The salon-confirmed visit rule excludes only `No Show` and `Canceled`/`Cancelled`; every other supplied status counts as a visit, including `New`, `Confirmed` and `Started`. Matching ignores case, surrounding whitespace and spacing/hyphen/underscore variations. A missing or empty status stays unknown and is not counted.
+
+The client-history API exposes `countsAsVisit` on each row: `true` for an included status, `false` for an excluded status, and `null` for missing status. Whole-client `visitCount` counts distinct `(source, ref_hash)` appointment references across the entire archive, not just the current page. Multiple service lines for one reference contribute one visit if any line is eligible. `total` and original-status counts still describe archive records, so they can differ from the visit count.
+
+This is a display/query rule over existing immutable evidence: already imported history uses it immediately, with no reimport or rewrite of archive rows, payload fingerprints or duplicate keys. A visit may count while source completion remains `unknown`; `New`, `Confirmed` and `Started` are not relabelled as completed. The rule does not change current Rei booking counts, worked hours, revenue or bonuses.
 
 A known local date/time can be archived while the source timezone is unconfirmed; its instant remains unknown. Currency, payment, full price, requested flags and bonus evidence are not invented. Missing optional facts are shown as warnings/unknowns and do not erase the visit. Invalid dates/durations, contradictory source evidence, ambiguous identities and source references are blocked. This release does not backfill financial reports or bonus totals.
 
@@ -56,7 +60,7 @@ The server chooses the next rows; clients cannot expand the approved report by s
 | ------------------------------------------ | ------------------------------------- |
 | Review selected rows                       | `POST /api/history/imports/review`    |
 | Explicit confirmation / exact retry        | `POST /api/history/imports/confirm`   |
-| Paginated client archive and status counts | `GET /api/clients/:id/history?page=0` |
+| Paginated client archive, visit count and status counts | `GET /api/clients/:id/history?page=0` |
 
 The original bounded API remains compatible: review body `{previewId, version, rows, requestId}`, with 1–50 distinct CSV row numbers. Confirmation adds `confirmationToken` and `acknowledgeReview: true`. Its review expires after 15 minutes or at preview expiry, whichever comes first. These request limits no longer define the user-facing full-report confirmation limit. Archive/receipt records have no preview foreign-key cascade and survive the preview's 24-hour access window. The archive schema is additive and mirrored in `migrations/0013_history_archive.sql`.
 

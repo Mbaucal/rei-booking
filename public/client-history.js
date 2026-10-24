@@ -1,10 +1,5 @@
 import { HISTORY_COLUMNS, historyTime } from "./history-preview-helpers.js";
 
-const completionLabels = {
-  completed: "Completed",
-  not_completed: "Not completed",
-  unknown: "Unknown",
-};
 const requestLabels = { yes: "Yes", no: "No", unknown: "Unknown" };
 const count = (value) =>
   Number.isSafeInteger(value) && value >= 0
@@ -44,7 +39,7 @@ export function renderClientHistoryPage(
   );
   return `<section class="client-history-section" aria-label="Imported appointment history">
     <header><p class="eyebrow">PREVIOUS BOOKING SYSTEMS</p><h3>Imported appointment history</h3><p class="hint">Saved source records. Bookings in Rei are shown separately.</p></header>
-    <div id="client-history-summary"><p class="client-history-total"><strong>${count(data.total)}</strong> imported ${data.total === 1 ? "appointment" : "appointments"}</p><div class="client-history-statuses" aria-label="Original status counts across this client's imported history">${statuses.map((item) => `<span class="client-history-status-count"><strong>${count(item.count)}</strong> ${safe(item.status ?? "Unknown status")}</span>`).join("")}</div></div>
+    <div id="client-history-summary"><p class="client-history-total"><strong>${count(data.visitCount)}</strong> imported ${data.visitCount === 1 ? "visit" : "visits"}</p><p class="hint">${count(data.total)} imported ${data.total === 1 ? "record" : "records"}</p><div class="client-history-statuses" aria-label="Original status counts across this client's imported history">${statuses.map((item) => `<span class="client-history-status-count"><strong>${count(item.count)}</strong> ${safe(item.status ?? "Unknown status")}</span>`).join("")}</div></div>
     <p id="client-history-loading" class="hint" role="status" hidden>Loading history…</p><div id="client-history-error" class="client-history-error" role="alert" hidden></div>
     <div class="client-history-records">${
       (data.rows || [])
@@ -59,8 +54,12 @@ export function renderClientHistoryPage(
                 item.duration == null ? null : `${item.duration} min`,
               ],
               [
-                "Completion",
-                completionLabels[item.completionState] || "Unknown",
+                "Counts as a visit",
+                item.countsAsVisit === true
+                  ? "Yes"
+                  : item.countsAsVisit === false
+                    ? "No"
+                    : "Unknown",
               ],
               [
                 "Requested therapist",
@@ -75,7 +74,7 @@ export function renderClientHistoryPage(
       `<p class="client-history-empty">No imported appointment history yet.</p>`
     }</div>
     <div class="client-history-pagination"><button class="btn" id="client-history-prev" ${data.page <= 0 ? "disabled" : ""}>Previous</button><span>Page ${Number(data.page || 0) + 1} of ${pages}</span><button class="btn" id="client-history-next" ${Number(data.page || 0) + 1 >= pages ? "disabled" : ""}>Next</button></div>
-    <p class="hint client-history-note">Original statuses are preserved. New, Confirmed and Started do not establish that a treatment was completed.</p>
+    <p class="hint client-history-note">All supplied statuses count as visits except No Show and Cancelled/Canceled. An appointment with several treatments counts once. Missing statuses remain unknown.</p>
   </section>`;
 }
 
