@@ -49,6 +49,7 @@ export function renderHistoryPreview({
   isCurrent,
   back,
   openProfile,
+  openSetup,
 }) {
   let generation = 0,
     disposed = false,
@@ -109,7 +110,7 @@ export function renderHistoryPreview({
     $("history-retry").textContent = label;
   };
   root.innerHTML = `<section class="history-preview">
-    <div class="history-topline"><button class="btn" id="history-back">← Back to clients</button><span class="history-badge">Review before import</span></div>
+    <div class="history-topline"><button class="btn" id="history-back">← Back to clients</button>${openSetup ? '<button class="btn" id="history-salon-open" data-history-busy>Set up team &amp; treatments</button>' : '<span class="history-badge">Review before import</span>'}</div>
     <p class="history-lead">Match clients, review the whole report, then confirm once. Large reports are processed automatically in safe steps. Imported history is kept permanently; temporary previews expire after 24 hours.</p>
     <section class="history-card" id="history-file-card"><h2>Choose appointment history</h2><p class="hint" id="history-file-note">One UTF-8 CSV · up to 50,000 rows / 25 MiB. No manual splitting.</p>
       <form id="history-file-form"><div class="fields">
@@ -126,6 +127,10 @@ export function renderHistoryPreview({
     generation++;
     back();
   };
+  if (openSetup)
+    $("history-salon-open").onclick = () => {
+      if (!busy) openSetup();
+    };
   $("history-retry").onclick = () => {
     if (!busy && retry) {
       const action = retry;

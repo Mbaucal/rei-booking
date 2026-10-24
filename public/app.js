@@ -23,6 +23,7 @@ import {
 } from "./appointment-preview.js";
 import { renderClientTransfer } from "./client-transfer.js";
 import { renderHistoryPreview } from "./history-preview.js";
+import { renderHistorySalon } from "./history-salon.js";
 import { mountClientHistory } from "./client-history.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
@@ -403,6 +404,7 @@ async function setPage(page, monthlyFilters = null) {
     clients: "Clients",
     "client-transfer": "Clients",
     "history-preview": "Appointment history",
+    "history-salon": "Set up from history",
     team: "Team",
     services: "Treatments",
     users: "Accounts",
@@ -415,7 +417,9 @@ async function setPage(page, monthlyFilters = null) {
         b.dataset.page ===
           (page === "monthly"
             ? "reports"
-            : ["client-transfer", "history-preview"].includes(page)
+            : ["client-transfer", "history-preview", "history-salon"].includes(
+                  page,
+                )
               ? "clients"
               : page),
       ),
@@ -480,6 +484,19 @@ async function setPage(page, monthlyFilters = null) {
         openProfile: clientProfile,
         download: (query) => downloadReport(query, "/api/sales/vouchers.csv?"),
       });
+    } else if (page === "history-salon") {
+      const version = state.version;
+      historyPreviewCleanup = renderHistorySalon({
+        root: $("page-content"),
+        api,
+        esc,
+        isCurrent: () => state.version === version && owner(),
+        back: () => setPage("history-preview"),
+        openPage: async (next) => {
+          await loadCatalogue();
+          await setPage(next);
+        },
+      });
     } else if (page === "history-preview") {
       const version = state.version;
       historyPreviewCleanup = renderHistoryPreview({
@@ -489,6 +506,7 @@ async function setPage(page, monthlyFilters = null) {
         isCurrent: () => state.version === version && owner(),
         back: () => setPage("clients"),
         openProfile: clientProfile,
+        openSetup: () => setPage("history-salon"),
       });
     } else if (page === "client-transfer") {
       const version = state.version;
@@ -557,7 +575,9 @@ function updateMobileNavigation() {
   const activePage =
     state.page === "monthly"
       ? "reports"
-      : ["client-transfer", "history-preview"].includes(state.page)
+      : ["client-transfer", "history-preview", "history-salon"].includes(
+            state.page,
+          )
         ? "clients"
         : state.page;
   $("mobile-navigation")
@@ -1834,7 +1854,7 @@ async function renderTeam() {
   await loadCatalogue();
   if (state.page !== "team") return;
   $("page-content").innerHTML =
-    `<div class="toolbar"><p class="hint">Profiles, working hours and time off.</p><button class="btn primary" id="team-add">+ Team member</button></div><div class="cards">${
+    `<div class="toolbar"><p class="hint">Profiles, working hours and time off.</p><button class="btn" id="team-history">Set up from history</button><button class="btn primary" id="team-add">+ Team member</button></div><div class="cards">${
       state.catalogue.therapists
         .map(
           (t) =>
@@ -1852,6 +1872,7 @@ async function renderTeam() {
         .join("") ||
       '<div class="empty"><h2>Your team starts here</h2><p>Add therapist profiles before booking.</p></div>'
     }</div>`;
+  $("team-history").onclick = () => setPage("history-salon");
   $("team-add").onclick = () => teamDialog();
   document
     .querySelectorAll("[data-team]")
@@ -1943,7 +1964,8 @@ async function renderServices() {
   await loadCatalogue();
   if (state.page !== "services") return;
   $("page-content").innerHTML =
-    `<div class="toolbar"><p class="hint">Each duration and price is a treatment variant.</p><button class="btn primary" id="service-add">+ Treatment</button></div><div class="table-wrap"><table><thead><tr><th>Treatment</th><th>Duration</th><th>Price</th><th>Status</th><th></th></tr></thead><tbody>${state.catalogue.services.map((s) => `<tr><td><span style="color:${esc(s.color)}">●</span> ${esc(s.name)}</td><td>${s.duration} min</td><td>${money(s.priceCents)}</td><td>${s.active ? "Active" : "Archived"}</td><td><button class="btn" data-service="${esc(s.id)}">Edit</button></td></tr>`).join("")}</tbody></table></div>`;
+    `<div class="toolbar"><p class="hint">Each duration and price is a treatment variant.</p><button class="btn" id="service-history">Set up from history</button><button class="btn primary" id="service-add">+ Treatment</button></div><div class="table-wrap"><table><thead><tr><th>Treatment</th><th>Duration</th><th>Price</th><th>Status</th><th></th></tr></thead><tbody>${state.catalogue.services.map((s) => `<tr><td><span style="color:${esc(s.color)}">●</span> ${esc(s.name)}</td><td>${s.duration} min</td><td>${money(s.priceCents)}</td><td>${s.active ? "Active" : "Archived"}</td><td><button class="btn" data-service="${esc(s.id)}">Edit</button></td></tr>`).join("")}</tbody></table></div>`;
+  $("service-history").onclick = () => setPage("history-salon");
   $("service-add").onclick = () => serviceDialog();
   document
     .querySelectorAll("[data-service]")

@@ -716,3 +716,38 @@
   width: auto;
   min-width: 180px;
 }
+
+.history-salon .salon-candidate {
+  padding: 1rem 0;
+  border-bottom: 1px solid #e6dfce;
+}
+.history-salon .salon-candidate header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.history-salon .salon-candidate small {
+  color: #67766c;
+}
+.history-salon .fields {
+  align-items: end;
+}
+.history-salon .check {
+  margin: 1rem 0;
+}
+.history-salon [aria-pressed="true"] {
+  background: #1f3d33;
+  color: white;
+}
+.history-salon #salon-items {
+  margin-top: 1rem;
+}
+@media (max-width: 700px) {
+  .history-salon .fields {
+    grid-template-columns: 1fr;
+  }
+  .history-salon .history-actions {
+    flex-wrap: wrap;
+  }
+}

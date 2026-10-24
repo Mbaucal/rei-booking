@@ -783,3 +783,6 @@ export function normalizeHistoryRows({
   }
   return { rows: normalized, summary };
 }
+
+// Shared strict decimal interpretation for previously unknown historical currency.
+export { parseMoney as parseHistoryMoney };

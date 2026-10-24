@@ -9,6 +9,8 @@ import {
 import { clientTransferRoutes } from "./client-transfer.mjs";
 import { historyPreviewRoutes } from "./history-preview.mjs";
 import { historyArchiveRoutes } from "./history-archive.mjs";
+import { historySalonRoutes } from "./history-salon.mjs";
+import { loadHistoricalReportRows } from "./history-reports.mjs";
 import { historyBulkRoutes } from "./history-bulk.mjs";
 import { monthlyRoutes, runMonthly } from "./monthly-reports.mjs";
 import { ensurePhotoSchema } from "./photo-schema.mjs";
@@ -471,7 +473,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.16.1", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.17.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -570,24 +572,59 @@ async function routes(request, env) {
   ) {
     requireRole(user, "owner");
     const options = reportOptions(url.searchParams);
-    const rows = await all(
-      db,
-      `SELECT a.*,t.name AS therapist_name,rt.name AS requested_name,b.mode AS bonus_mode,b.regular_rate,b.requested_rate
+    const historical = await loadHistoricalReportRows(db, {
+      from: options.compare ? options.previousFrom : options.from,
+      to: options.to,
+    });
+    const inputs = await db.batch([
+      stmt(
+        db,
+        `SELECT a.*,t.name AS therapist_name,rt.name AS requested_name,b.mode AS bonus_mode,b.regular_rate,b.requested_rate
 FROM appointments a JOIN therapists t ON t.id=a.therapist_id LEFT JOIN therapists rt ON rt.id=a.requested_therapist_id LEFT JOIN appointment_bonus_rules b ON b.appointment_id=a.id
 WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
-      options.compare ? options.previousFrom : options.from,
-      options.to,
-    );
-    if (rows.length > 20000)
+        options.compare ? options.previousFrom : options.from,
+        options.to,
+      ),
+      stmt(db, "SELECT id,name FROM therapists ORDER BY name"),
+      stmt(db, "SELECT id,name,duration FROM services ORDER BY name,duration"),
+      stmt(
+        db,
+        "SELECT (SELECT revision FROM history_archive_state WHERE id=1) AS archiveRevision,(SELECT revision FROM history_salon_state WHERE id=1) AS catalogueRevision,COALESCE(MAX(id),0) AS nativeAuditId FROM audit_log",
+      ),
+    ]);
+    const clocks = inputs[3].results[0];
+    if (
+      ["archiveRevision", "catalogueRevision", "nativeAuditId"].some(
+        (key) => clocks[key] !== historical.metadata[key],
+      )
+    )
+      fail(
+        409,
+        "Report data changed while it was being prepared. Run the report again.",
+      );
+    if (inputs[0].results.length > 20000)
       fail(
         400,
-        "Choose a shorter report period (maximum 20,000 appointments).",
+        "Choose a shorter report period (maximum 20,000 Rei appointments).",
       );
-    const therapists = await all(
-      db,
-      "SELECT id,name FROM therapists ORDER BY name",
-    );
+    const rows = [...inputs[0].results, ...historical.rows];
+    const mergeById = (items) => [
+      ...new Map(items.map((v) => [v.id, v])).values(),
+    ];
+    const therapists = mergeById([
+      ...historical.therapists,
+      ...inputs[1].results,
+    ]);
+    const services = mergeById([...historical.services, ...inputs[2].results]);
     const report = buildReport(rows, options, therapists);
+    const {
+      archiveRevision,
+      catalogueRevision,
+      nativeAuditId,
+      ...historySummary
+    } = historical.metadata;
+    report.history = historySummary;
+    report.filters = { therapists, services };
     if (path.endsWith(".csv"))
       return new Response(
         reportCSV(
@@ -628,6 +665,8 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
       ),
     });
   }
+  const historySalon = await historySalonRoutes(request, db, user);
+  if (historySalon) return historySalon;
   const historyPreview = await historyPreviewRoutes(request, db, user);
   if (historyPreview) return historyPreview;
   const historyArchive = await historyArchiveRoutes(request, db, user);

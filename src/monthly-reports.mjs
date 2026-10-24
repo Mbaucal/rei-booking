@@ -4,7 +4,13 @@ import { text, integer } from "./domain.mjs";
 import { ensureReportSchema } from "./report-schema.mjs";
 import { ensureSalesSchema } from "./sales-schema.mjs";
 import { ensureMonthlySchema } from "./monthly-schema.mjs";
-import { buildReport, comparison, reportCSV } from "./reports.mjs";
+import { loadHistoricalReportRows } from "./history-reports.mjs";
+import {
+  buildReport,
+  comparison,
+  reportCSV,
+  reportRowMatches,
+} from "./reports.mjs";
 import {
   month,
   currentMonth,
@@ -29,12 +35,12 @@ const stmt = (db, sql, ...args) => db.prepare(sql).bind(...args);
 const one = (db, sql, ...args) => stmt(db, sql, ...args).first();
 const all = async (db, sql, ...args) =>
   (await stmt(db, sql, ...args).all()).results;
-const DEFINITION = "appointment-performance-1";
+const DEFINITION = "appointment-performance-2";
 const STALE = "This schedule or report changed. Refresh it before continuing.";
 const SCHEDULE = `SELECT s.*,t.name,t.filters_json,t.minute,t.notifications,t.recipient FROM report_schedules s JOIN report_templates t ON t.schedule_id=s.id AND t.revision=s.revision`;
 const SNAP_META = `SELECT p.id,p.schedule_id,p.template_revision,p.period,p.version,p.supersedes_id,p.reason,p.generated_at,p.cutoff_at,p.cutoff_audit_id,p.definition_version,p.incomplete,t.name,j.status AS email_status,j.error_code AS email_error,j.id AS job_id FROM report_snapshots p JOIN report_schedules s ON s.id=p.schedule_id JOIN report_templates t ON t.schedule_id=p.schedule_id AND t.revision=p.template_revision LEFT JOIN report_email_jobs j ON j.snapshot_id=p.id AND j.kind='report'`;
 // Only report inputs. Never store client names, IDs, contacts, notes, portraits or session data.
-const INPUT_SELECT = `SELECT a.id,a.therapist_id,t.name AS therapist_name,a.service_id,a.service_name,a.date,a.start_minute,a.duration,a.gross_cents,a.net_cents,a.created_at,a.cancelled_at,a.status,a.requested_therapist_id,rt.name AS requested_name,a.bonus_regular_cents_hour,a.bonus_requested_cents_hour,a.version,a.updated_at,b.mode AS bonus_mode,b.regular_rate,b.requested_rate FROM appointments a JOIN therapists t ON t.id=a.therapist_id LEFT JOIN therapists rt ON rt.id=a.requested_therapist_id LEFT JOIN appointment_bonus_rules b ON b.appointment_id=a.id WHERE a.date BETWEEN ? AND ? AND (?='' OR a.therapist_id=?) AND (?='' OR a.service_id=?) AND (?='all' OR a.status=?) AND (?='all' OR (a.requested_therapist_id IS NOT NULL)=?) ORDER BY a.date,a.start_minute,a.id LIMIT 5001`;
+const INPUT_SELECT = `SELECT a.id,a.therapist_id,t.name AS therapist_name,a.service_id,a.service_name,a.date,a.start_minute,a.duration,a.gross_cents,a.net_cents,a.created_at,a.cancelled_at,a.status,a.requested_therapist_id,rt.name AS requested_name,a.bonus_regular_cents_hour,a.bonus_requested_cents_hour,a.version,a.updated_at,b.mode AS bonus_mode,b.regular_rate,b.requested_rate FROM appointments a JOIN therapists t ON t.id=a.therapist_id LEFT JOIN therapists rt ON rt.id=a.requested_therapist_id LEFT JOIN appointment_bonus_rules b ON b.appointment_id=a.id WHERE a.date BETWEEN ? AND ? AND (? != 'history') AND (?='' OR a.therapist_id=?) AND (?='' OR a.service_id=?) AND (?='all' OR a.status=?) AND (?='all' OR (a.requested_therapist_id IS NOT NULL)=?) ORDER BY a.date,a.start_minute,a.id LIMIT 5001`;
 async function schema(db) {
   await ensureReportSchema(db);
   await ensureSalesSchema(db);
@@ -278,13 +284,18 @@ export async function generateSnapshot(
     : await template(db, s.id, period);
   const filters = JSON.parse(t.filters_json),
     options = monthOptions(period, filters);
-  // One D1 batch is a consistent read transaction for both periods, labels and the audit watermark.
+  const historical = await loadHistoricalReportRows(db, {
+    from: options.previousFrom,
+    to: options.to,
+  });
+  // Native inputs, source revisions and audit watermark share one read transaction.
   const inputs = await db.batch([
     stmt(
       db,
       INPUT_SELECT,
       options.previousFrom,
       options.to,
+      options.source,
       options.therapist,
       options.therapist,
       options.service,
@@ -297,12 +308,27 @@ export async function generateSnapshot(
     stmt(db, "SELECT id,name FROM therapists ORDER BY name"),
     stmt(
       db,
-      "SELECT COALESCE(MAX(id),0) AS audit_id,strftime('%Y-%m-%dT%H:%M:%fZ','now') AS cutoff FROM audit_log",
+      "SELECT COALESCE(MAX(id),0) AS audit_id,strftime('%Y-%m-%dT%H:%M:%fZ','now') AS cutoff,(SELECT revision FROM history_archive_state WHERE id=1) AS archive_revision,(SELECT revision FROM history_salon_state WHERE id=1) AS catalogue_revision FROM audit_log",
     ),
   ]);
-  const rows = inputs[0].results,
-    therapists = inputs[1].results,
+  const rows = [...inputs[0].results, ...historical.rows].filter((row) =>
+      reportRowMatches(row, { ...options, from: options.previousFrom }),
+    ),
+    therapists = [
+      ...new Map(
+        [...historical.therapists, ...inputs[1].results].map((t) => [t.id, t]),
+      ).values(),
+    ],
     watermark = inputs[2].results[0];
+  if (
+    historical.metadata.archiveRevision !== watermark.archive_revision ||
+    historical.metadata.catalogueRevision !== watermark.catalogue_revision ||
+    historical.metadata.nativeAuditId !== watermark.audit_id
+  )
+    fail(
+      409,
+      "Historical data changed while the report was being prepared. Try again.",
+    );
   if (rows.length > 5000)
     fail(
       422,
@@ -322,12 +348,20 @@ export async function generateSnapshot(
       includeBonuses: filters.bonuses,
       previous: prior.totals,
       comparison: comparison(report.totals, prior.totals),
-      warnings: [],
+      history: Object.fromEntries(
+        Object.entries(historical.metadata).filter(
+          ([key]) =>
+            !["archiveRevision", "catalogueRevision", "nativeAuditId"].includes(
+              key,
+            ),
+        ),
+      ),
+      warnings: [...(report.warnings || [])],
     };
     if (report.totals.pending || prior.totals.pending) {
       incomplete = 1;
       report.warnings.push(
-        "Uncompleted appointments remain in the current or comparison period. Hours, revenue and bonuses include completed massages only.",
+        "Uncompleted Rei appointments remain in the current or comparison period. Rei hours, revenue and bonuses include completed massages only. Imported attendance follows the source status rule.",
       );
     }
   } catch (error) {
@@ -360,7 +394,7 @@ export async function generateSnapshot(
     ? statusCSV
     : comparisonCSV(report, filters.bonuses);
   const data = JSON.stringify(report),
-    source = JSON.stringify({ rows, therapists });
+    source = JSON.stringify({ rows, therapists, history: historical.metadata });
   if (
     new TextEncoder().encode(data + source + summary + details + compared)
       .length > 1700000
