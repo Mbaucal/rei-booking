@@ -1676,8 +1676,14 @@ try {
         bytes: archiveCSV({ missingReference: true }),
       });
       await reviewArchive(page);
+      // The ready summary renders before its final paged row response.
+      // Wait for the missing-reference evidence, not merely the confirm button.
+      const missingReference = page.locator(
+        '#history-import-rows [data-history-import-row="2"] .history-issues',
+      );
+      await missingReference.waitFor({ state: "visible" });
       assert.match(
-        await page.locator("#history-import-review").innerText(),
+        await missingReference.innerText(),
         /stable source reference/i,
       );
       assert.equal(

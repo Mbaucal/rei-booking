@@ -54,6 +54,7 @@ jobs:
           REI_BROWSER_ARTIFACTS: history-browser-artifacts
         run: REI_PLAYWRIGHT_MODULE="$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/index.mjs" node scripts/test-history-browser.mjs
       - name: Check reviewed salon setup in desktop and phone browsers
+        if: success() || failure()
         env:
           REI_BROWSER_ARTIFACTS: history-browser-artifacts
         run: REI_PLAYWRIGHT_MODULE="$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/index.mjs" node scripts/test-history-salon-browser.mjs
