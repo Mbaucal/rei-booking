@@ -798,7 +798,7 @@ try {
         assert.equal(await metric("Imported visits").innerText(), "1");
         assert.match(
           await metric("Rei treatment revenue").innerText(),
-          /1,200\.00/,
+          /^RSD\s+1,200(?:\.00)?$/,
         );
         assert.match(
           await metric("Imported source net sales").innerText(),

@@ -116,7 +116,7 @@ export function renderHistorySalon({
         <label>Find an item<input id="salon-search" type="search" placeholder="Treatment or therapist name" maxlength="120"></label>
         <div id="salon-items"></div><div class="history-actions"><button class="btn" type="button" id="salon-prev">Previous</button><span id="salon-page" role="status"></span><button class="btn" type="button" id="salon-next">Next</button></div>
       </section>
-      <section class="history-card"><p id="salon-selection" role="status"></p><label class="check"><input type="checkbox" id="salon-review-confirm" required>I reviewed the names, matches and current treatment prices.</label>
+      <section class="history-card salon-confirmation"><p id="salon-selection" role="status"></p><label class="check"><input type="checkbox" id="salon-review-confirm" required>I reviewed the names, matches and current treatment prices.</label>
         <div class="history-actions"><button class="btn primary" id="salon-save" type="submit">Save setup</button><button class="btn" id="salon-cancel" type="button">Cancel</button></div>
       </section>
     </form>`;

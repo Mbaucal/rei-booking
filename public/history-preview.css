@@ -751,3 +751,17 @@
     flex-wrap: wrap;
   }
 }
+
+@media (max-width: 700px), (max-height: 560px) and (pointer: coarse) {
+  .history-salon .salon-confirmation {
+    position: sticky;
+    bottom: calc(var(--mobile-nav-space, 76px) + 8px);
+    z-index: 5;
+    padding: 16px;
+    box-shadow: 0 -4px 18px #16302a12;
+  }
+  .history-salon .salon-candidate input,
+  .history-salon .salon-candidate select {
+    scroll-margin-bottom: 300px;
+  }
+}
