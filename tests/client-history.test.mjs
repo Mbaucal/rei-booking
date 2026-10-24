@@ -19,6 +19,7 @@ const record = (changes = {}) => ({
   roomName: null,
   sourceStatus: "Started",
   completionState: "unknown",
+  countsAsVisit: true,
   requestState: "unknown",
   importedAt: "2026-10-03T10:00:00.000Z",
   ...changes,
@@ -28,6 +29,7 @@ const data = (changes = {}) => ({
   page: 0,
   pageSize: 25,
   total: 3,
+  visitCount: 1,
   totalPages: 1,
   statusCounts: [
     { status: "Started", count: 1 },
@@ -40,11 +42,13 @@ const data = (changes = {}) => ({
       id: "archive-b",
       sourceStatus: "Cancelled",
       completionState: "not_completed",
+      countsAsVisit: false,
     }),
     record({
       id: "archive-c",
       sourceStatus: "No Show",
       completionState: "not_completed",
+      countsAsVisit: false,
     }),
   ],
   ...changes,
@@ -64,7 +68,13 @@ test("imported profile history preserves original statuses and separate global s
   assert.match(html, /<strong>1<\/strong> Cancelled/);
   assert.match(html, /<strong>1<\/strong> No Show/);
   assert.match(html, /client-history-source-status">Started/);
-  assert.match(html, /<dt>Completion<\/dt><dd>Unknown<\/dd>/);
+  assert.match(html, /<strong>1<\/strong> imported visit/);
+  assert.match(html, /3 imported records/);
+  assert.match(html, /<dt>Counts as a visit<\/dt><dd>Yes<\/dd>/);
+  assert.equal(
+    (html.match(/<dt>Counts as a visit<\/dt><dd>No<\/dd>/g) || []).length,
+    2,
+  );
   assert.match(html, /client-history-source-status">Cancelled/);
   assert.match(html, /client-history-source-status">No Show/);
   assert.doesNotMatch(html, /<dt>Completion<\/dt><dd>Completed<\/dd>/);
@@ -127,6 +137,7 @@ test("pagination uses supplied whole-history totals, not the current page's rows
     data({
       page: 1,
       total: 53,
+      visitCount: 23,
       totalPages: 3,
       rows: [record()],
       statusCounts: [
@@ -136,7 +147,8 @@ test("pagination uses supplied whole-history totals, not the current page's rows
     }),
     esc,
   );
-  assert.match(html, /<strong>53<\/strong> imported appointments/);
+  assert.match(html, /53 imported records/);
+  assert.match(html, /<strong>23<\/strong> imported visits/);
   assert.match(html, /<strong>20<\/strong> Cancelled/);
   assert.match(html, /Page 2 of 3/);
   assert.doesNotMatch(html, /id="client-history-prev" disabled/);
@@ -150,7 +162,13 @@ test("pagination uses supplied whole-history totals, not the current page's rows
 
 test("empty history and missing metadata remain explicit without inventing completed visits or amounts", () => {
   const empty = renderClientHistoryPage(
-    data({ rows: [], total: 0, totalPages: 0, statusCounts: [] }),
+    data({
+      rows: [],
+      total: 0,
+      visitCount: 0,
+      totalPages: 0,
+      statusCounts: [],
+    }),
     esc,
   );
   assert.match(empty, /No imported appointment history yet/);
@@ -161,6 +179,7 @@ test("empty history and missing metadata remain explicit without inventing compl
       rows: [
         record({
           sourceStatus: null,
+          countsAsVisit: null,
           serviceName: null,
           date: null,
           start: null,
@@ -172,6 +191,7 @@ test("empty history and missing metadata remain explicit without inventing compl
     esc,
   );
   assert.match(unknown, /Unknown status/);
+  assert.match(unknown, /<dt>Counts as a visit<\/dt><dd>Unknown<\/dd>/);
   assert.match(unknown, /Treatment unknown/);
   assert.match(unknown, /Time unknown/);
   assert.match(unknown, /<dt>Added to history<\/dt><dd>Unknown<\/dd>/);

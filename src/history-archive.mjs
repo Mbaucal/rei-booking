@@ -32,6 +32,14 @@ const canonical = (value) =>
 const fold = (value) =>
   (value ?? "").normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
 const sourceKey = (value) => fold(value);
+// Salon-confirmed attendance rule. This projection never rewrites source
+// completion evidence or the hashes used to identify duplicate imports.
+function countsAsVisit(status) {
+  const supplied = fold(status);
+  if (!supplied) return null;
+  const key = supplied.replace(/[\s_-]+/g, "");
+  return !["canceled", "cancelled", "noshow"].includes(key);
+}
 const clientClock = "(SELECT revision FROM client_transfer_state WHERE id=1)";
 const archiveClock = "(SELECT revision FROM history_archive_state WHERE id=1)";
 const severe = new Set([
@@ -322,7 +330,7 @@ async function review(db, user, body) {
         entry,
         "completion_not_proven",
         "status",
-        "New, Confirmed and Started are retained with unknown completion, regardless of a supplied completion mapping.",
+        "New, Confirmed and Started count as visits. Their original completion evidence stays unknown, regardless of a supplied completion mapping.",
         "review",
       );
     return entry;
@@ -728,7 +736,7 @@ async function clientHistory(db, user, clientId, url) {
         "This historical page contains unusually large source evidence. It cannot be returned safely; nothing was truncated.",
       );
   }
-  const [count, groups, data] = await db.batch([
+  const [count, groups, data, clock] = await db.batch([
     stmt(
       db,
       "SELECT COUNT(*) AS total FROM history_archive WHERE client_id=?",
@@ -745,6 +753,7 @@ async function clientHistory(db, user, clientId, url) {
       clientId,
       page * 25,
     ),
+    stmt(db, "SELECT revision FROM history_archive_state WHERE id=1"),
   ]);
   const total = count.results[0].total,
     totalPages = Math.ceil(total / 25);
@@ -754,6 +763,21 @@ async function clientHistory(db, user, clientId, url) {
       "This client has unusually many distinct source statuses. No status counts were truncated.",
     );
   if (page > 0 && page >= totalPages) fail(400, "Choose a valid history page.");
+  const includedStatuses = groups.results
+    .filter((g) => countsAsVisit(g.status) === true)
+    .map((g) => g.status);
+  const visits = await stmt(
+    db,
+    `SELECT COUNT(*) AS total, ${archiveClock} AS revision FROM (
+      SELECT source,ref_hash FROM history_archive
+      WHERE client_id=? AND source_status IN (SELECT value FROM json_each(?))
+      GROUP BY source,ref_hash
+    )`,
+    clientId,
+    JSON.stringify(includedStatuses),
+  ).first();
+  if (visits.revision !== clock.results[0].revision)
+    fail(409, "Imported history changed while loading. Try again.");
   const rows = data.results.map((r) => {
     const record = user.role === "owner" ? JSON.parse(r.record_json) : null;
     const safe = {
@@ -766,6 +790,7 @@ async function clientHistory(db, user, clientId, url) {
       roomName: record?.sourceRoomLabel ?? r.room_name ?? null,
       sourceStatus: r.source_status,
       completionState: r.completion_state,
+      countsAsVisit: countsAsVisit(r.source_status),
       requestState: record?.requestState ?? r.request_state,
       importedAt: r.imported_at,
     };
@@ -793,6 +818,7 @@ async function clientHistory(db, user, clientId, url) {
     pageSize: 25,
     total,
     totalPages,
+    visitCount: visits.total,
     statusCounts: groups.results,
     rows,
   });

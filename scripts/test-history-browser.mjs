@@ -114,6 +114,9 @@ async function fixtureAPI(f, url, method, body, json) {
       page,
       pageSize: 25,
       total: records.length,
+      visitCount: new Set(
+        records.filter((r) => fixtureVisit(r.sourceStatus)).map((r) => r.key),
+      ).size,
       totalPages: Math.ceil(records.length / 25),
       statusCounts: statusCounts(records),
       rows: records.slice(page * 25, (page + 1) * 25).map((row) => ({
@@ -125,6 +128,7 @@ async function fixtureAPI(f, url, method, body, json) {
         therapistName: row.therapistName,
         roomName: null,
         sourceStatus: row.sourceStatus,
+        countsAsVisit: fixtureVisit(row.sourceStatus),
         completionState: row.record?.completionState || "unknown",
         requestState: "unknown",
         importedAt: "2026-10-02T12:00:00.000Z",
@@ -154,6 +158,10 @@ async function fixtureAPI(f, url, method, body, json) {
     return jobAPI(f, url, method, body, json);
   // The history fixture follows the published preview route contract.
   return historyAPI(f, url, method, body, json);
+}
+function fixtureVisit(status) {
+  if (!status?.trim()) return null;
+  return !["No Show", "Cancelled"].includes(status);
 }
 function statusCounts(rows) {
   const counts = new Map();
@@ -2105,7 +2113,7 @@ try {
 
   for (const role of ["owner", "reception"]) {
     await scenario(
-      `${role} client profile pages original source statuses without implying completed visits`,
+      `${role} client profile pages source statuses with salon visit counts`,
       phone,
       async ({ page, f }) => {
         f.role = role;
@@ -2122,7 +2130,8 @@ try {
           .innerText();
         for (const status of ["No Show", "Cancelled", "Started", "Confirmed"])
           assert.ok(summary.includes(status));
-        assert.ok(summary.includes("28"));
+        assert.ok(summary.includes("28 imported records"));
+        assert.ok(summary.includes("14 imported visits"));
         assert.match(
           await page.locator("#drawer-content").innerText(),
           /0 completed visits/,
@@ -2149,6 +2158,10 @@ try {
         assert.match(
           await page.locator(".client-history").innerText(),
           /Final paginated source treatment/,
+        );
+        assert.match(
+          await page.locator("#client-history-summary").innerText(),
+          /14 imported visits/,
         );
         await noHorizontalOverflow(page);
         await page.locator("#client-history-summary").scrollIntoViewIfNeeded();
