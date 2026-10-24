@@ -128,3 +128,11 @@ Repository: https://github.com/Mbaucal/rei-booking
 Project: https://linear.app/mbaucal/project/rei-booking-42809d54d6b8
 
 Setup: https://linear.app/mbaucal/issue/MBA-71/postaviti-zaseban-github-repozitorijum-i-test-okruzenje
+
+### Existing appointment history and salon setup (0.17.0)
+
+Owner: open **Clients → Import history → Set up team & treatments**, or **Team/Treatments → Set up from history**. This reads the already confirmed archive; no CSV reupload is required. A preview alone does not import records. The review shows the imported date range, therapist names and treatment variants. Confirm missing source currency/timezone and review current menu prices before saving. Historical net sales are suggestions, not current full prices. Existing catalogue entries are linked without overwrites. Newly created therapists are inactive with no enabled working days or login accounts; activate current staff and set their schedules in Team.
+
+Reports and Dashboard default to **All data** and offer **Rei bookings** / **Imported history** filters. Imported attendance includes supplied statuses other than No Show/Canceled/Cancelled; missing status remains unknown. Hours, treatment lines and unique source visits are distinguished. Imported source net sales remain separate currency totals, without inventing full prices, requested flags or historical bonuses. Repeated appointment references with multiple service lines have unconfirmed money allocation; their net sales are excluded until evidence is available. Possible native overlaps are flagged and excluded from historical totals. Saved monthly reports use the same source rules; older snapshots remain unchanged.
+
+The setup is owner-only, review-bound, atomic and retry-safe. It creates source mappings without rewriting archive evidence, client matches, previous deduplication keys or live calendar slots. Unknown/invalid prices can be corrected or skipped. Setup reviews expire after 15 minutes and reject stale source/catalogue versions. Tests use fictional data only.

@@ -52,7 +52,15 @@ export function scheduleFilters(input = {}) {
     "2026-01-01",
   );
   return Object.fromEntries(
-    ["therapist", "service", "status", "requested", "group", "dayBasis"]
+    [
+      "therapist",
+      "service",
+      "status",
+      "requested",
+      "group",
+      "dayBasis",
+      "source",
+    ]
       .map((key) => [key, normalized[key]])
       .concat([["bonuses", input.bonuses !== false]]),
   );
@@ -69,7 +77,10 @@ export function comparisonCSV(report, bonuses = true) {
   const labels = {
     revenueCents: "Treatment revenue RSD",
     completed: "Completed massages",
-    totalMinutes: "Completed hours",
+    totalMinutes: "Included massage hours",
+    includedTreatments: "Included treatment lines",
+    historicalVisits: "Imported visits",
+    historicalMinutes: "Imported massage hours",
     totalBonusCents: "Earned bonuses RSD",
   };
   return csv([
@@ -88,13 +99,13 @@ export function comparisonCSV(report, bonuses = true) {
       .filter(([key]) => bonuses || key !== "totalBonusCents")
       .map(([key, value]) => {
         const format = (n) =>
-          key === "totalMinutes"
+          key.endsWith("Minutes")
             ? (n / 60).toFixed(4)
             : key.endsWith("Cents")
               ? (n / 100).toFixed(2)
               : n;
         return [
-          labels[key],
+          labels[key] || key,
           report.options.from,
           report.options.to,
           report.options.previousFrom,

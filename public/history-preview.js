@@ -49,6 +49,7 @@ export function renderHistoryPreview({
   isCurrent,
   back,
   openProfile,
+  openSetup,
 }) {
   let generation = 0,
     disposed = false,
@@ -109,7 +110,7 @@ export function renderHistoryPreview({
     $("history-retry").textContent = label;
   };
   root.innerHTML = `<section class="history-preview">
-    <div class="history-topline"><button class="btn" id="history-back">← Back to clients</button><span class="history-badge">Review before import</span></div>
+    <div class="history-topline"><button class="btn" id="history-back">← Back to clients</button><span class="history-badge">Review before import</span>${openSetup ? '<button class="btn" id="history-salon-open" data-history-busy>Set up team &amp; treatments</button>' : ""}</div>
     <p class="history-lead">Match clients, review the whole report, then confirm once. Large reports are processed automatically in safe steps. Imported history is kept permanently; temporary previews expire after 24 hours.</p>
     <section class="history-card" id="history-file-card"><h2>Choose appointment history</h2><p class="hint" id="history-file-note">One UTF-8 CSV · up to 50,000 rows / 25 MiB. No manual splitting.</p>
       <form id="history-file-form"><div class="fields">
@@ -126,6 +127,10 @@ export function renderHistoryPreview({
     generation++;
     back();
   };
+  if (openSetup)
+    $("history-salon-open").onclick = () => {
+      if (!busy) openSetup();
+    };
   $("history-retry").onclick = () => {
     if (!busy && retry) {
       const action = retry;
@@ -1345,7 +1350,7 @@ export function renderHistoryPreview({
       ${job.reason ? `<p class="history-job-reason" role="status">${safe(job.reason)}</p>` : ""}
       ${stopped ? `<p class="history-format-note">${number(job.created)} already imported; saved records remain in client history. ${job.requiresNewReview ? "Review the report again after correcting the changed data. Already imported rows will be skipped." : "This job has stopped. Start a new review to import remaining records; already imported rows will be skipped."}</p>` : ""}
       ${!preparing ? `<div id="history-import-counts" class="history-counts">${groups.map(([key, label]) => `<div class="history-count"><strong>${number(counts[key])}</strong><span>${label}</span></div>`).join("")}</div><section id="history-import-status-counts"><h3>${job.reviewed === job.total ? "Original statuses across the whole report" : "Original statuses in reviewed rows"}</h3>${job.reviewed < job.total ? `<p class="hint">${number(job.reviewed)} of ${number(job.total)} rows reviewed. Counts cover these reviewed rows only.</p>` : ""}${statusCountsHTML(job.statusCounts)}</section>` : ""}
-      ${job.phase === "ready" && !job.requiresNewReview ? `<p class="history-format-note">${job.canConfirm ? "Confirm once to import all new records with their original statuses. Exact duplicates will be skipped. Bookings and financial reports are unchanged. Unknown completion, timezone, currency and requested status stay unknown." : "Nothing can be imported until every blocked row is resolved. Save current client matches or correct the source, then review the full report again."}</p>${job.warnings?.length ? `<ul class="history-import-warnings">${job.warnings.map((message) => `<li>${safe(message)}</li>`).join("")}</ul>` : ""}${job.canConfirm ? `<label class="history-import-ack"><input id="history-import-ack" type="checkbox" data-history-busy><span>I have reviewed the whole report and client matches. Import the new records, skip exact duplicates and leave unknown values unknown.</span></label>` : ""}<div class="history-actions"><button class="btn primary" id="history-confirm-import" data-history-busy data-history-import-retry data-unavailable="true" disabled>Confirm full report import</button><button class="btn" id="history-job-back-matches" data-history-busy>Back to client matches</button></div><p class="history-readiness">Nothing is imported before confirmation. This review expires ${safe(expiry(job.expiresAt))}.</p>` : ""}
+      ${job.phase === "ready" && !job.requiresNewReview ? `<p class="history-format-note">${job.canConfirm ? "Confirm once to import all new records with their original statuses. Exact duplicates will be skipped. Live bookings, Rei revenue and bonuses are unchanged. Imported records appear separately in reports. Unknown completion, timezone, currency and requested status stay unknown." : "Nothing can be imported until every blocked row is resolved. Save current client matches or correct the source, then review the full report again."}</p>${job.warnings?.length ? `<ul class="history-import-warnings">${job.warnings.map((message) => `<li>${safe(message)}</li>`).join("")}</ul>` : ""}${job.canConfirm ? `<label class="history-import-ack"><input id="history-import-ack" type="checkbox" data-history-busy><span>I have reviewed the whole report and client matches. Import the new records, skip exact duplicates and leave unknown values unknown.</span></label>` : ""}<div class="history-actions"><button class="btn primary" id="history-confirm-import" data-history-busy data-history-import-retry data-unavailable="true" disabled>Confirm full report import</button><button class="btn" id="history-job-back-matches" data-history-busy>Back to client matches</button></div><p class="history-readiness">Nothing is imported before confirmation. This review expires ${safe(expiry(job.expiresAt))}.</p>` : ""}
       ${stopped ? `<div class="history-actions"><button class="btn" id="history-job-back-matches" data-history-busy>Back to client matches</button><button class="btn" id="history-job-new-file" data-history-busy>Choose another file</button></div>` : ""}
       ${!jobRunning ? renderJobRows() : ""}
       ${["reviewing", "ready", "importing"].includes(job.phase) ? `<details class="history-job-stop"><summary>Stop this job</summary><p class="hint">Stopping keeps records already imported. Use Pause to resume this same job later.</p><button class="btn" id="history-job-cancel" data-history-busy>Stop this job</button></details>` : ""}

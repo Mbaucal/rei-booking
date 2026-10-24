@@ -50,13 +50,15 @@ export function reportOptions(params, today = belgradeToday()) {
   const status = params.get("status") || "all";
   const requested = params.get("requested") || "all";
   const dayBasis = params.get("dayBasis") || "active";
+  const source = params.get("source") || "all";
   if (
     !Object.hasOwn(GROUPS, group) ||
     !["all", "booked", "confirmed", "done", "cancelled", "no_show"].includes(
       status,
     ) ||
     !["all", "yes", "no"].includes(requested) ||
-    !["active", "calendar"].includes(dayBasis)
+    !["active", "calendar"].includes(dayBasis) ||
+    !["all", "native", "history"].includes(source)
   )
     fail(400, "Choose valid report filters.");
   for (const key of ["therapist", "service"])
@@ -72,6 +74,7 @@ export function reportOptions(params, today = belgradeToday()) {
     status,
     requested,
     dayBasis,
+    source,
     therapist: params.get("therapist") || "",
     service: params.get("service") || "",
     compare: to < today,
@@ -94,7 +97,70 @@ export function bonusInput(input) {
   };
 }
 
+function historicalDetail(row) {
+  if (
+    ![
+      "id",
+      "therapist_id",
+      "therapist_name",
+      "service_id",
+      "service_name",
+      "date",
+      "visit_key",
+    ].every((key) => typeof row[key] === "string" && row[key]) ||
+    !Number.isSafeInteger(row.duration) ||
+    row.duration <= 0 ||
+    !Number.isSafeInteger(row.start_minute) ||
+    row.start_minute < 0 ||
+    row.start_minute + row.duration > 1440
+  )
+    fail(422, "Some imported history has incomplete report data.");
+  return {
+    id: row.id,
+    rowSource: "history",
+    source: row.source,
+    visitKey: row.visit_key,
+    therapistId: row.therapist_id,
+    therapist: row.therapist_name,
+    date: row.date,
+    start: row.start_minute,
+    duration: row.duration,
+    serviceId: row.service_id,
+    treatment: row.service_name,
+    room: row.room_name || null,
+    grossCents: null,
+    netCents: null,
+    createdAt: null,
+    cancelledAt: null,
+    sourceCreatedAt: row.source_created_at || null,
+    sourceCancelledAt: row.source_cancelled_at || null,
+    status: row.status,
+    sourceStatus: row.source_status,
+    completionState: row.completion_state,
+    countsAsVisit: row.counts_as_visit,
+    nativeOverlap: !!row.native_overlap,
+    included: row.counts_as_visit === true && !row.native_overlap,
+    requested:
+      row.request_state === "yes"
+        ? true
+        : row.request_state === "no"
+          ? false
+          : null,
+    requestedTherapist: null,
+    requestFulfilled: null,
+    bonusMode: null,
+    bonusRate: null,
+    bonusCents: null,
+    sourceNetSalesMinor: row.source_net_sales_minor ?? null,
+    currency: row.currency ?? null,
+    minorUnitDigits: row.minor_unit_digits ?? null,
+    moneyBasis: row.money_basis || "unknown",
+    moneyIssue: row.money_issue || null,
+    sourceTimeZone: row.source_time_zone || null,
+  };
+}
 function detail(row) {
+  if (row.report_source === "history") return historicalDetail(row);
   const required = [
     "id",
     "therapist_id",
@@ -146,6 +212,8 @@ function detail(row) {
     );
   return {
     id: row.id,
+    rowSource: "native",
+    included: row.status === "done",
     therapistId: row.therapist_id,
     therapist: row.therapist_name,
     date: row.date,
@@ -169,7 +237,7 @@ function detail(row) {
 function allocateBonuses(records) {
   const buckets = new Map();
   for (const r of records) {
-    if (r.status !== "done") continue;
+    if (r.rowSource === "history" || r.status !== "done") continue;
     const key = JSON.stringify([r.therapistId, r.requestFulfilled]);
     if (!buckets.has(key)) buckets.set(key, []);
     const n =
@@ -219,15 +287,74 @@ function aggregate(records, options, parts = {}) {
     revenueCents: 0,
     regularBonusCents: 0,
     requestedBonusCents: 0,
+    includedTreatments: 0,
+    historicalRows: 0,
+    historicalTreatments: 0,
+    historicalVisits: 0,
+    historicalMinutes: 0,
+    nativeMinutes: 0,
+    unknownRequested: 0,
+    unknownCompletion: 0,
+    unknownStatus: 0,
+    unavailableMoneyRows: 0,
+    unavailableFullPriceRows: 0,
+    unavailableBonusRows: 0,
+    nativeOverlapRows: 0,
+    sourceNetSales: [],
   };
-  const dates = new Set();
+  const dates = new Set(),
+    visits = new Set(),
+    amounts = new Map();
   for (const r of records) {
+    if (r.rowSource === "history") {
+      out.historicalRows++;
+      if (r.requested === true) out.requestedCount++;
+      if (r.requested === null) out.unknownRequested++;
+      if (r.completionState === "unknown") out.unknownCompletion++;
+      if (r.countsAsVisit == null) out.unknownStatus++;
+      if (r.status === "cancelled") out.cancelled++;
+      if (r.status === "no_show") out.noShow++;
+      if (r.nativeOverlap) out.nativeOverlapRows++;
+      if (!r.included) continue;
+      out.includedTreatments++;
+      out.historicalTreatments++;
+      out.historicalMinutes += r.duration;
+      out.totalMinutes += r.duration;
+      out.unavailableFullPriceRows++;
+      out.unavailableBonusRows++;
+      dates.add(r.date);
+      visits.add(r.visitKey);
+      if (
+        r.sourceNetSalesMinor == null ||
+        !r.currency ||
+        r.minorUnitDigits == null
+      )
+        out.unavailableMoneyRows++;
+      else {
+        const key = JSON.stringify([r.currency, r.minorUnitDigits]);
+        if (!amounts.has(key))
+          amounts.set(key, {
+            currency: r.currency,
+            minorUnitDigits: r.minorUnitDigits,
+            amountMinor: 0,
+            rows: 0,
+          });
+        const bucket = amounts.get(key);
+        bucket.amountMinor += r.sourceNetSalesMinor;
+        bucket.rows++;
+        if (!Number.isSafeInteger(bucket.amountMinor))
+          fail(422, "Historical source amounts exceed the report limit.");
+      }
+      continue;
+    }
     if (r.requested) out.requestedCount++;
     if (r.status === "cancelled") out.cancelled++;
     else if (r.status === "no_show") out.noShow++;
     else if (r.status !== "done") out.pending++;
     if (r.status !== "done") continue;
     out.completed++;
+    out.includedTreatments++;
+    out.nativeMinutes += r.duration;
     dates.add(r.date);
     out.totalMinutes += r.duration;
     out.revenueCents += r.netCents;
@@ -235,6 +362,12 @@ function aggregate(records, options, parts = {}) {
     out[prefix + "Minutes"] += r.duration;
     out[prefix + "BonusCents"] += r.bonusCents;
   }
+  out.historicalVisits = visits.size;
+  out.sourceNetSales = [...amounts.values()].sort(
+    (a, b) =>
+      a.currency.localeCompare(b.currency) ||
+      a.minorUnitDigits - b.minorUnitDigits,
+  );
   out.dayCount = options.dayBasis === "calendar" ? days(from, to) : dates.size;
   out.averageMinutesPerDay = out.dayCount ? out.totalMinutes / out.dayCount : 0;
   out.averageRevenueCents = out.completed
@@ -243,21 +376,30 @@ function aggregate(records, options, parts = {}) {
   out.totalBonusCents = out.regularBonusCents + out.requestedBonusCents;
   return { ...out, from, to };
 }
+export function reportRowMatches(r, options) {
+  return (
+    (!options.source ||
+      options.source === "all" ||
+      (r.report_source === "history" ? "history" : "native") ===
+        options.source) &&
+    r.date >= options.from &&
+    r.date <= options.to &&
+    (!options.therapist || r.therapist_id === options.therapist) &&
+    (!options.service || r.service_id === options.service) &&
+    (options.status === "all" || r.status === options.status) &&
+    (options.requested === "all" ||
+      (r.report_source === "history"
+        ? r.request_state === options.requested
+        : !!r.requested_therapist_id === (options.requested === "yes")))
+  );
+}
 export function buildReport(rows, options, therapists = []) {
   const seen = new Set();
   const records = rows
     .filter((r) => {
       if (seen.has(r.id)) fail(422, "Duplicate appointments in report data.");
       seen.add(r.id);
-      return (
-        r.date >= options.from &&
-        r.date <= options.to &&
-        (!options.therapist || r.therapist_id === options.therapist) &&
-        (!options.service || r.service_id === options.service) &&
-        (options.status === "all" || r.status === options.status) &&
-        (options.requested === "all" ||
-          !!r.requested_therapist_id === (options.requested === "yes"))
-      );
+      return reportRowMatches(r, options);
     })
     .map(detail)
     .sort(
@@ -296,9 +438,11 @@ export function buildReport(rows, options, therapists = []) {
       });
     groups.get(key).records.push(r);
   }
-  if (options.group === "therapist")
+  if (options.group === "therapist" && options.source !== "history")
     for (const t of therapists.filter(
-      (t) => !options.therapist || t.id === options.therapist,
+      (t) =>
+        (!options.therapist || t.id === options.therapist) &&
+        (options.source !== "native" || !t.id.startsWith("history:")),
     )) {
       const parts = { therapist: t.id },
         key = JSON.stringify(parts);
@@ -320,8 +464,17 @@ export function buildReport(rows, options, therapists = []) {
 }
 export function comparison(current, previous) {
   return Object.fromEntries(
-    ["revenueCents", "completed", "totalMinutes", "totalBonusCents"].map(
-      (key) => {
+    [
+      "revenueCents",
+      "completed",
+      "totalMinutes",
+      "totalBonusCents",
+      "includedTreatments",
+      "historicalVisits",
+      "historicalMinutes",
+    ]
+      .filter((key) => current[key] != null && previous[key] != null)
+      .map((key) => {
         const value = current[key],
           before = previous[key],
           difference = value - before;
@@ -338,8 +491,7 @@ export function comparison(current, previous) {
                 : null,
           },
         ];
-      },
-    ),
+      }),
   );
 }
 const csvCell = (value) => {
@@ -348,7 +500,16 @@ const csvCell = (value) => {
     '"' + (/^[\s]*[=+@-]/.test(s) ? "'" + s : s).replaceAll('"', '""') + '"'
   );
 };
-const decimal = (value) => (value / 100).toFixed(2);
+const decimal = (value) => (value == null ? "" : (value / 100).toFixed(2));
+const yesNo = (value) => (value == null ? "Unknown" : value ? "Yes" : "No");
+const sourceAmount = (value, digits) =>
+  value == null || digits == null ? "" : (value / 10 ** digits).toFixed(digits);
+const sourceAmounts = (r) =>
+  (r.sourceNetSales || [])
+    .map(
+      (a) => `${a.currency} ${sourceAmount(a.amountMinor, a.minorUnitDigits)}`,
+    )
+    .join("; ");
 const hours = (value) => (value / 60).toFixed(4);
 const clock = (m) =>
   `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -369,23 +530,35 @@ export function reportCSV(report, view = "summary", bonuses = true) {
   if (!["summary", "details"].includes(view))
     fail(400, "Choose Summary or Appointment list.");
   let header, rows;
+  const combined =
+    report.options.source === "history" || report.totals.historicalRows > 0;
   if (view === "details") {
     header = [
       "Appointment ID",
       "Therapist",
-      "Treatment date (Europe/Belgrade)",
+      "Treatment date (Rei: Europe/Belgrade; history: source date)",
       "Start",
       "Treatment",
       "Duration minutes",
       "Full price RSD",
       "After discount RSD",
-      "Booked on (Europe/Belgrade)",
+      "Booked on (Rei: Europe/Belgrade; history: original source)",
       "Status",
       "Cancelled",
-      "Cancelled on (Europe/Belgrade)",
+      "Cancelled on (Rei: Europe/Belgrade; history: original source)",
       "Requested",
       "Requested therapist",
       "Request fulfilled",
+      "Data source",
+      "Source status",
+      "Source completion",
+      "Included treatment",
+      "Source net sales",
+      "Source currency",
+      "Source money basis",
+      "Source money note",
+      "Source time zone",
+      "Excluded: overlapping Rei booking",
     ];
     if (bonuses)
       header.push(
@@ -402,13 +575,27 @@ export function reportCSV(report, view = "summary", bonuses = true) {
       r.duration,
       decimal(r.grossCents),
       decimal(r.netCents),
-      localTime(r.createdAt),
+      r.rowSource === "history"
+        ? r.sourceCreatedAt?.raw || ""
+        : localTime(r.createdAt),
       r.status === "done" ? "Completed" : r.status,
       r.status === "cancelled" ? "Yes" : "No",
-      localTime(r.cancelledAt),
-      r.requested ? "Yes" : "No",
+      r.rowSource === "history"
+        ? r.sourceCancelledAt?.raw || ""
+        : localTime(r.cancelledAt),
+      yesNo(r.requested),
       r.requestedTherapist,
-      r.requestFulfilled ? "Yes" : "No",
+      yesNo(r.requestFulfilled),
+      r.rowSource === "history" ? "Imported history" : "Rei booking",
+      r.sourceStatus,
+      r.completionState,
+      yesNo(r.included ?? r.status === "done"),
+      sourceAmount(r.sourceNetSalesMinor, r.minorUnitDigits),
+      r.currency,
+      r.moneyBasis,
+      r.moneyIssue,
+      r.sourceTimeZone,
+      r.nativeOverlap ? "Yes" : "No",
       ...(bonuses
         ? [r.bonusMode, decimal(r.bonusRate), decimal(r.bonusCents)]
         : []),
@@ -419,25 +606,34 @@ export function reportCSV(report, view = "summary", bonuses = true) {
       "From",
       "To",
       "Appointments",
-      "Completed",
+      combined ? "Completed Rei bookings" : "Completed",
       "Cancelled",
       "No-show",
-      "Pending",
+      combined ? "Pending Rei bookings" : "Pending",
       "Requested bookings",
       "Total hours",
-      "Regular hours",
-      "Fulfilled requested hours",
-      "Treatment revenue RSD",
-      "Average revenue per completed massage RSD",
+      combined ? "Rei regular hours" : "Regular hours",
+      combined ? "Rei fulfilled requested hours" : "Fulfilled requested hours",
+      combined ? "Rei treatment revenue RSD" : "Treatment revenue RSD",
+      combined
+        ? "Average revenue per completed Rei booking RSD"
+        : "Average revenue per completed massage RSD",
       "Day basis",
       "Days",
       "Average hours per day",
+      "Included treatments",
+      "Imported treatments",
+      "Imported visits (unique in this group)",
+      "Imported hours",
+      "Imported source net sales by currency",
+      "Imported amounts unavailable",
+      "Overlapping history excluded",
     ];
     if (bonuses)
       header.push(
-        "Regular bonus RSD",
-        "Requested bonus RSD",
-        "Total bonus RSD",
+        combined ? "Rei regular bonus RSD" : "Regular bonus RSD",
+        combined ? "Rei requested bonus RSD" : "Requested bonus RSD",
+        combined ? "Rei total bonus RSD" : "Total bonus RSD",
       );
     rows = [...report.groups, { ...report.totals, label: "TOTAL" }].map((r) => [
       r.label,
@@ -457,6 +653,13 @@ export function reportCSV(report, view = "summary", bonuses = true) {
       report.options.dayBasis,
       r.dayCount,
       hours(r.averageMinutesPerDay),
+      r.includedTreatments ?? r.completed,
+      r.historicalTreatments ?? 0,
+      r.historicalVisits ?? 0,
+      hours(r.historicalMinutes ?? 0),
+      sourceAmounts(r),
+      r.unavailableMoneyRows ?? 0,
+      r.nativeOverlapRows ?? 0,
       ...(bonuses
         ? [
             decimal(r.regularBonusCents),
