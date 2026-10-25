@@ -532,7 +532,6 @@ try {
       await page.mouse.move(live.x, live.y);
       await page.mouse.down();
       await page.mouse.move(live.x, live.y - 110, { steps: 8 });
-      await page.mouse.up();
       await page
         .locator("#calendar-reschedule-bar")
         .waitFor({ state: "visible" });
@@ -541,14 +540,35 @@ try {
         true,
         "Archived history does not occupy a live booking slot",
       );
-      await page.locator("#calendar-reschedule-save").click();
+      assert.deepEqual(f.writes, [], "A mouse drag is not saved before drop");
+      // Desktop drops commit automatically; the Save button belongs to the
+      // active draft (and the touch confirmation flow), not a second click.
+      const saved = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          new URL(response.url()).pathname === "/api/appointments/native",
+      );
+      await page.mouse.up();
+      assert.equal((await saved).status(), 200);
       await page
         .locator("#calendar-reschedule-bar")
         .waitFor({ state: "hidden" });
+      await page.waitForFunction(() =>
+        document
+          .querySelector(
+            '[data-kind="therapist"] [data-appointment="native"] .event-time',
+          )
+          ?.textContent.includes("10:35–11:35"),
+      );
       assert.equal(f.writes.length, 1);
+      assert.equal(f.writes[0].method, "PUT");
       assert.equal(f.writes[0].path, "/api/appointments/native");
       assert.equal(f.writes[0].body.start, 635);
       assert.equal(f.history[0].start, 600);
+      assert.match(
+        await card(page, "history:linked").locator(".event-time").textContent(),
+        /10:00–11:00/,
+      );
     },
   );
   await scenario(
