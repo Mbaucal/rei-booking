@@ -50,7 +50,7 @@ const severe = new Set([
   "completion_conflict",
 ]);
 const privateWarning =
-  "Historical source evidence only. Unknown timezone, currency, request and completion stay unknown. No live booking, payment, report or bonus is created.";
+  "Historical source evidence only. Unknown timezone, currency, request and completion stay unknown. No live booking, payment or bonus is created.";
 const statusCounts = (rows) => {
   const counts = new Map();
   for (const r of rows)
@@ -68,10 +68,17 @@ function input(body, confirm = false) {
     "version",
     "rows",
     "requestId",
-    ...(confirm ? ["confirmationToken", "acknowledgeReview"] : []),
+    "allowUnlinkedClients",
+    ...(confirm
+      ? ["confirmationToken", "acknowledgeReview", "acknowledgeUnlinkedClients"]
+      : []),
   ];
   if (
     Object.keys(body).some((k) => !allowed.includes(k)) ||
+    (body.allowUnlinkedClients !== undefined &&
+      typeof body.allowUnlinkedClients !== "boolean") ||
+    (body.acknowledgeUnlinkedClients !== undefined &&
+      typeof body.acknowledgeUnlinkedClients !== "boolean") ||
     typeof body.previewId !== "string" ||
     !/^[a-f0-9-]{36}$/.test(body.previewId) ||
     !Number.isSafeInteger(body.version) ||
@@ -103,6 +110,9 @@ function input(body, confirm = false) {
     version: body.version,
     rows: body.rows,
     requestId: body.requestId,
+    ...(body.allowUnlinkedClients === undefined
+      ? {}
+      : { allowUnlinkedClients: body.allowUnlinkedClients }),
   };
 }
 function evidence(record) {
@@ -224,7 +234,7 @@ async function review(db, user, body) {
   const grouped = (
     await stmt(
       db,
-      `SELECT trim(json_extract(record_json,'$.sourceAppointmentRef')) AS ref,${mode === "service-line" ? "COALESCE(trim(json_extract(record_json,'$.sourceServiceLineRef')),'')" : "''"} AS line,MIN(payload_digest) AS min_digest,MAX(payload_digest) AS max_digest,MIN(draft_client_id) AS min_client,MAX(draft_client_id) AS max_client,COUNT(*) AS n FROM history_preview_rows WHERE preview_id=? AND trim(json_extract(record_json,'$.sourceAppointmentRef')) IN(SELECT value FROM json_each(?)) GROUP BY ref,line LIMIT 2001`,
+      `SELECT trim(json_extract(record_json,'$.sourceAppointmentRef')) AS ref,${mode === "service-line" ? "COALESCE(trim(json_extract(record_json,'$.sourceServiceLineRef')),'')" : "''"} AS line,MIN(payload_digest) AS min_digest,MAX(payload_digest) AS max_digest,MIN(draft_client_id) AS min_client,MAX(draft_client_id) AS max_client,COUNT(DISTINCT COALESCE(draft_client_id,'')) AS client_choices,COUNT(*) AS n FROM history_preview_rows WHERE preview_id=? AND trim(json_extract(record_json,'$.sourceAppointmentRef')) IN(SELECT value FROM json_each(?)) GROUP BY ref,line LIMIT 2001`,
       p.id,
       JSON.stringify(refs),
     ).all()
@@ -281,22 +291,41 @@ async function review(db, user, body) {
         "Service-line imports require an explicit source service-line ID.",
       );
     if (
-      !stored.selected_client_id ||
-      stored.client_version !== stored.draft_client_version
-    )
+      stored.draft_client_id !== null ||
+      stored.draft_client_version !== null
+    ) {
+      if (
+        !stored.selected_client_id ||
+        stored.client_version !== stored.draft_client_version
+      )
+        add(
+          entry,
+          "client_choice_stale",
+          "clientId",
+          "The saved client choice changed. Save a current, explicit client draft choice before importing.",
+        );
+    } else if (base.allowUnlinkedClients === true) {
+      add(
+        entry,
+        "client_unlinked",
+        "clientId",
+        "This history will be saved without a client profile link. The original source identity is preserved; client-specific native overlaps cannot be checked until it is linked.",
+        "review",
+      );
+    } else {
       add(
         entry,
         "client_choice_stale",
         "clientId",
-        "Save a current, explicit client draft choice for this source row.",
+        "Save a current, explicit client draft choice or explicitly choose to import without client links.",
       );
+    }
     const groups = grouped.filter((g) => g.ref === ref);
     if (
       groups.some(
         (g) =>
           (mode === "appointment" || g.line === line) &&
-          (g.min_digest !== g.max_digest ||
-            (g.min_client && g.max_client && g.min_client !== g.max_client)),
+          (g.min_digest !== g.max_digest || g.client_choices > 1),
       ) ||
       (mode === "service-line" && groups.some((g) => !g.line))
     )
@@ -370,9 +399,11 @@ async function review(db, user, body) {
       add(entry, issue.code, issue.field, issue.message);
     if (
       resolved.identity.state === "conflict" ||
-      (resolved.identity.state === "linked" &&
+      (entry.clientId !== null &&
+        resolved.identity.state === "linked" &&
         resolved.identity.clientId !== entry.clientId) ||
-      (resolved.identity.method === "contact" &&
+      (entry.clientId !== null &&
+        resolved.identity.method === "contact" &&
         resolved.identity.candidates.length &&
         !resolved.identity.candidates.includes(entry.clientId)) ||
       (chosen &&
@@ -399,7 +430,7 @@ async function review(db, user, body) {
     ),
     stmt(
       db,
-      `SELECT a.id,a.ref_hash,a.line_key,a.client_id,a.evidence_hash FROM json_each(?) k CROSS JOIN history_archive a ON a.source=? AND a.ref_hash=json_extract(k.value,'$.ref') AND a.line_key=json_extract(k.value,'$.line')`,
+      `SELECT a.id,a.ref_hash,a.line_key,a.client_id,a.evidence_hash FROM json_each(?) k CROSS JOIN history_archive_effective a ON a.source=? AND a.ref_hash=json_extract(k.value,'$.ref') AND a.line_key=json_extract(k.value,'$.line')`,
       keys,
       source,
     ),
@@ -456,13 +487,17 @@ async function review(db, user, body) {
     if (previous) {
       if (
         previous.evidence_hash !== entry.evidenceHash ||
-        previous.client_id !== entry.clientId
+        (entry.clientId !== null && previous.client_id !== entry.clientId)
       )
         add(
           entry,
           "archive_conflict",
           "sourceAppointmentRef",
-          "This source key is already represented with different evidence or a different client. Nothing will be overwritten.",
+          previous.evidence_hash === entry.evidenceHash &&
+            previous.client_id === null &&
+            entry.clientId !== null
+            ? "This source row is already saved without a client link. Link the saved history separately; importing again cannot change its identity."
+            : "This source key is already represented with different evidence or a different client. Nothing will be overwritten.",
         );
       else if (entry.disposition !== "blocked") {
         entry.disposition = "duplicate";
@@ -478,6 +513,8 @@ async function review(db, user, body) {
   const rows = prepared.map((e) => ({
     row: e.row,
     client: e.client,
+    clientLinkState: e.clientId === null ? "unlinked" : "linked",
+    sourceClientLabel: e.record.sourceClientLabel,
     sourceStatus: e.record.sourceStatus,
     date: e.record.scheduledLocalDate,
     start: e.record.startMinute,
@@ -512,6 +549,12 @@ async function review(db, user, body) {
   const counts = {
     selected: rows.length,
     importable: rows.filter((e) => e.disposition === "import").length,
+    linked: rows.filter(
+      (e) => e.disposition === "import" && e.clientLinkState === "linked",
+    ).length,
+    unlinked: rows.filter(
+      (e) => e.disposition === "import" && e.clientLinkState === "unlinked",
+    ).length,
     duplicates: rows.filter((e) => e.disposition === "duplicate").length,
     blocked: rows.filter((e) => e.disposition === "blocked").length,
     unmatched: rows.filter((e) => e.blockReason === "unmatched").length,
@@ -530,6 +573,7 @@ async function review(db, user, body) {
     version: p.version,
     requestId: base.requestId,
     canConfirm: counts.blocked === 0,
+    allowUnlinkedClients: base.allowUnlinkedClients === true,
     counts,
     statusCounts: statusCounts(rows),
     rows,
@@ -625,6 +669,11 @@ async function confirm(db, user, body) {
     plan = JSON.parse(r.plan_json);
   if (!response.canConfirm)
     fail(409, "Resolve every blocked source row before confirming this batch.");
+  if (response.counts.unlinked > 0 && body.acknowledgeUnlinkedClients !== true)
+    fail(
+      400,
+      "Explicitly acknowledge saving the reviewed history without client profile links.",
+    );
   await preview(db, user, base);
   const importId = randomUUID(),
     commitToken = randomUUID(),
@@ -633,6 +682,9 @@ async function confirm(db, user, body) {
     importId,
     created: response.counts.importable,
     duplicates: response.counts.duplicates,
+    linked: response.counts.linked ?? response.counts.importable,
+    unlinked: response.counts.unlinked ?? 0,
+    allowUnlinkedClients: response.allowUnlinkedClients === true,
     statusCounts: response.statusCounts,
     rows: plan.map((e) => ({
       row: e.row,
@@ -645,7 +697,7 @@ async function confirm(db, user, body) {
   await db.batch([
     stmt(
       db,
-      `INSERT OR IGNORE INTO history_imports(id,owner_id,request_id,confirm_hash,commit_token,source,preview_id,preview_version,receipt_json,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM history_previews WHERE id=? AND owner_id=? AND version=? AND phase='ready' AND expires_at>? AND client_revision=${clientClock}) AND ${clientClock}=? AND ${archiveClock}=? AND EXISTS(SELECT 1 FROM history_import_reviews WHERE id=? AND owner_id=? AND expires_at>?) AND NOT EXISTS(SELECT 1 FROM json_each(?) p LEFT JOIN clients c ON c.id=json_extract(p.value,'$.clientId') WHERE c.id IS NULL OR c.version!=json_extract(p.value,'$.clientVersion')) AND NOT EXISTS(SELECT 1 FROM history_preview_rows x JOIN appointments a ON a.client_id=x.draft_client_id AND a.date=json_extract(x.record_json,'$.scheduledLocalDate') AND a.start_minute<json_extract(x.record_json,'$.startMinute')+json_extract(x.record_json,'$.durationMinutes') AND json_extract(x.record_json,'$.startMinute')<a.start_minute+a.duration WHERE x.preview_id=? AND x.row_num IN(SELECT value FROM json_each(?)))`,
+      `INSERT OR IGNORE INTO history_imports(id,owner_id,request_id,confirm_hash,commit_token,source,preview_id,preview_version,receipt_json,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM history_previews WHERE id=? AND owner_id=? AND version=? AND phase='ready' AND expires_at>? AND client_revision=${clientClock}) AND ${clientClock}=? AND ${archiveClock}=? AND EXISTS(SELECT 1 FROM history_import_reviews WHERE id=? AND owner_id=? AND expires_at>?) AND NOT EXISTS(SELECT 1 FROM json_each(?) p LEFT JOIN clients c ON c.id=json_extract(p.value,'$.clientId') WHERE json_extract(p.value,'$.clientId') IS NOT NULL AND (c.id IS NULL OR c.version!=json_extract(p.value,'$.clientVersion'))) AND NOT EXISTS(SELECT 1 FROM history_preview_rows x JOIN appointments a ON a.client_id=x.draft_client_id AND a.date=json_extract(x.record_json,'$.scheduledLocalDate') AND a.start_minute<json_extract(x.record_json,'$.startMinute')+json_extract(x.record_json,'$.durationMinutes') AND json_extract(x.record_json,'$.startMinute')<a.start_minute+a.duration WHERE x.preview_id=? AND x.row_num IN(SELECT value FROM json_each(?)))`,
       importId,
       user.id,
       body.requestId,
@@ -726,7 +778,7 @@ async function clientHistory(db, user, clientId, url) {
   if (user.role === "owner") {
     const size = await stmt(
       db,
-      "SELECT COALESCE(SUM(n),0) AS bytes FROM (SELECT length(CAST(record_json AS BLOB)) AS n FROM history_archive WHERE client_id=? ORDER BY date DESC,start_minute DESC,id LIMIT 25 OFFSET ?)",
+      "SELECT COALESCE(SUM(n),0) AS bytes FROM (SELECT length(CAST(record_json AS BLOB)) AS n FROM history_archive_effective WHERE client_id=? ORDER BY date DESC,start_minute DESC,id LIMIT 25 OFFSET ?)",
       clientId,
       page * 25,
     ).first();
@@ -739,17 +791,17 @@ async function clientHistory(db, user, clientId, url) {
   const [count, groups, data, clock] = await db.batch([
     stmt(
       db,
-      "SELECT COUNT(*) AS total FROM history_archive WHERE client_id=?",
+      "SELECT COUNT(*) AS total FROM history_archive_effective WHERE client_id=?",
       clientId,
     ),
     stmt(
       db,
-      "SELECT source_status AS status,COUNT(*) AS count FROM history_archive WHERE client_id=? GROUP BY source_status ORDER BY source_status LIMIT 201",
+      "SELECT source_status AS status,COUNT(*) AS count FROM history_archive_effective WHERE client_id=? GROUP BY source_status ORDER BY source_status LIMIT 201",
       clientId,
     ),
     stmt(
       db,
-      `SELECT ${user.role === "owner" ? "*" : "id,date,start_minute,duration,source_status,completion_state,imported_at,json_extract(record_json,'$.sourceServiceLabel') AS service_name,json_extract(record_json,'$.sourceTherapistLabel') AS therapist_name,json_extract(record_json,'$.sourceRoomLabel') AS room_name,json_extract(record_json,'$.requestState') AS request_state"} FROM history_archive WHERE client_id=? ORDER BY date DESC,start_minute DESC,id LIMIT 25 OFFSET ?`,
+      `SELECT ${user.role === "owner" ? "*" : "id,date,start_minute,duration,source_status,completion_state,imported_at,json_extract(record_json,'$.sourceServiceLabel') AS service_name,json_extract(record_json,'$.sourceTherapistLabel') AS therapist_name,json_extract(record_json,'$.sourceRoomLabel') AS room_name,json_extract(record_json,'$.requestState') AS request_state"} FROM history_archive_effective WHERE client_id=? ORDER BY date DESC,start_minute DESC,id LIMIT 25 OFFSET ?`,
       clientId,
       page * 25,
     ),
@@ -769,7 +821,7 @@ async function clientHistory(db, user, clientId, url) {
   const visits = await stmt(
     db,
     `SELECT COUNT(*) AS total, ${archiveClock} AS revision FROM (
-      SELECT source,ref_hash FROM history_archive
+      SELECT source,ref_hash FROM history_archive_effective
       WHERE client_id=? AND source_status IN (SELECT value FROM json_each(?))
       GROUP BY source,ref_hash
     )`,

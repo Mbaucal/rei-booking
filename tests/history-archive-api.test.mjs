@@ -1032,4 +1032,98 @@ test("Historical archive Worker + D1: explicit confirmation, durable deduplicati
       );
     },
   );
+  await t.test(
+    "small import requires explicit unlinked policy and acknowledgement without creating clients",
+    async () => {
+      const p = await preview([row("small-unlinked")], {}, false);
+      const body = {
+        previewId: p.id,
+        version: p.version,
+        rows: [2],
+        requestId: randomUUID(),
+        allowUnlinkedClients: true,
+      };
+      const r = await expect("/history/imports/review", "POST", body);
+      assert.equal(r.canConfirm, true);
+      assert.equal(r.counts.unlinked, 1);
+      assert.equal(r.counts.linked, 0);
+      await expect(
+        "/history/imports/review",
+        "POST",
+        { ...body, allowUnlinkedClients: false },
+        409,
+      );
+      const confirmBody = {
+        ...body,
+        confirmationToken: r.confirmationToken,
+        acknowledgeReview: true,
+      };
+      await expect("/history/imports/confirm", "POST", confirmBody, 400);
+      const before = await count("clients");
+      const receipt = await expect(
+        "/history/imports/confirm",
+        "POST",
+        { ...confirmBody, acknowledgeUnlinkedClients: true },
+        201,
+      );
+      assert.equal(receipt.unlinked, 1);
+      assert.equal(receipt.created, 1);
+      assert.equal(await count("clients"), before);
+      const savedRow = await sql(
+        "SELECT client_id,record_json FROM history_archive WHERE id=?",
+        receipt.rows[0].id,
+      ).first();
+      assert.equal(savedRow.client_id, null);
+      assert.equal(
+        JSON.parse(savedRow.record_json).sourceClientLabel,
+        "Synthetic One",
+      );
+      await sql("DELETE FROM history_previews WHERE id=?", p.id).run();
+      assert.equal(
+        (
+          await expect("/history/imports/confirm", "POST", {
+            ...confirmBody,
+            acknowledgeUnlinkedClients: true,
+          })
+        ).repeated,
+        true,
+      );
+      const profileBefore = await expect("/clients/c1/history", "GET");
+      await sql(
+        "INSERT INTO history_archive_client_links(archive_id,client_id,created_by,created_at) VALUES(?,?,?,?)",
+        receipt.rows[0].id,
+        "c1",
+        "owner",
+        ts,
+      ).run();
+      const profileAfter = await expect("/clients/c1/history", "GET");
+      assert.equal(profileAfter.total, profileBefore.total + 1);
+      assert.equal(profileAfter.visitCount, profileBefore.visitCount + 1);
+      const receptionProfile = await expect(
+        "/clients/c1/history",
+        "GET",
+        undefined,
+        200,
+        "reception",
+      );
+      assert.equal(receptionProfile.total, profileAfter.total);
+      assert.ok(
+        receptionProfile.rows.every(
+          (r) =>
+            !Object.hasOwn(r, "record") &&
+            !Object.hasOwn(r, "provenance") &&
+            !Object.hasOwn(r, "sourceNetSalesMinor"),
+        ),
+      );
+      const afterLink = await sql(
+        "SELECT client_id,record_json FROM history_archive WHERE id=?",
+        receipt.rows[0].id,
+      ).first();
+      assert.deepEqual(afterLink, savedRow);
+      const repeatedPreview = await preview([row("small-unlinked")]);
+      const repeatedReview = await review(repeatedPreview);
+      assert.equal(repeatedReview.counts.duplicates, 1);
+      assert.equal((await confirm(repeatedReview)).created, 0);
+    },
+  );
 });

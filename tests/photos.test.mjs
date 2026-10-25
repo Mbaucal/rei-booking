@@ -35,6 +35,8 @@ test("Private profile photos: processing, transactional storage and role boundar
       "worker.mjs",
       "history-preview.mjs",
       "history-salon.mjs",
+      "history-linking.mjs",
+      "history-identity-schema.mjs",
       "history-salon-schema.mjs",
       "history-reports.mjs",
       "history-archive.mjs",

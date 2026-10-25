@@ -154,6 +154,16 @@ async function fixtureAPI(f, url, method, body, json) {
       ? json({ client: found, appointments: [] })
       : json({ error: "Unknown fictional client" }, 404);
   }
+  if (url.pathname === "/api/history/salon/preview" && method === "GET") {
+    assert.equal(f.role, "owner");
+    return json({
+      summary: { rows: f.archive.length, from: "2026-01-01", to: "2026-01-31" },
+      services: [],
+      therapists: [],
+      catalogue: { services: [], therapists: [] },
+      warnings: [],
+    });
+  }
   if (url.pathname.startsWith("/api/history/jobs"))
     return jobAPI(f, url, method, body, json);
   // The history fixture follows the published preview route contract.
@@ -171,7 +181,7 @@ function statusCounts(rows) {
   }
   return [...counts].map(([status, count]) => ({ status, count }));
 }
-function archiveRow(f, preview, number) {
+function archiveRow(f, preview, number, allowUnlinkedClients = false) {
   const entry = preview.plan.rows.find((r) => r.record.row === number);
   assert.ok(entry, "Review selects a real source row");
   const record = entry.record;
@@ -184,7 +194,7 @@ function archiveRow(f, preview, number) {
   });
   const existing = f.archive.find((r) => r.key === key);
   const issues = [];
-  if (!client)
+  if (!client && !allowUnlinkedClients)
     issues.push({
       code: "client_unresolved",
       message: "Choose a current client explicitly.",
@@ -208,6 +218,8 @@ function archiveRow(f, preview, number) {
   return {
     row: number,
     client: client ? structuredClone(client) : null,
+    clientLinkState: client ? "linked" : "unlinked",
+    sourceClientLabel: record.sourceClientLabel,
     sourceStatus: record.sourceStatus,
     date: record.scheduledLocalDate,
     start: record.startMinute,
@@ -236,7 +248,7 @@ function archiveCommit(f, entry) {
   f.archive.push({
     ...evidence,
     id: "fictional-archive-" + (f.archive.length + 1),
-    clientId: entry.client.id,
+    clientId: entry.client?.id ?? null,
     sourceStatus: entry.sourceStatus,
     date: entry.date,
     start: entry.start,
@@ -252,10 +264,15 @@ async function jobAPI(f, url, method, body, json) {
     return json({ jobs: [...f.jobs.values()].map(jobMetadata) });
   if (url.pathname === prefix && method === "POST") {
     assert.deepEqual(Object.keys(body).sort(), [
+      ...(Object.hasOwn(body, "allowUnlinkedClients")
+        ? ["allowUnlinkedClients"]
+        : []),
       "previewId",
       "requestId",
       "version",
     ]);
+    if (Object.hasOwn(body, "allowUnlinkedClients"))
+      assert.equal(typeof body.allowUnlinkedClients, "boolean");
     assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
     const prior = f.jobStarts.get(body.requestId);
     if (prior) {
@@ -280,6 +297,7 @@ async function jobAPI(f, url, method, body, json) {
     const j = {
       id: "fictional-job-" + (f.jobs.size + 1),
       previewId: preview.id,
+      allowUnlinkedClients: body.allowUnlinkedClients === true,
       version: 1,
       source: preview.config.source,
       phase: "reviewing",
@@ -291,6 +309,8 @@ async function jobAPI(f, url, method, body, json) {
       counts: {
         selected: preview.plan.rows.length,
         importable: 0,
+        linked: 0,
+        unlinked: 0,
         duplicates: 0,
         blocked: 0,
         unmatched: 0,
@@ -368,6 +388,8 @@ async function jobAPI(f, url, method, body, json) {
     assert.equal(j.canConfirm, true);
     assert.equal(body.confirmationToken, j.confirmationToken);
     assert.equal(body.acknowledgeReview, true);
+    if (j.counts.unlinked > 0)
+      assert.equal(body.acknowledgeUnlinkedClients, true);
     if (f.rejectConfirm) {
       f.rejectConfirm = false;
       return json(
@@ -407,7 +429,9 @@ async function jobAPI(f, url, method, body, json) {
       const numbers = j.previewSnapshot.plan.rows
         .slice(j.reviewed, j.reviewed + 50)
         .map((r) => r.record.row);
-      const rows = numbers.map((n) => archiveRow(f, j.previewSnapshot, n));
+      const rows = numbers.map((n) =>
+        archiveRow(f, j.previewSnapshot, n, j.allowUnlinkedClients),
+      );
       for (const r of rows) {
         if (r.disposition !== "import") continue;
         const prior = [
@@ -425,8 +449,10 @@ async function jobAPI(f, url, method, body, json) {
       j.rows.push(...rows);
       j.reviewed += rows.length;
       for (const r of rows) {
-        if (r.disposition === "import") j.counts.importable++;
-        else if (r.disposition === "duplicate") j.counts.duplicates++;
+        if (r.disposition === "import") {
+          j.counts.importable++;
+          j.counts[r.client ? "linked" : "unlinked"]++;
+        } else if (r.disposition === "duplicate") j.counts.duplicates++;
         else {
           j.counts.blocked++;
           if (r.issues.some((issue) => issue.code === "client_unresolved"))
@@ -465,6 +491,10 @@ async function jobAPI(f, url, method, body, json) {
     response: structuredClone(response),
   });
   f.jobTransitions.push({ id: j.id, action, ...jobMetadata(j) });
+  if (action === "confirm" && f.loseConfirm) {
+    f.loseConfirm = false;
+    return json({ error: "Fictional lost confirmation response" }, 503);
+  }
   if (action === "step" && f.loseJobStepAt === j.processed && j.processed > 0) {
     f.loseJobStepAt = null;
     if (f.expirePreviewOnLostStep) f.previews.delete(j.previewId);
@@ -1018,6 +1048,8 @@ async function completedJobResponse(page) {
 }
 async function confirmArchive(page) {
   await page.locator("#history-import-ack").check();
+  if (await page.locator("#history-unlinked-ack").count())
+    await page.locator("#history-unlinked-ack").check();
   const completed = completedJobResponse(page);
   const [response] = await Promise.all([
     page.waitForResponse(
@@ -1043,8 +1075,7 @@ async function confirmArchive(page) {
   await page.locator("#history-import-receipt").waitFor({ state: "visible" });
   await page.waitForFunction(
     () =>
-      document.querySelector("[data-history-receipt-client]")?.disabled ===
-      false,
+      document.querySelector("#history-dismiss-receipt")?.disabled === false,
   );
   return { ...receipt, importId: receipt.id };
 }
@@ -2114,6 +2145,190 @@ try {
       assert.equal(done.created, 87);
       assert.equal(done.duplicates, 50);
       assert.equal(f.archive.length, 137);
+    },
+  );
+
+  for (const device of [desktop, phone]) {
+    await scenario(
+      "saved blocked report can explicitly import unresolved clients without reupload",
+      device,
+      async ({ page, f }) => {
+        const before = structuredClone(f.clients);
+        await openHistory(page, f);
+        await readColumns(page, archiveCSV());
+        await buildPreview(page);
+        assert.equal(
+          await page.locator("#history-allow-unlinked").isChecked(),
+          false,
+        );
+        await reviewArchive(page);
+        const blocked = [...f.jobs.values()].at(-1);
+        assert.equal(blocked.counts.unmatched, 3);
+        assert.equal(blocked.canConfirm, false);
+        assert.equal(
+          await page.locator("#history-review-unlinked").isEnabled(),
+          false,
+        );
+        // Returning to this saved review requires neither source selection nor new upload.
+        await page.locator("#history-back").click();
+        await page.locator("#history-preview-open").click();
+        await page.locator(`[data-history-job-open="${blocked.id}"]`).click();
+        await page.locator("#history-job-allow-unlinked").check();
+        const ready = page.waitForResponse(
+          async (r) =>
+            /\/api\/history\/jobs\/[^/]+\/step$/.test(
+              new URL(r.url()).pathname,
+            ) &&
+            r.ok() &&
+            (await r.json()).job?.phase === "ready",
+        );
+        await page.locator("#history-review-unlinked").click();
+        await ready;
+        const reviewed = [...f.jobs.values()].at(-1);
+        assert.notEqual(reviewed.id, blocked.id);
+        assert.equal(blocked.phase, "cancelled");
+        assert.equal(reviewed.previewId, blocked.previewId);
+        assert.equal(reviewed.allowUnlinkedClients, true);
+        assert.deepEqual(
+          [
+            reviewed.counts.linked,
+            reviewed.counts.unlinked,
+            reviewed.counts.blocked,
+          ],
+          [0, 3, 0],
+        );
+        assert.equal(
+          f.writes.filter((r) => r.path.endsWith("/start")).length,
+          1,
+        );
+        assert.equal(
+          f.writes.filter((r) => r.path.endsWith("/upload")).length,
+          1,
+        );
+        assert.equal(f.archive.length, 0);
+        await page.locator("#history-import-ack").check();
+        assert.equal(
+          await page.locator("#history-confirm-import").isEnabled(),
+          false,
+          "Unlinked records need their own explicit acknowledgement",
+        );
+        await inViewport(
+          page,
+          page.locator("#history-unlinked-ack"),
+          "Unlinked acknowledgement",
+        );
+        await noHorizontalOverflow(page);
+        await capture(page, device.name + "-history-unlinked-review");
+        const receipt = await confirmArchive(page);
+        assert.equal(receipt.created, 3);
+        assert.ok(f.archive.every((r) => r.clientId === null));
+        assert.deepEqual(
+          f.clients,
+          before,
+          "No client profiles are fabricated or edited",
+        );
+        assert.equal(
+          f.writes.filter((r) => r.path.endsWith("/confirm")).length,
+          1,
+        );
+        assert.match(
+          await page.locator("#history-receipt-client-counts").innerText(),
+          /0 new records with client links.*3 without client links/,
+        );
+        assert.equal(
+          await page.locator("#history-receipt-links").count(),
+          1,
+          "Later explicit linking remains available",
+        );
+        await capture(page, device.name + "-history-unlinked-receipt");
+        await page.locator("#history-receipt-setup").click();
+        await page
+          .locator("#salon-content")
+          .getByText("3 saved rows", { exact: true })
+          .waitFor();
+        assert.equal(
+          f.writes.filter((r) => r.path.includes("/salon/")).length,
+          0,
+          "Opening setup does not create catalogue entries",
+        );
+      },
+    );
+  }
+  await scenario(
+    "unlinked mode preserves saved matches and still blocks invalid source references",
+    desktop,
+    async ({ page, f }) => {
+      await openHistory(page, f);
+      await prepareArchivePreview(page);
+      const preview = [...f.previews.values()].at(-1);
+      preview.choices.delete(3);
+      preview.choices.delete(4);
+      preview.version++;
+      await page.locator("#history-refresh").click();
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-history-row="3"]') &&
+          !document
+            .querySelector('[data-history-row="3"]')
+            .textContent.includes("Draft match:"),
+      );
+      await page.locator("#history-allow-unlinked").check();
+      await reviewArchive(page);
+      const reviewed = [...f.jobs.values()].at(-1);
+      assert.deepEqual(
+        [reviewed.counts.linked, reviewed.counts.unlinked],
+        [1, 2],
+      );
+      const receipt = await confirmArchive(page);
+      assert.equal(receipt.created, 3);
+      assert.equal(f.archive.filter((r) => r.clientId === client.id).length, 1);
+      assert.equal(f.archive.filter((r) => r.clientId === null).length, 2);
+      await page.locator("#history-job-new-file").click();
+      await readColumns(page, archiveCSV({ missingReference: true }));
+      await buildPreview(page);
+      // A missing identity is not waived by importing without client links.
+      await page.locator("#history-allow-unlinked").check();
+      await reviewArchive(page);
+      const invalid = [...f.jobs.values()].at(-1);
+      assert.ok(invalid.counts.blocked > 0);
+      assert.equal(invalid.canConfirm, false);
+      assert.equal(
+        await page.locator("#history-confirm-import").isEnabled(),
+        false,
+      );
+      assert.equal(f.archive.length, 3);
+    },
+  );
+
+  await scenario(
+    "unlinked confirmation acknowledgement survives a lost response without duplicate writes",
+    desktop,
+    async ({ page, f }) => {
+      await openHistory(page, f);
+      await readColumns(page, archiveCSV());
+      await buildPreview(page);
+      await page.locator("#history-allow-unlinked").check();
+      await reviewArchive(page);
+      await page.locator("#history-import-ack").check();
+      await page.locator("#history-unlinked-ack").check();
+      f.loseConfirm = true;
+      await page.locator("#history-confirm-import").click();
+      await page.locator("#history-error").waitFor({ state: "visible" });
+      assert.equal(
+        f.archive.length,
+        0,
+        "Confirmation response is uncertain; processing has not run",
+      );
+      await page.locator("#history-retry").click();
+      await page
+        .locator("#history-import-receipt")
+        .waitFor({ state: "visible" });
+      const attempts = f.writes.filter((r) => r.path.endsWith("/confirm"));
+      assert.equal(attempts.length, 2);
+      assert.deepEqual(attempts[0].body, attempts[1].body);
+      assert.equal(attempts[0].body.acknowledgeUnlinkedClients, true);
+      assert.equal(f.archive.length, 3);
+      assert.ok(f.archive.every((r) => r.clientId === null));
     },
   );
 

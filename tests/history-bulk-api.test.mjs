@@ -288,12 +288,12 @@ test("Whole-report history jobs: complete review, durable progress and exactly-o
   const count = async (table) =>
     (await sql(`SELECT COUNT(*) AS n FROM ${table}`).first()).n;
   await expect("/history/jobs", "GET");
-  const start = async (p, requestId = randomUUID()) =>
+  const start = async (p, requestId = randomUUID(), extra = {}) =>
     (
       await expect(
         "/history/jobs",
         "POST",
-        { previewId: p.id, version: p.version, requestId },
+        { previewId: p.id, version: p.version, requestId, ...extra },
         201,
       )
     ).job;
@@ -304,19 +304,20 @@ test("Whole-report history jobs: complete review, durable progress and exactly-o
         requestId: randomUUID(),
       })
     ).job;
-  const readyJob = async (p) => {
-    let j = await start(p);
+  const readyJob = async (p, extra = {}) => {
+    let j = await start(p, randomUUID(), extra);
     while (j.phase === "reviewing") j = await advance(j);
     assert.equal(j.phase, "ready", j.reason);
     return j;
   };
-  const accept = async (j) =>
+  const accept = async (j, extra = {}) =>
     (
       await expect(`/history/jobs/${j.id}/confirm`, "POST", {
         version: j.version,
         confirmationToken: j.confirmationToken,
         acknowledgeReview: true,
         requestId: randomUUID(),
+        ...extra,
       })
     ).job;
   const finish = async (j) => {
@@ -430,6 +431,8 @@ test("Whole-report history jobs: complete review, durable progress and exactly-o
       assert.deepEqual(j.counts, {
         selected: 121,
         importable: 119,
+        linked: 119,
+        unlinked: 0,
         duplicates: 2,
         blocked: 0,
         unmatched: 0,
@@ -483,6 +486,296 @@ test("Whole-report history jobs: complete review, durable progress and exactly-o
       d = await finish(await accept(d));
       assert.equal(d.created, 0);
       assert.equal(d.duplicates, 121);
+    },
+  );
+  await t.test(
+    "unlinked bulk import is opt-in, reviewed once, durable and duplicate-safe across chunks",
+    async () => {
+      const data = Array.from({ length: 63 }, (_, i) => row(`unlinked-${i}`));
+      data.push([...data[0]]);
+      let p = await preview(data, {}, false);
+      let j = await readyJob(p);
+      assert.equal(j.allowUnlinkedClients, false);
+      assert.equal(j.counts.unmatched, 64);
+      assert.equal(j.canConfirm, false);
+      await cancelJob(j);
+      const choice = await sql(
+        "SELECT version FROM clients WHERE id='c1'",
+      ).first();
+      p = await expect(`/history/previews/${p.id}/choices`, "POST", {
+        version: p.version,
+        requestId: randomUUID(),
+        choices: [{ row: 3, clientId: "c1", clientVersion: choice.version }],
+      });
+      const startBody = {
+        previewId: p.id,
+        version: p.version,
+        requestId: randomUUID(),
+        allowUnlinkedClients: true,
+      };
+      await expect(
+        "/history/jobs",
+        "POST",
+        { ...startBody, allowUnlinkedClients: "true" },
+        400,
+      );
+      const beforeStart = {
+        jobs: await count("history_import_jobs"),
+        policies: await count("history_import_job_policies"),
+      };
+      await sql(
+        "CREATE TRIGGER fail_job_policy BEFORE INSERT ON history_import_job_policies WHEN NEW.allow_unlinked_clients=1 BEGIN SELECT RAISE(ABORT,'synthetic-policy-failure'); END",
+      ).run();
+      await expect("/history/jobs", "POST", startBody, 500);
+      assert.deepEqual(
+        {
+          jobs: await count("history_import_jobs"),
+          policies: await count("history_import_job_policies"),
+        },
+        beforeStart,
+      );
+      await sql("DROP TRIGGER fail_job_policy").run();
+      j = (await expect("/history/jobs", "POST", startBody, 201)).job;
+      assert.equal(
+        (
+          await sql(
+            "SELECT allow_unlinked_clients FROM history_import_job_policies WHERE job_id=?",
+            j.id,
+          ).first()
+        ).allow_unlinked_clients,
+        1,
+      );
+      assert.equal(
+        (await expect("/history/jobs", "GET")).jobs.find((x) => x.id === j.id)
+          .allowUnlinkedClients,
+        true,
+      );
+      assert.equal(
+        (await expect("/history/jobs", "POST", startBody)).job.id,
+        j.id,
+      );
+      await expect(
+        "/history/jobs",
+        "POST",
+        { ...startBody, allowUnlinkedClients: false },
+        409,
+      );
+      while (j.phase === "reviewing") j = await advance(j);
+      assert.equal(j.allowUnlinkedClients, true);
+      assert.deepEqual(j.counts, {
+        selected: 64,
+        importable: 63,
+        linked: 1,
+        unlinked: 62,
+        duplicates: 1,
+        blocked: 0,
+        unmatched: 0,
+        conflicts: 0,
+        invalid: 0,
+      });
+      const page = await expect(`/history/jobs/${j.id}?page=0`, "GET");
+      assert.equal(page.rows[0].client, null);
+      assert.equal(page.rows[0].clientLinkState, "unlinked");
+      assert.equal(page.rows[0].sourceClientLabel, "Synthetic One");
+      assert.ok(page.rows[0].issues.some((i) => i.code === "client_unlinked"));
+      const confirmation = {
+        version: j.version,
+        requestId: randomUUID(),
+        confirmationToken: j.confirmationToken,
+        acknowledgeReview: true,
+      };
+      await expect(`/history/jobs/${j.id}/confirm`, "POST", confirmation, 400);
+      await expect(
+        `/history/jobs/${j.id}/confirm`,
+        "POST",
+        { ...confirmation, acknowledgeUnlinkedClients: false },
+        400,
+      );
+      const confirmBody = { ...confirmation, acknowledgeUnlinkedClients: true };
+      j = (await expect(`/history/jobs/${j.id}/confirm`, "POST", confirmBody))
+        .job;
+      await expect(
+        `/history/jobs/${j.id}/confirm`,
+        "POST",
+        { ...confirmBody, acknowledgeUnlinkedClients: false },
+        409,
+      );
+      const before = {
+        clients: await count("clients"),
+        keys: await count("client_import_keys"),
+        appointments: await count("appointments"),
+      };
+      const evidence = (
+        await sql(
+          "SELECT row_num,record_json FROM history_preview_rows WHERE preview_id=? ORDER BY row_num",
+          p.id,
+        ).all()
+      ).results;
+      await sql("DELETE FROM history_previews WHERE id=?", p.id).run();
+      const body = { version: j.version, requestId: randomUUID() };
+      const both = await Promise.all([
+        request(`/history/jobs/${j.id}/step`, "POST", body),
+        request(`/history/jobs/${j.id}/step`, "POST", body),
+      ]);
+      assert.ok(both.every((r) => r.status === 200));
+      j = (await expect(`/history/jobs/${j.id}`, "GET")).job;
+      assert.equal(j.processed, 50);
+      j = await finish(j);
+      assert.equal(j.created, 63);
+      assert.equal(j.duplicates, 1);
+      assert.equal(
+        (await expect(`/history/jobs/${j.id}/confirm`, "POST", confirmBody)).job
+          .created,
+        63,
+      );
+      const saved = (
+        await sql(
+          "SELECT client_id,record_json FROM history_archive WHERE json_extract(record_json,'$.sourceAppointmentRef') LIKE 'unlinked-%' ORDER BY json_extract(record_json,'$.row')",
+        ).all()
+      ).results;
+      assert.equal(saved.filter((r) => r.client_id === null).length, 62);
+      assert.equal(saved.filter((r) => r.client_id === "c1").length, 1);
+      assert.deepEqual(
+        saved.map((r) => r.record_json),
+        evidence.slice(0, 63).map((r) => r.record_json),
+      );
+      assert.deepEqual(
+        {
+          clients: await count("clients"),
+          keys: await count("client_import_keys"),
+          appointments: await count("appointments"),
+        },
+        before,
+      );
+      p = await preview([...data].reverse(), {}, false);
+      j = await readyJob(p, { allowUnlinkedClients: true });
+      assert.equal(j.counts.duplicates, 64);
+      assert.equal(j.counts.unlinked, 0);
+      j = await finish(await accept(j)); // all duplicates need no new unlinked acknowledgement
+      assert.equal(j.created, 0);
+      assert.equal(j.duplicates, 64);
+      p = await preview([row("unlinked-0")]);
+      j = await readyJob(p, { allowUnlinkedClients: true });
+      assert.equal(j.counts.conflicts, 1);
+      assert.ok(
+        (await expect(`/history/jobs/${j.id}`, "GET")).rows[0].issues.some(
+          (i) =>
+            i.code === "archive_conflict" &&
+            /Link the saved history/.test(i.message),
+        ),
+      );
+      await cancelJob(j);
+      p = await preview([row("unlinked-0", "Cancelled")], {}, false);
+      j = await readyJob(p, { allowUnlinkedClients: true });
+      assert.equal(j.counts.conflicts, 1);
+      await cancelJob(j);
+    },
+  );
+  await t.test(
+    "unlinked opt-in never excuses stale explicit choices, conflicting identities or malformed records",
+    async () => {
+      await sql(
+        "INSERT INTO client_imports(id,owner_id,source,revision,plan_json,created_at,expires_at) VALUES('unlinked-source-map','owner','fresha',0,'{}',0,9999999999999)",
+      ).run();
+      await sql(
+        "INSERT INTO client_import_keys(source,source_key,client_id,import_id) VALUES(?,?,?,?)",
+        "fresha",
+        "id:" + digest("unlinked-source-one"),
+        "c1",
+        "unlinked-source-map",
+      ).run();
+      const p = await preview(
+        [
+          row("unlinked-stale"),
+          row("unlinked-contact", "New", {
+            13: "unlinked-source-one",
+            14: "0622222222",
+          }),
+          row("unlinked-invalid", "New", { 4: "not-a-duration" }),
+        ],
+        {},
+        false,
+      );
+      await sql(
+        "UPDATE history_preview_rows SET draft_client_id='c1',draft_client_version=99999 WHERE preview_id=? AND row_num=2",
+        p.id,
+      ).run();
+      const j = await readyJob(p, { allowUnlinkedClients: true });
+      assert.equal(j.counts.blocked, 3);
+      assert.equal(j.canConfirm, false);
+      const rows = (await expect(`/history/jobs/${j.id}`, "GET")).rows;
+      assert.ok(rows[0].issues.some((i) => i.code === "client_choice_stale"));
+      assert.ok(
+        rows[1].issues.some((i) => i.code === "identity_evidence_conflict"),
+      );
+      assert.equal(rows[2].blockReason, "invalid");
+      await cancelJob(j);
+    },
+  );
+  await t.test(
+    "mixed linked and unlinked copies of one reference block regardless of row order or chunk boundary",
+    async () => {
+      for (const selectedRow of [2, 53]) {
+        const data = Array.from({ length: 52 }, (_, i) =>
+          row(`mixed-attribution-${selectedRow}-${i}`),
+        );
+        data[51] = [...data[0]];
+        let p = await preview(data, {}, false);
+        const clientVersion = (
+          await sql("SELECT version FROM clients WHERE id='c1'").first()
+        ).version;
+        p = await expect(`/history/previews/${p.id}/choices`, "POST", {
+          version: p.version,
+          requestId: randomUUID(),
+          choices: [{ row: selectedRow, clientId: "c1", clientVersion }],
+        });
+        const j = await readyJob(p, { allowUnlinkedClients: true });
+        assert.equal(j.counts.conflicts, 2);
+        assert.equal(j.canConfirm, false);
+        const blocked = (
+          await expect(`/history/jobs/${j.id}?filter=blocked`, "GET")
+        ).rows;
+        assert.ok(
+          blocked.every((r) =>
+            r.issues.some((i) => i.code === "ambiguous_reference"),
+          ),
+        );
+        await cancelJob(j);
+      }
+    },
+  );
+  await t.test(
+    "unlinked chunks roll back atomically and competing jobs cannot duplicate source rows",
+    async () => {
+      const p = await preview(
+        Array.from({ length: 52 }, (_, i) => row(`unlinked-race-${i}`)),
+        {},
+        false,
+      );
+      let a = await readyJob(p, { allowUnlinkedClients: true });
+      let b = await readyJob(p, { allowUnlinkedClients: true });
+      a = await accept(a, { acknowledgeUnlinkedClients: true });
+      b = await accept(b, { acknowledgeUnlinkedClients: true });
+      await sql(
+        "CREATE TRIGGER fail_unlinked BEFORE INSERT ON history_archive WHEN json_extract(NEW.record_json,'$.sourceAppointmentRef')='unlinked-race-1' BEGIN SELECT RAISE(ABORT,'synthetic-unlinked-failure'); END",
+      ).run();
+      const countBefore = await count("history_archive");
+      const body = { version: a.version, requestId: randomUUID() };
+      await expect(`/history/jobs/${a.id}/step`, "POST", body, 500);
+      assert.equal(await count("history_archive"), countBefore);
+      assert.equal(
+        (await expect(`/history/jobs/${a.id}`, "GET")).job.processed,
+        0,
+      );
+      await sql("DROP TRIGGER fail_unlinked").run();
+      a = (await expect(`/history/jobs/${a.id}/step`, "POST", body)).job;
+      assert.equal(a.created, 50);
+      b = await advance(b);
+      assert.equal(b.phase, "paused");
+      assert.equal(b.created, 0);
+      a = await finish(a);
+      assert.equal(a.created, 52);
+      assert.equal(await count("history_archive"), countBefore + 52);
     },
   );
   await t.test(
@@ -815,7 +1108,7 @@ test("Whole-report history jobs: complete review, durable progress and exactly-o
       );
       const archiveQueryPlan = (
         await sql(
-          "EXPLAIN QUERY PLAN SELECT a.id,a.ref_hash,a.line_key,a.client_id,a.evidence_hash FROM json_each(?) k CROSS JOIN history_archive a ON a.source=? AND a.ref_hash=json_extract(k.value,'$.ref') AND a.line_key=json_extract(k.value,'$.line')",
+          "EXPLAIN QUERY PLAN SELECT a.id,a.ref_hash,a.line_key,a.client_id,a.evidence_hash FROM json_each(?) k CROSS JOIN history_archive_effective a ON a.source=? AND a.ref_hash=json_extract(k.value,'$.ref') AND a.line_key=json_extract(k.value,'$.line')",
           JSON.stringify([{ ref: digest("capacity-0"), line: "" }]),
           "fresha",
         ).all()

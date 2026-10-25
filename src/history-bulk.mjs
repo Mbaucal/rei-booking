@@ -31,16 +31,24 @@ const archiveClock = "(SELECT revision FROM history_archive_state WHERE id=1)";
 const nativeClock = "(SELECT revision FROM history_native_state WHERE id=1)";
 const clocksMatch = `client_revision=${clientClock} AND archive_revision=${archiveClock} AND native_revision=${nativeClock}`;
 const previewMatch = `EXISTS(SELECT 1 FROM history_previews p WHERE p.id=history_import_jobs.preview_id AND p.version=history_import_jobs.preview_version AND p.owner_id=history_import_jobs.owner_id AND p.phase='ready' AND p.expires_at>?)`;
+const jobSelect =
+  "SELECT j.*,COALESCE(p.allow_unlinked_clients,0) AS allow_unlinked_clients FROM history_import_jobs j LEFT JOIN history_import_job_policies p ON p.job_id=j.id";
 const guard = `EXISTS(SELECT 1 FROM history_import_jobs WHERE id=? AND mutation_token=?)`;
 const zeroCounts = () => ({
   selected: 0,
   importable: 0,
+  linked: 0,
+  unlinked: 0,
   duplicates: 0,
   blocked: 0,
   unmatched: 0,
   conflicts: 0,
   invalid: 0,
 });
+const savedCounts = (j) => {
+  const counts = JSON.parse(j.counts_json);
+  return { ...zeroCounts(), linked: counts.importable ?? 0, ...counts };
+};
 function validate(body, allowed) {
   if (
     !body ||
@@ -55,7 +63,7 @@ function validate(body, allowed) {
 async function find(db, user, id) {
   const j = await stmt(
     db,
-    "SELECT * FROM history_import_jobs WHERE id=? AND owner_id=?",
+    `${jobSelect} WHERE j.id=? AND j.owner_id=?`,
     id,
     user.id,
   ).first();
@@ -78,6 +86,7 @@ async function project(db, j, lightweight = false) {
     previewId: j.preview_id,
     previewVersion: j.preview_version,
     source: j.source,
+    allowUnlinkedClients: j.allow_unlinked_clients === 1,
     phase: j.phase,
     version: j.version,
     total: j.total,
@@ -85,7 +94,7 @@ async function project(db, j, lightweight = false) {
     processed: j.processed,
     created: j.created,
     duplicates: j.duplicates,
-    counts: JSON.parse(j.counts_json),
+    counts: savedCounts(j),
     ...(lightweight ? {} : { statusCounts: statuses }),
     canConfirm:
       j.phase === "ready" &&
@@ -103,7 +112,7 @@ async function project(db, j, lightweight = false) {
       : j.reason,
     requiresNewReview: j.phase === "paused" || expired,
     warnings: [
-      "Original source statuses and unknown facts are retained as historical evidence. No live booking, payment, financial report or bonus is created. Unverified source references are conservatively reserved as single appointments; later different evidence or reference modes will conflict.",
+      "Original source statuses and unknown facts are retained as historical evidence. No live booking, payment or bonus is created. Unverified source references are conservatively reserved as single appointments; later different evidence or reference modes will conflict.",
     ],
   };
 }
@@ -167,7 +176,12 @@ async function current(db, user, j, body) {
   return Boolean(valid);
 }
 async function start(db, user, body) {
-  validate(body, ["previewId", "version", "requestId"]);
+  validate(body, ["previewId", "version", "requestId", "allowUnlinkedClients"]);
+  if (
+    body.allowUnlinkedClients !== undefined &&
+    typeof body.allowUnlinkedClients !== "boolean"
+  )
+    fail(400, "Choose whether to allow history without client profile links.");
   if (
     typeof body.previewId !== "string" ||
     !/^[a-f0-9-]{36}$/.test(body.previewId)
@@ -176,7 +190,7 @@ async function start(db, user, body) {
   const inputHash = digest(canonical(body));
   const previous = await stmt(
     db,
-    "SELECT * FROM history_import_jobs WHERE owner_id=? AND request_id=?",
+    `${jobSelect} WHERE j.owner_id=? AND j.request_id=?`,
     user.id,
     body.requestId,
   ).first();
@@ -203,32 +217,42 @@ async function start(db, user, body) {
     );
   const id = randomUUID(),
     now = Date.now();
-  await stmt(
-    db,
-    `INSERT OR IGNORE INTO history_import_jobs(id,owner_id,request_id,input_hash,preview_id,preview_version,source,phase,total,counts_json,client_revision,archive_revision,native_revision,confirmation_token,expires_at,created_at,updated_at) SELECT ?,?,?,?,?,?,?,'reviewing',?,?,${clientClock},${archiveClock},${nativeClock},?,?,?,? WHERE EXISTS(SELECT 1 FROM history_previews WHERE id=? AND owner_id=? AND version=? AND phase='ready' AND expires_at>? AND client_revision=${clientClock}) AND (SELECT COUNT(*) FROM history_import_jobs WHERE owner_id=? AND phase IN('reviewing','ready','importing') AND (expires_at IS NULL OR expires_at>?))<3`,
-    id,
-    user.id,
-    body.requestId,
-    inputHash,
-    p.id,
-    p.version,
-    p.source,
-    p.total,
-    JSON.stringify(zeroCounts()),
-    token(),
-    p.expires_at,
-    now,
-    now,
-    p.id,
-    user.id,
-    p.version,
-    now,
-    user.id,
-    now,
-  ).run();
+  await db.batch([
+    stmt(
+      db,
+      `INSERT OR IGNORE INTO history_import_jobs(id,owner_id,request_id,input_hash,preview_id,preview_version,source,phase,total,counts_json,client_revision,archive_revision,native_revision,confirmation_token,expires_at,created_at,updated_at) SELECT ?,?,?,?,?,?,?,'reviewing',?,?,${clientClock},${archiveClock},${nativeClock},?,?,?,? WHERE EXISTS(SELECT 1 FROM history_previews WHERE id=? AND owner_id=? AND version=? AND phase='ready' AND expires_at>? AND client_revision=${clientClock}) AND (SELECT COUNT(*) FROM history_import_jobs WHERE owner_id=? AND phase IN('reviewing','ready','importing') AND (expires_at IS NULL OR expires_at>?))<3`,
+      id,
+      user.id,
+      body.requestId,
+      inputHash,
+      p.id,
+      p.version,
+      p.source,
+      p.total,
+      JSON.stringify(zeroCounts()),
+      token(),
+      p.expires_at,
+      now,
+      now,
+      p.id,
+      user.id,
+      p.version,
+      now,
+      user.id,
+      now,
+    ),
+    stmt(
+      db,
+      "INSERT INTO history_import_job_policies(job_id,allow_unlinked_clients) SELECT id,? FROM history_import_jobs WHERE id=? AND owner_id=? AND input_hash=?",
+      body.allowUnlinkedClients === true ? 1 : 0,
+      id,
+      user.id,
+      inputHash,
+    ),
+  ]);
   const saved = await stmt(
     db,
-    "SELECT id,input_hash FROM history_import_jobs WHERE owner_id=? AND request_id=?",
+    `${jobSelect} WHERE j.owner_id=? AND j.request_id=?`,
     user.id,
     body.requestId,
   ).first();
@@ -254,8 +278,10 @@ function rowCounts(rows) {
   const c = zeroCounts();
   c.selected = rows.length;
   for (const r of rows) {
-    if (r.disposition === "import") c.importable++;
-    else if (r.disposition === "duplicate") c.duplicates++;
+    if (r.disposition === "import") {
+      c.importable++;
+      c[r.clientLinkState === "unlinked" ? "unlinked" : "linked"]++;
+    } else if (r.disposition === "duplicate") c.duplicates++;
     else {
       c.blocked++;
       c[
@@ -303,6 +329,7 @@ async function prepareStep(db, user, j, body) {
       version: j.preview_version,
       rows: selected,
       requestId: `job_${j.id}_${j.version}`,
+      ...(j.allow_unlinked_clients === 1 ? { allowUnlinkedClients: true } : {}),
     });
   } catch (e) {
     if ([404, 409, 410, 422].includes(e.status))
@@ -336,7 +363,7 @@ async function prepareStep(db, user, j, body) {
       if (prior) {
         if (
           prior.evidence_hash !== e.evidenceHash ||
-          prior.client_id !== e.clientId
+          (e.clientId !== null && prior.client_id !== e.clientId)
         ) {
           e.disposition = r.disposition = "blocked";
           r.blockReason = "conflict";
@@ -359,10 +386,10 @@ async function prepareStep(db, user, j, body) {
         });
     }
   }
-  const oldCounts = JSON.parse(j.counts_json),
+  const oldCounts = savedCounts(j),
     added = rowCounts(review.rows),
     counts = Object.fromEntries(
-      Object.keys(oldCounts).map((k) => [k, oldCounts[k] + added[k]]),
+      Object.keys(zeroCounts()).map((k) => [k, (oldCounts[k] ?? 0) + added[k]]),
     );
   const statuses = new Map(
     (
@@ -479,12 +506,20 @@ async function confirmJob(db, user, j, body) {
       409,
       "Explicitly acknowledge this exact complete review before importing.",
     );
+  if (
+    JSON.parse(j.counts_json).unlinked > 0 &&
+    body.acknowledgeUnlinkedClients !== true
+  )
+    fail(
+      400,
+      "Explicitly acknowledge saving the reviewed history without client profile links.",
+    );
   const mutation = randomUUID(),
     now = Date.now();
   await db.batch([
     stmt(
       db,
-      `UPDATE history_import_jobs SET phase='importing',confirmed_at=?,expires_at=NULL,version=version+1,updated_at=?,mutation_token=? WHERE id=? AND owner_id=? AND version=? AND phase='ready' AND ${clocksMatch} AND expires_at>? AND ${previewMatch} AND NOT EXISTS(SELECT 1 FROM history_import_job_rows x LEFT JOIN clients c ON c.id=x.client_id WHERE x.job_id=? AND (c.id IS NULL OR c.version!=x.client_version))`,
+      `UPDATE history_import_jobs SET phase='importing',confirmed_at=?,expires_at=NULL,version=version+1,updated_at=?,mutation_token=? WHERE id=? AND owner_id=? AND version=? AND phase='ready' AND ${clocksMatch} AND expires_at>? AND ${previewMatch} AND NOT EXISTS(SELECT 1 FROM history_import_job_rows x LEFT JOIN clients c ON c.id=x.client_id WHERE x.job_id=? AND x.client_id IS NOT NULL AND (c.id IS NULL OR c.version!=x.client_version))`,
       now,
       now,
       mutation,
@@ -500,7 +535,12 @@ async function confirmJob(db, user, j, body) {
       `INSERT INTO audit_log(actor_id,action,entity,entity_id,after_json,created_at) SELECT ?,'history_job_confirm','history_import_job',?,?,? WHERE ${guard}`,
       user.id,
       j.id,
-      JSON.stringify({ total: j.total, counts: JSON.parse(j.counts_json) }),
+      JSON.stringify({
+        total: j.total,
+        counts: JSON.parse(j.counts_json),
+        allowUnlinkedClients: j.allow_unlinked_clients === 1,
+        acknowledgeUnlinkedClients: body.acknowledgeUnlinkedClients === true,
+      }),
       new Date(now).toISOString(),
       j.id,
       mutation,
@@ -542,7 +582,7 @@ async function importStep(db, user, j, body) {
   await db.batch([
     stmt(
       db,
-      `UPDATE history_import_jobs SET processed=processed+?,created=created+?,duplicates=duplicates+?,phase=CASE WHEN processed+?=total THEN 'completed' ELSE 'importing' END,version=version+1,updated_at=?,mutation_token=? WHERE id=? AND owner_id=? AND version=? AND phase='importing' AND ${clocksMatch} AND NOT EXISTS(SELECT 1 FROM history_import_job_rows x LEFT JOIN clients c ON c.id=x.client_id WHERE x.job_id=? AND x.row_num IN(SELECT value FROM json_each(?)) AND (c.id IS NULL OR c.version!=x.client_version)) AND NOT EXISTS(SELECT 1 FROM history_import_job_rows x JOIN appointments a ON a.client_id=x.client_id AND a.date=json_extract(x.record_json,'$.scheduledLocalDate') AND a.start_minute<json_extract(x.record_json,'$.startMinute')+json_extract(x.record_json,'$.durationMinutes') AND json_extract(x.record_json,'$.startMinute')<a.start_minute+a.duration WHERE x.job_id=? AND x.row_num IN(SELECT value FROM json_each(?)))`,
+      `UPDATE history_import_jobs SET processed=processed+?,created=created+?,duplicates=duplicates+?,phase=CASE WHEN processed+?=total THEN 'completed' ELSE 'importing' END,version=version+1,updated_at=?,mutation_token=? WHERE id=? AND owner_id=? AND version=? AND phase='importing' AND ${clocksMatch} AND NOT EXISTS(SELECT 1 FROM history_import_job_rows x LEFT JOIN clients c ON c.id=x.client_id WHERE x.job_id=? AND x.row_num IN(SELECT value FROM json_each(?)) AND x.client_id IS NOT NULL AND (c.id IS NULL OR c.version!=x.client_version)) AND NOT EXISTS(SELECT 1 FROM history_import_job_rows x JOIN appointments a ON a.client_id=x.client_id AND a.date=json_extract(x.record_json,'$.scheduledLocalDate') AND a.start_minute<json_extract(x.record_json,'$.startMinute')+json_extract(x.record_json,'$.durationMinutes') AND json_extract(x.record_json,'$.startMinute')<a.start_minute+a.duration WHERE x.job_id=? AND x.row_num IN(SELECT value FROM json_each(?)))`,
       plan.length,
       created,
       duplicates,
@@ -711,7 +751,7 @@ export async function historyBulkRoutes(request, db, user) {
     const jobs = (
       await stmt(
         db,
-        "SELECT * FROM history_import_jobs WHERE owner_id=? ORDER BY CASE WHEN phase IN('reviewing','ready','importing') AND (expires_at IS NULL OR expires_at>?) THEN 0 ELSE 1 END,created_at DESC,id LIMIT 20",
+        `${jobSelect} WHERE j.owner_id=? ORDER BY CASE WHEN j.phase IN('reviewing','ready','importing') AND (j.expires_at IS NULL OR j.expires_at>?) THEN 0 ELSE 1 END,j.created_at DESC,j.id LIMIT 20`,
         user.id,
         Date.now(),
       ).all()
@@ -729,8 +769,15 @@ export async function historyBulkRoutes(request, db, user) {
   validate(body, [
     "version",
     "requestId",
-    ...(op === "confirm" ? ["confirmationToken", "acknowledgeReview"] : []),
+    ...(op === "confirm"
+      ? ["confirmationToken", "acknowledgeReview", "acknowledgeUnlinkedClients"]
+      : []),
   ]);
+  if (
+    body.acknowledgeUnlinkedClients !== undefined &&
+    typeof body.acknowledgeUnlinkedClients !== "boolean"
+  )
+    fail(400, "Use an explicit boolean acknowledgement for unlinked history.");
   const repeated = await replay(db, user, j, body, op);
   if (repeated) return repeated;
   if (op === "cancel") return cancel(db, user, j, body);

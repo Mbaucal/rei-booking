@@ -1,3 +1,4 @@
+import { ensureHistoryArchiveSchema } from "./history-archive-schema.mjs";
 // Durable import jobs never depend on the lifetime of a temporary CSV preview.
 export const HISTORY_BULK_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS history_native_state(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL)`,
@@ -48,12 +49,10 @@ const initialized = new WeakMap();
 export async function ensureHistoryBulkSchema(db) {
   let promise = initialized.get(db);
   if (!promise) {
-    promise = db
-      .batch(HISTORY_BULK_SCHEMA.map((q) => db.prepare(q)))
-      .catch((e) => {
-        initialized.delete(db);
-        throw e;
-      });
+    promise = ensureHistoryArchiveSchema(db).catch((e) => {
+      initialized.delete(db);
+      throw e;
+    });
     initialized.set(db, promise);
   }
   await promise;

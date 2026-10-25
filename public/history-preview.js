@@ -50,6 +50,7 @@ export function renderHistoryPreview({
   back,
   openProfile,
   openSetup,
+  openLinks,
 }) {
   let generation = 0,
     disposed = false,
@@ -74,7 +75,8 @@ export function renderHistoryPreview({
     jobPage = 0,
     jobFilter = "all",
     jobRunning = false,
-    pendingJobMutation = null;
+    pendingJobMutation = null,
+    allowUnlinkedClients = false;
   const live = (version = generation) =>
     !disposed && isCurrent() && version === generation;
   const $ = (id) => root.querySelector(`#${id}`);
@@ -110,8 +112,8 @@ export function renderHistoryPreview({
     $("history-retry").textContent = label;
   };
   root.innerHTML = `<section class="history-preview">
-    <div class="history-topline"><button class="btn" id="history-back">← Back to clients</button><span class="history-badge">Review before import</span>${openSetup ? '<button class="btn" id="history-salon-open" data-history-busy>Set up team &amp; treatments</button>' : ""}</div>
-    <p class="history-lead">Match clients, review the whole report, then confirm once. Large reports are processed automatically in safe steps. Imported history is kept permanently; temporary previews expire after 24 hours.</p>
+    <div class="history-topline"><button class="btn" id="history-back">← Back to clients</button><span class="history-badge">Review before import</span>${openSetup ? '<button class="btn" id="history-salon-open" data-history-busy>Set up team &amp; treatments</button>' : ""}${openLinks ? '<button class="btn" id="history-links-open" data-history-busy>Link imported clients</button>' : ""}</div>
+    <p class="history-lead">Review the whole report, choose how to handle unresolved clients, then confirm once. Large reports are processed automatically in safe steps. Imported history is kept permanently; temporary previews expire after 24 hours.</p>
     <section class="history-card" id="history-file-card"><h2>Choose appointment history</h2><p class="hint" id="history-file-note">One UTF-8 CSV · up to 50,000 rows / 25 MiB. No manual splitting.</p>
       <form id="history-file-form"><div class="fields">
         <label class="wide"><span>Appointment CSV</span><input type="file" id="history-csv" accept=".csv,.tsv,text/csv,text/tab-separated-values" required data-history-busy></label>
@@ -130,6 +132,13 @@ export function renderHistoryPreview({
   if (openSetup)
     $("history-salon-open").onclick = () => {
       if (!busy) openSetup();
+    };
+  if (openLinks)
+    $("history-links-open").onclick = () => {
+      if (!busy && !importPending) {
+        generation++;
+        openLinks();
+      }
     };
   $("history-retry").onclick = () => {
     if (!busy && retry) {
@@ -179,6 +188,9 @@ export function renderHistoryPreview({
     try {
       const meta = await api(`${BASE}/${encodeURIComponent(id)}`);
       if (!live(version)) return;
+      // The opt-in belongs to this report, not every saved preview the owner opens.
+      if ((job?.previewId ?? draft?.id) !== meta.id)
+        allowUnlinkedClients = false;
       draft = meta;
       job = null;
       jobData = null;
@@ -732,7 +744,7 @@ export function renderHistoryPreview({
       <p class="hint">Across the file: ${number(summary.invalidRows)} invalid rows, ${number(summary.sourceConflictRows)} source conflicts and ${number(summary.duplicateRows)} duplicate rows.</p>
       <details><summary>Unknown values on this page</summary>${facts(Object.entries(pageData.pageSummary?.unknown || {}).map(([key, value]) => [{ completion: "Completion", request: "Requested therapist", sourceTimeZone: "Timezone", sourceNetSales: "Source net sales", currency: "Currency", fullPrice: "Full price", paidAmount: "Payment", bonusRule: "Bonus rule", bonusAmount: "Bonus amount" }[key] || key, `${number(value)} rows`]))}</details></div>
       <div class="history-selection"><strong id="history-selected-count">0 rows selected</strong><button class="btn" id="history-select-page" data-history-busy>Select this page</button><button class="btn" id="history-clear-selection" data-history-busy>Clear selection</button><button class="btn" id="history-choose-client" data-history-busy>Choose client</button><button class="btn" id="history-clear-choices" data-history-busy>Clear draft matches</button><p id="history-selected-dates">Select rows only to save client matches. The import review covers the entire report.</p></div>
-      <div class="history-full-report"><div><h3>Import the whole report</h3><p class="hint">Review all ${number(draft.total)} rows, across every page, then confirm once. No file splitting or repeated confirmations.</p></div><button class="btn primary" id="history-review-import" data-history-busy>Review full report</button></div>
+      <div class="history-full-report"><div><h3>Import the whole report</h3><p class="hint">Review all ${number(draft.total)} rows, across every page, then confirm once. No file splitting or repeated confirmations.</p>${unlinkedChoice("history-allow-unlinked", allowUnlinkedClients)}</div><button class="btn primary" id="history-review-import" data-history-busy>Review full report</button></div>
       <div id="history-choice-panel" hidden></div><div id="history-import-review" hidden></div><div id="history-rows">${rows.map((entry) => `<article class="history-record" data-history-row="${entry.row}"><div class="history-record-head"><label class="history-row-check"><input type="checkbox" data-history-select="${entry.row}" aria-label="Select history row ${entry.row}: ${safe(entry.record.sourceClientLabel || "Unknown client")}" ${selected.has(entry.row) ? "checked" : ""} data-history-busy></label><div class="history-record-title"><strong>${safe(entry.record.sourceClientLabel || "Client unknown")}</strong><small>Row ${entry.row} · ${safe(entry.record.scheduledLocalDate || "Date unknown")} · ${safe(historyTime(entry.record.startMinute, entry.record.durationMinutes))}</small>${entry.draftChoice ? `<small>Draft match: ${safe(entry.draftChoice.name)}${entry.draftChoice.stale ? " · review changed profile" : ""}</small>` : ""}</div><div class="history-record-treatment"><strong>${safe(entry.record.sourceServiceLabel || "Treatment unknown")}</strong><small>${safe(entry.record.sourceTherapistLabel || "Therapist unknown")}</small><small class="history-original-status">Original status: ${safe(entry.record.sourceStatus ?? "Unknown")}</small></div><span class="history-result" data-result="${safe(entry.disposition)}">${historyDispositionLabel(entry.disposition)}</span><button class="btn history-record-action" data-history-details="${entry.row}" aria-expanded="false" aria-controls="history-row-detail-${entry.row}">Details</button></div>${detailHTML(entry)}</article>`).join("") || `<p class="history-empty">No source rows on this page.</p>`}</div>
       <div class="history-pagination"><button class="btn" id="history-prev" data-history-busy data-unavailable="${page === 0}" ${page === 0 ? "disabled" : ""}>Previous</button><span>Page ${page + 1} of ${pages} · ${number(rows.length)} rows</span><button class="btn" id="history-next" data-history-busy data-unavailable="${page + 1 >= pages}" ${page + 1 >= pages ? "disabled" : ""}>Next</button></div><p class="history-readiness">Draft matches stay in this preview. Review full report checks every row before a single import confirmation.</p></section>`;
     $("history-new-file").onclick = reset;
@@ -773,6 +785,10 @@ export function renderHistoryPreview({
       if (selected.size) saveChoices(null);
     };
     $("history-review-import").onclick = reviewImport;
+    $("history-allow-unlinked").onchange = (event) => {
+      allowUnlinkedClients = event.target.checked;
+      clearImportReview();
+    };
     root.querySelectorAll("[data-history-select]").forEach((control) => {
       control.onchange = () => {
         const row = Number(control.dataset.historySelect);
@@ -1006,6 +1022,9 @@ export function renderHistoryPreview({
   function statusCountsHTML(counts) {
     return `<div class="history-status-counts">${(counts || []).map((item) => `<span><strong>${number(item.count)}</strong> ${safe(item.status ?? "Unknown status")}</span>`).join("") || `<span>Original statuses unavailable</span>`}</div>`;
   }
+  function unlinkedChoice(id, checked = false) {
+    return `<label class="history-unlinked-choice"><input id="${id}" type="checkbox" ${checked ? "checked" : ""} data-history-busy><span>Import without linking unresolved clients<small>Saved client matches stay linked. Other rows appear in history reports and salon setup without creating client profiles.</small></span></label>`;
+  }
   function jobLabel(item) {
     return (
       {
@@ -1046,7 +1065,17 @@ export function renderHistoryPreview({
       throw new Error(
         "This report's saved progress could not be verified. Try again.",
       );
-    job = next;
+    job = {
+      ...next,
+      counts: {
+        ...next.counts,
+        linked:
+          next.counts?.linked ??
+          (next.allowUnlinkedClients ? 0 : next.counts?.importable || 0),
+        unlinked: next.counts?.unlinked ?? 0,
+      },
+    };
+    allowUnlinkedClients = next.allowUnlinkedClients === true;
   }
   function hidePreviewForJob() {
     $("history-file-card").hidden = true;
@@ -1111,7 +1140,11 @@ export function renderHistoryPreview({
     if (busy || importPending || !draft) return;
     const version = generation;
     $("history-import-result").innerHTML = "";
-    const input = { previewId: draft.id, version: draft.version };
+    const input = {
+      previewId: draft.id,
+      version: draft.version,
+      ...(allowUnlinkedClients ? { allowUnlinkedClients: true } : {}),
+    };
     const signature = JSON.stringify(input);
     if (importReviewRequest?.signature !== signature)
       importReviewRequest = {
@@ -1222,7 +1255,9 @@ export function renderHistoryPreview({
     if (busy || !job) return;
     if (
       !pendingJobMutation &&
-      (!job.canConfirm || !$("history-import-ack")?.checked)
+      (!job.canConfirm ||
+        !$("history-import-ack")?.checked ||
+        (job.counts?.unlinked > 0 && !$("history-unlinked-ack")?.checked))
     )
       return;
     const version = generation;
@@ -1231,7 +1266,13 @@ export function renderHistoryPreview({
     try {
       await jobMutation(
         "confirm",
-        { confirmationToken: job.confirmationToken, acknowledgeReview: true },
+        {
+          confirmationToken: job.confirmationToken,
+          acknowledgeReview: true,
+          ...(job.counts?.unlinked > 0
+            ? { acknowledgeUnlinkedClients: true }
+            : {}),
+        },
         version,
       );
       await driveJob(version);
@@ -1288,6 +1329,41 @@ export function renderHistoryPreview({
     }
     if (finished && live(version)) await openRecent(previewId);
   }
+  async function reviewWithoutClientLinks() {
+    if (
+      busy ||
+      !job ||
+      (importPending && pendingJobMutation?.action !== "cancel") ||
+      !["ready", "reviewing"].includes(job.phase)
+    )
+      return;
+    const version = generation,
+      previewId = job.previewId;
+    clearError();
+    setBusy(true);
+    let prepared = false;
+    try {
+      // Read the saved preview first. An expired source must not destroy a usable review.
+      const metadata = await api(`${BASE}/${encodeURIComponent(previewId)}`);
+      assertCurrent(version);
+      if (metadata.phase !== "ready")
+        throw new Error(
+          "Finish preparing the saved preview before reviewing the import.",
+        );
+      await jobMutation("cancel", {}, version);
+      assertCurrent(version);
+      draft = metadata;
+      config = metadata.config;
+      allowUnlinkedClients = true;
+      importReviewRequest = null;
+      prepared = true;
+    } catch (error) {
+      if (live(version)) jobError(error, reviewWithoutClientLinks);
+    } finally {
+      if (live(version)) setBusy(false);
+    }
+    if (prepared && live(version)) await reviewImport();
+  }
   async function showJobPage(next, filter = jobFilter) {
     if (
       busy ||
@@ -1323,7 +1399,7 @@ export function renderHistoryPreview({
   function renderJobRows() {
     const rows = jobData?.rows || [];
     const pages = Math.max(1, jobData?.totalPages ?? Math.ceil(job.total / 50));
-    return `<label class="history-job-filter"><span>Show report rows</span><select id="history-job-filter" data-history-busy><option value="all" ${jobFilter === "all" ? "selected" : ""}>All rows</option><option value="blocked" ${jobFilter === "blocked" ? "selected" : ""}>Needs attention</option></select></label>${jobFilter === "blocked" ? `<p class="hint">${number(jobData?.filteredTotal)} rows need attention. Counts above still cover the whole report.</p>` : ""}<div id="history-import-rows" class="history-import-rows">${rows.map((item) => `<article class="history-import-row" data-history-import-row="${item.row}"><div><strong>Row ${number(item.row)} · ${safe(item.client?.name || "No saved client match")}</strong><span class="history-result" data-result="${item.disposition === "blocked" ? "conflict" : item.disposition === "duplicate" ? "duplicate" : "ready"}">${safe(item.result?.disposition === "imported" ? "Imported" : item.result?.disposition === "duplicate" ? "Skipped duplicate" : { import: "New record", duplicate: "Duplicate — will skip", blocked: "Blocked" }[item.disposition] || item.disposition || "Review")}</span></div><p>${safe(item.date || "Date unknown")} · ${safe(historyTime(item.start, item.duration))} · ${safe(item.serviceName || "Treatment unknown")}</p><p class="hint">Original status: <strong>${safe(item.sourceStatus ?? "Unknown")}</strong> · ${safe(item.therapistName || "Therapist unknown")}</p>${item.issues?.length ? `<ul class="history-issues">${item.issues.map((issue) => `<li>${safe(issue.message)}</li>`).join("")}</ul>` : ""}${item.nativeOverlapIds?.length ? `<p class="hint">Overlaps an existing booking. Review before importing.</p>` : ""}</article>`).join("") || `<p class="history-empty">${jobFilter === "blocked" ? "No rows need attention." : "No reviewed rows on this page yet."}</p>`}</div>${rows.length || pages > 1 ? `<div class="history-pagination"><button class="btn" id="history-job-prev" data-history-busy data-unavailable="${jobPage <= 0}" ${jobPage <= 0 ? "disabled" : ""}>Previous</button><form id="history-job-jump" class="history-page-jump"><label for="history-job-page">Page</label><input id="history-job-page" type="number" min="1" max="${pages}" step="1" value="${jobPage + 1}" required aria-label="Report page number" data-history-busy><span>of ${pages}</span><button class="btn" data-history-busy>Go</button></form><button class="btn" id="history-job-next" data-history-busy data-unavailable="${jobPage + 1 >= pages}" ${jobPage + 1 >= pages ? "disabled" : ""}>Next</button></div>` : ""}`;
+    return `<label class="history-job-filter"><span>Show report rows</span><select id="history-job-filter" data-history-busy><option value="all" ${jobFilter === "all" ? "selected" : ""}>All rows</option><option value="blocked" ${jobFilter === "blocked" ? "selected" : ""}>Needs attention</option></select></label>${jobFilter === "blocked" ? `<p class="hint">${number(jobData?.filteredTotal)} rows need attention. Counts above still cover the whole report.</p>` : ""}<div id="history-import-rows" class="history-import-rows">${rows.map((item) => `<article class="history-import-row" data-history-import-row="${item.row}"><div><strong>Row ${number(item.row)} · ${safe(item.client?.name || item.sourceClientLabel || "No saved client match")}</strong>${!item.client && job.allowUnlinkedClients && item.disposition !== "blocked" ? "<small>Without a client link</small>" : ""}<span class="history-result" data-result="${item.disposition === "blocked" ? "conflict" : item.disposition === "duplicate" ? "duplicate" : "ready"}">${safe(item.result?.disposition === "imported" ? "Imported" : item.result?.disposition === "duplicate" ? "Skipped duplicate" : { import: "New record", duplicate: "Duplicate — will skip", blocked: "Blocked" }[item.disposition] || item.disposition || "Review")}</span></div><p>${safe(item.date || "Date unknown")} · ${safe(historyTime(item.start, item.duration))} · ${safe(item.serviceName || "Treatment unknown")}</p><p class="hint">Original status: <strong>${safe(item.sourceStatus ?? "Unknown")}</strong> · ${safe(item.therapistName || "Therapist unknown")}</p>${item.issues?.length ? `<ul class="history-issues">${item.issues.map((issue) => `<li>${safe(issue.message)}</li>`).join("")}</ul>` : ""}${item.nativeOverlapIds?.length ? `<p class="hint">Overlaps an existing booking. Review before importing.</p>` : ""}</article>`).join("") || `<p class="history-empty">${jobFilter === "blocked" ? "No rows need attention." : "No reviewed rows on this page yet."}</p>`}</div>${rows.length || pages > 1 ? `<div class="history-pagination"><button class="btn" id="history-job-prev" data-history-busy data-unavailable="${jobPage <= 0}" ${jobPage <= 0 ? "disabled" : ""}>Previous</button><form id="history-job-jump" class="history-page-jump"><label for="history-job-page">Page</label><input id="history-job-page" type="number" min="1" max="${pages}" step="1" value="${jobPage + 1}" required aria-label="Report page number" data-history-busy><span>of ${pages}</span><button class="btn" data-history-busy>Go</button></form><button class="btn" id="history-job-next" data-history-busy data-unavailable="${jobPage + 1 >= pages}" ${jobPage + 1 >= pages ? "disabled" : ""}>Next</button></div>` : ""}`;
   }
   function renderJob() {
     const focused = root.contains(document.activeElement)
@@ -1337,6 +1413,8 @@ export function renderHistoryPreview({
     const groups = [
       ["importable", "New records"],
       ["duplicates", "Duplicates to skip"],
+      ["linked", "New records with client links"],
+      ["unlinked", "New records without client links"],
       ["blocked", "Blocked"],
       ["unmatched", "Without a saved match"],
       ["conflicts", "Conflicts"],
@@ -1348,9 +1426,10 @@ export function renderHistoryPreview({
       `<section class="history-card history-job" id="history-import-review" data-job-phase="${safe(job.phase)}" data-job-id="${safe(job.id)}"><h2>${safe(jobLabel(job))}</h2><p class="hint">${number(job.total)} rows · the whole report</p>
       ${active ? `<progress id="history-job-progress" class="history-progress" max="${Number(job.total) || 1}" value="${Number(progress) || 0}"></progress><p id="history-job-progress-text" class="history-progress-text" role="status">${preparing ? `${number(job.reviewed)} of ${number(job.total)} reviewed` : `${number(job.processed)} of ${number(job.total)} processed · ${number(job.created)} imported · ${number(job.duplicates)} skipped`}</p><p class="hint">${jobRunning ? "Working through the report automatically. You can pause or close this page and resume from Saved imports." : "Progress is saved. Resume to continue from the next unfinished step."}</p><div class="history-actions">${jobRunning ? `<button class="btn" id="history-job-pause">Pause</button>` : `<button class="btn primary" id="history-job-resume" data-history-busy data-history-import-retry>Resume</button>`}</div>` : ""}
       ${job.reason ? `<p class="history-job-reason" role="status">${safe(job.reason)}</p>` : ""}
-      ${stopped ? `<p class="history-format-note">${number(job.created)} already imported; saved records remain in client history. ${job.requiresNewReview ? "Review the report again after correcting the changed data. Already imported rows will be skipped." : "This job has stopped. Start a new review to import remaining records; already imported rows will be skipped."}</p>` : ""}
+      ${stopped ? `<p class="history-format-note">${number(job.created)} already imported; saved records remain in imported history. ${job.requiresNewReview ? "Review the report again after correcting the changed data. Already imported rows will be skipped." : "This job has stopped. Start a new review to import remaining records; already imported rows will be skipped."}</p>` : ""}
       ${!preparing ? `<div id="history-import-counts" class="history-counts">${groups.map(([key, label]) => `<div class="history-count"><strong>${number(counts[key])}</strong><span>${label}</span></div>`).join("")}</div><section id="history-import-status-counts"><h3>${job.reviewed === job.total ? "Original statuses across the whole report" : "Original statuses in reviewed rows"}</h3>${job.reviewed < job.total ? `<p class="hint">${number(job.reviewed)} of ${number(job.total)} rows reviewed. Counts cover these reviewed rows only.</p>` : ""}${statusCountsHTML(job.statusCounts)}</section>` : ""}
-      ${job.phase === "ready" && !job.requiresNewReview ? `<p class="history-format-note">${job.canConfirm ? "Confirm once to import all new records with their original statuses. Exact duplicates will be skipped. Live bookings, Rei revenue and bonuses are unchanged. Imported records appear separately in reports. Unknown completion, timezone, currency and requested status stay unknown." : "Nothing can be imported until every blocked row is resolved. Save current client matches or correct the source, then review the full report again."}</p>${job.warnings?.length ? `<ul class="history-import-warnings">${job.warnings.map((message) => `<li>${safe(message)}</li>`).join("")}</ul>` : ""}${job.canConfirm ? `<label class="history-import-ack"><input id="history-import-ack" type="checkbox" data-history-busy><span>I have reviewed the whole report and client matches. Import the new records, skip exact duplicates and leave unknown values unknown.</span></label>` : ""}<div class="history-actions"><button class="btn primary" id="history-confirm-import" data-history-busy data-history-import-retry data-unavailable="true" disabled>Confirm full report import</button><button class="btn" id="history-job-back-matches" data-history-busy>Back to client matches</button></div><p class="history-readiness">Nothing is imported before confirmation. This review expires ${safe(expiry(job.expiresAt))}.</p>` : ""}
+      ${job.phase === "ready" && !job.requiresNewReview && !job.allowUnlinkedClients && counts.unmatched > 0 ? `<section class="history-unlinked-review"><h3>Continue without matching every client</h3>${unlinkedChoice("history-job-allow-unlinked")}<button class="btn" id="history-review-unlinked" data-history-busy data-history-import-retry data-unavailable="true" disabled>Review without client links</button><p class="hint">Uses this saved report. No need to upload the CSV again. Other conflicts still need to be resolved.</p></section>` : ""}
+      ${job.phase === "ready" && !job.requiresNewReview ? `<p class="history-format-note">${job.canConfirm ? "Confirm once to import all new records with their original statuses. Exact duplicates will be skipped. Live bookings, Rei revenue and bonuses are unchanged. Imported records appear separately in reports. Unknown completion, timezone, currency and requested status stay unknown." : "Nothing can be imported until every blocked row is resolved. Resolve source conflicts or invalid rows before importing. For missing client matches, choose clients or review without client links."}</p>${job.warnings?.length ? `<ul class="history-import-warnings">${job.warnings.map((message) => `<li>${safe(message)}</li>`).join("")}</ul>` : ""}${job.canConfirm ? `<label class="history-import-ack"><input id="history-import-ack" type="checkbox" data-history-busy><span>I have reviewed the whole report and saved client matches. Import the new records, skip exact duplicates and leave unknown values unknown.</span></label>${counts.unlinked > 0 ? `<label class="history-import-ack"><input id="history-unlinked-ack" type="checkbox" data-history-busy><span>Import ${number(counts.unlinked)} records without client links. Keep their source client names for later review; do not create or guess client profiles.</span></label>` : ""}` : ""}<div class="history-actions"><button class="btn primary" id="history-confirm-import" data-history-busy data-history-import-retry data-unavailable="true" disabled>Confirm full report import</button><button class="btn" id="history-job-back-matches" data-history-busy>Back to client matches</button></div><p class="history-readiness">Nothing is imported before confirmation. This review expires ${safe(expiry(job.expiresAt))}.</p>` : ""}
       ${stopped ? `<div class="history-actions"><button class="btn" id="history-job-back-matches" data-history-busy>Back to client matches</button><button class="btn" id="history-job-new-file" data-history-busy>Choose another file</button></div>` : ""}
       ${!jobRunning ? renderJobRows() : ""}
       ${["reviewing", "ready", "importing"].includes(job.phase) ? `<details class="history-job-stop"><summary>Stop this job</summary><p class="hint">Stopping keeps records already imported. Use Pause to resume this same job later.</p><button class="btn" id="history-job-cancel" data-history-busy>Stop this job</button></details>` : ""}
@@ -1367,12 +1446,26 @@ export function renderHistoryPreview({
     if ($("history-job-new-file")) $("history-job-new-file").onclick = reset;
     if ($("history-job-back-matches"))
       $("history-job-back-matches").onclick = backToMatches;
-    if ($("history-import-ack"))
-      $("history-import-ack").onchange = () => {
-        const allowed = job.canConfirm && $("history-import-ack").checked;
-        $("history-confirm-import").dataset.unavailable = String(!allowed);
-        $("history-confirm-import").disabled = busy || !allowed;
+    if ($("history-job-allow-unlinked"))
+      $("history-job-allow-unlinked").onchange = () => {
+        const enabled = $("history-job-allow-unlinked").checked;
+        $("history-review-unlinked").dataset.unavailable = String(!enabled);
+        $("history-review-unlinked").disabled = busy || !enabled;
       };
+    if ($("history-review-unlinked"))
+      $("history-review-unlinked").onclick = reviewWithoutClientLinks;
+    const updateImportAcknowledgement = () => {
+      const allowed =
+        job.canConfirm &&
+        $("history-import-ack")?.checked &&
+        (!(job.counts?.unlinked > 0) || $("history-unlinked-ack")?.checked);
+      $("history-confirm-import").dataset.unavailable = String(!allowed);
+      $("history-confirm-import").disabled = busy || !allowed;
+    };
+    if ($("history-import-ack"))
+      $("history-import-ack").onchange = updateImportAcknowledgement;
+    if ($("history-unlinked-ack"))
+      $("history-unlinked-ack").onchange = updateImportAcknowledgement;
     if ($("history-confirm-import")) {
       $("history-confirm-import").onclick = confirmImport;
       if (pendingJobMutation?.action === "confirm") {
@@ -1408,7 +1501,7 @@ export function renderHistoryPreview({
       ).values(),
     ];
     $("history-import-result").innerHTML =
-      `<section id="history-import-receipt" class="history-card history-import-receipt" role="status"><h2>Import completed</h2><p><strong>${number(job.created)} imported</strong> · ${number(job.duplicates)} duplicates skipped.</p><p class="hint">The whole report has been processed. Imported history is saved permanently. Reopening this job does not add records twice.</p><p class="history-receipt-id">Receipt: <strong>${safe(job.id)}</strong></p><h3>Original statuses across the whole report</h3>${statusCountsHTML(job.statusCounts)}<div class="history-actions">${clients.map((client) => `<button class="btn" data-history-receipt-client="${safe(client.id)}" data-history-busy>Open ${safe(client.name)}</button>`).join("")}<button class="btn" id="history-dismiss-receipt" data-history-busy>Close receipt</button></div></section>`;
+      `<section id="history-import-receipt" class="history-card history-import-receipt" role="status"><h2>Import completed</h2><p><strong>${number(job.created)} imported</strong> · ${number(job.duplicates)} duplicates skipped.</p><p id="history-receipt-client-counts">${number(job.counts?.linked)} new records with client links · ${number(job.counts?.unlinked)} without client links.</p><p class="hint">The whole report has been processed. Imported history is saved permanently. Reopening this job does not add records twice.</p><p class="history-receipt-id">Receipt: <strong>${safe(job.id)}</strong></p><h3>Original statuses across the whole report</h3>${statusCountsHTML(job.statusCounts)}<div class="history-actions">${openSetup ? '<button class="btn primary" id="history-receipt-setup" data-history-busy>Set up team &amp; treatments</button>' : ""}${openLinks && job.counts?.unlinked > 0 ? '<button class="btn" id="history-receipt-links" data-history-busy>Link imported clients</button>' : ""}${clients.map((client) => `<button class="btn" data-history-receipt-client="${safe(client.id)}" data-history-busy>Open ${safe(client.name)}</button>`).join("")}<button class="btn" id="history-dismiss-receipt" data-history-busy>Close receipt</button></div></section>`;
     $("history-import-result")
       .querySelectorAll("[data-history-receipt-client]")
       .forEach((button) => {
@@ -1419,6 +1512,20 @@ export function renderHistoryPreview({
           }
         };
       });
+    if ($("history-receipt-setup"))
+      $("history-receipt-setup").onclick = () => {
+        if (!busy && !importPending) {
+          generation++;
+          openSetup();
+        }
+      };
+    if ($("history-receipt-links"))
+      $("history-receipt-links").onclick = () => {
+        if (!busy && !importPending) {
+          generation++;
+          openLinks();
+        }
+      };
     $("history-dismiss-receipt").onclick = () => {
       if (!busy) $("history-import-result").innerHTML = "";
     };
@@ -1456,6 +1563,7 @@ export function renderHistoryPreview({
     if (importPending) return;
     $("history-import-result").innerHTML = "";
     jobRunning = false;
+    allowUnlinkedClients = false;
     job = null;
     jobData = null;
     jobPage = 0;

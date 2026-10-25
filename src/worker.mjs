@@ -10,6 +10,7 @@ import { clientTransferRoutes } from "./client-transfer.mjs";
 import { historyPreviewRoutes } from "./history-preview.mjs";
 import { historyArchiveRoutes } from "./history-archive.mjs";
 import { historySalonRoutes } from "./history-salon.mjs";
+import { historyLinkingRoutes } from "./history-linking.mjs";
 import { loadHistoricalReportRows } from "./history-reports.mjs";
 import { historyBulkRoutes } from "./history-bulk.mjs";
 import { monthlyRoutes, runMonthly } from "./monthly-reports.mjs";
@@ -473,7 +474,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.17.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.18.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -665,6 +666,8 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
       ),
     });
   }
+  const historyLinks = await historyLinkingRoutes(request, db, user);
+  if (historyLinks) return historyLinks;
   const historySalon = await historySalonRoutes(request, db, user);
   if (historySalon) return historySalon;
   const historyPreview = await historyPreviewRoutes(request, db, user);
