@@ -740,7 +740,7 @@ try {
       await page.locator("#salon-import").waitFor();
       assert.match(
         await page.locator("#salon-content").innerText(),
-        /preview alone does not import/,
+        /confirm the import first/,
       );
       assert.equal(await page.locator("#salon-save").count(), 0);
       assert.equal(f.writes.length, 0);
