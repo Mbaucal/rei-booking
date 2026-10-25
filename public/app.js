@@ -18,6 +18,12 @@ import {
 } from "./calendar-geometry.js";
 import { mountCalendarReschedule } from "./calendar-reschedule.js";
 import {
+  isImportedAppointment,
+  calendarHistoryTherapists,
+  calendarHistoryEventHTML,
+  calendarAppointmentCounts,
+} from "./calendar-history.js";
+import {
   mountAppointmentPreview,
   appointmentDetailsHTML,
 } from "./appointment-preview.js";
@@ -121,6 +127,7 @@ let state = {
     mode: calendarModes[calendarLayoutKey],
     catalogue: { therapists: [], rooms: [], services: [] },
     appointments: [],
+    history: { appointments: [], therapists: [], metadata: {} },
     blocks: [],
     clients: [],
     version: 0,
@@ -203,6 +210,7 @@ function signOutView() {
     user: null,
     csrf: "",
     appointments: [],
+    history: { appointments: [], therapists: [], metadata: {} },
     blocks: [],
     clients: [],
     catalogue: { therapists: [], rooms: [], services: [] },
@@ -577,7 +585,10 @@ function resources(mode = state.mode) {
   return [
     ...(mode === "rooms"
       ? []
-      : state.catalogue.therapists.map((t) => ({
+      : calendarHistoryTherapists(
+          state.catalogue.therapists,
+          state.history.therapists,
+        ).map((t) => ({
           ...t,
           kind: "therapist",
           capacity: 1,
@@ -870,6 +881,11 @@ async function loadCalendar() {
     return;
   state.appointments = data.appointments;
   state.blocks = data.blocks || [];
+  state.history = {
+    appointments: data.history?.appointments || [],
+    therapists: data.history?.therapists || [],
+    metadata: data.history?.metadata || {},
+  };
   renderCalendar();
 }
 function renderCalendar() {
@@ -889,6 +905,10 @@ function renderCalendar() {
   if (calendarLayoutKey !== calendarLayout()) renderCalendarShell();
   disposeCalendarUI();
   const list = resources(),
+    displayedAppointments = [
+      ...state.appointments,
+      ...state.history.appointments,
+    ],
     scroll = $("calendar-scroll"),
     oldScale = Number(scroll.dataset.scale) || SCALE,
     logicalTop =
@@ -908,8 +928,23 @@ function renderCalendar() {
   delete scroll.dataset.restoreMinute;
   delete scroll.dataset.restoreLeft;
   scroll.dataset.initialized = "true";
+  const counts = calendarAppointmentCounts(
+    state.appointments,
+    state.history.appointments,
+  );
   $("calendar-summary").textContent =
-    `${prettyDate(state.date)} · ${state.appointments.filter((a) => !["cancelled", "no_show"].includes(a.status)).length} appointments`;
+    `${prettyDate(state.date)} · ${counts.appointments} appointments${counts.imported ? ` · ${counts.imported} imported` : ""}`;
+  $("calendar-history-notice")?.remove();
+  if (state.mode === "rooms" && state.history.appointments.length) {
+    $("calendar-scroll")
+      .closest(".calendar-card")
+      .insertAdjacentHTML(
+        "beforebegin",
+        '<div id="calendar-history-notice" class="calendar-history-notice" role="status"><span>Imported appointments are shown by therapist.</span><button type="button" class="btn" id="calendar-history-view-therapists">View therapists</button></div>',
+      );
+    $("calendar-history-view-therapists").onclick = () =>
+      selectCalendarMode("therapists");
+  }
   const timeAxis = mobile ? 44 : 60,
     mobileColumnWidth = Math.max(80, (scroll.clientWidth - timeAxis) / 3),
     widths = list.map(() => (mobile ? mobileColumnWidth : 180));
@@ -932,7 +967,7 @@ function renderCalendar() {
     list
       .map(
         (r) =>
-          `<div data-kind="${r.kind}">${r.kind === "room" ? `<span class="avatar room-avatar">${esc("R" + r.id.slice(1))}</span>` : avatar("therapists", r, esc)}<div>${esc(r.name)}<small>${r.kind === "room" ? r.capacity + " tables" : "Therapist"}</small></div></div>`,
+          `<div data-kind="${r.kind}">${r.kind === "room" ? `<span class="avatar room-avatar">${esc("R" + r.id.slice(1))}</span>` : avatar("therapists", r, esc)}<div>${esc(r.name)}<small>${r.kind === "room" ? r.capacity + " tables" : r.historyOnly ? "Imported history" : "Therapist"}</small></div></div>`,
       )
       .join("");
   let ticks = "";
@@ -945,9 +980,9 @@ function renderCalendar() {
     list
       .map(
         (r) =>
-          `<div class="calendar-column" data-resource="${esc(r.id)}" data-kind="${r.kind}" aria-label="${esc(r.name)}">${availability(r)}${calendarResourceItems(
+          `<div class="calendar-column" data-resource="${esc(r.id)}" data-kind="${r.kind}"${r.historyOnly ? ' data-history-only="true"' : ""} aria-label="${esc(r.name)}">${availability(r)}${calendarResourceItems(
             r,
-            state.appointments,
+            displayedAppointments,
             state.blocks,
           )
             .map((item) =>
@@ -973,14 +1008,17 @@ function renderCalendar() {
     state.version === version &&
     sessionEpoch === session &&
     calendarViewEpoch === view;
-  const eligible = (a) => ["booked", "confirmed"].includes(a.status);
+  const eligible = (a) =>
+    !isImportedAppointment(a) && ["booked", "confirmed"].includes(a.status);
   if (operator()) {
     calendarReschedule = mountCalendarReschedule({
       root: scroll,
       getContext: () => ({
         date,
         role: state.user.role,
-        resources: resources("all"),
+        resources: resources("all").filter(
+          (r) => !r.historyOnly && (r.kind === "room" || r.active),
+        ),
         appointments: state.appointments.filter(eligible),
         blockingAppointments: state.appointments,
         blocks: state.blocks,
@@ -1025,7 +1063,7 @@ function renderCalendar() {
   }
   appointmentPreview = mountAppointmentPreview({
     root: scroll,
-    appointments: state.appointments,
+    appointments: displayedAppointments,
     role: state.user.role,
     catalogue: state.catalogue,
     isCurrent: current,
@@ -1043,7 +1081,9 @@ function renderCalendar() {
     };
   });
   scroll.querySelectorAll("[data-appointment]").forEach((el) => {
-    const a = state.appointments.find((a) => a.id === el.dataset.appointment);
+    const a = displayedAppointments.find(
+      (a) => a.id === el.dataset.appointment,
+    );
     el.onclick = (event) => {
       event.stopPropagation();
       if (!current() || calendarReschedule?.shouldSuppressClick(event)) return;
@@ -1060,6 +1100,7 @@ function renderCalendar() {
 }
 function availability(r) {
   if (r.kind !== "therapist") return "";
+  if (r.historyOnly) return "";
   const day = r.weekly[new Date(state.date + "T12:00:00Z").getUTCDay()],
     off = !r.active || !day.enabled || r.timeOff.includes(state.date);
   return (
@@ -1078,6 +1119,8 @@ function availability(r) {
     .join("");
 }
 function eventHTML(a, r, layout = null) {
+  if (isImportedAppointment(a))
+    return calendarHistoryEventHTML(a, state.user.role, layout || {});
   const left = layout?.left ?? 0;
   const width = layout?.width ?? 100;
   return `<div class="calendar-event ${width < 100 ? "is-overlapping" : ""} ${a.duration <= 30 ? "short" : ""} ${a.duration <= 15 ? "very-short" : ""}" role="button" tabindex="0" data-appointment="${esc(a.id)}" style="top:${calendarTop(a.start)}px;height:${calendarHeight(a.duration, 3)}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px);--service:${esc(a.color)}" aria-label="${esc((operator() ? (a.clientName || "Walk-in") + " · " : "") + a.serviceName + " · " + clock(a.start) + " · " + a.duration + " minutes")}"><span class="event-time"><span class="event-start">${clock(a.start)}</span><span class="event-time-separator">–</span><span class="event-end">${clock(a.start + a.duration)}</span></span>${operator() ? '<span class="drag-grip" aria-hidden="true">⠿</span>' : ""}<strong>${esc(operator() ? a.clientName || "Walk-in" : a.serviceName)}</strong><span class="event-service">${operator() ? esc(a.serviceName) : a.duration + " minutes"}</span><span class="event-room">${esc(r.kind === "room" ? therapist(a.therapistId)?.name : room(a.roomId)?.name + " · table " + (a.bed + 1))}</span>${a.requestedTherapistId ? '<span class="request-heart" title="Requested therapist">♥</span>' : ""}</div>`;
@@ -1664,8 +1707,9 @@ function calendarBlockDialog(existing = null, defaults = {}) {
   );
 }
 function appointmentDetails(a) {
+  if (!a) return;
   showDrawer(
-    "Appointment",
+    isImportedAppointment(a) ? "Imported appointment" : "Appointment",
     prettyDate(a.date),
     appointmentDetailsHTML(a, {
       role: state.user.role,

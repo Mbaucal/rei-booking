@@ -41,6 +41,10 @@ jobs:
         env:
           REI_BROWSER_ARTIFACTS: browser-artifacts
         run: REI_PLAYWRIGHT_MODULE="$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/index.mjs" node scripts/test-calendar-browser.mjs
+      - name: Check imported history on calendar dates
+        env:
+          REI_BROWSER_ARTIFACTS: browser-artifacts
+        run: REI_PLAYWRIGHT_MODULE="$RUNNER_TEMP/rei-browser-tools/node_modules/playwright/index.mjs" node scripts/test-calendar-history-browser.mjs
       - name: Keep fictional calendar screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -40,6 +40,7 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
       "history-preview.mjs",
       "history-salon.mjs",
       "history-linking.mjs",
+      "calendar-history.mjs",
       "history-identity-schema.mjs",
       "history-salon-schema.mjs",
       "history-reports.mjs",

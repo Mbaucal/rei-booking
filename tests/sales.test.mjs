@@ -55,6 +55,7 @@ test("Sales Worker + D1: atomic checkout, immutable gifts and independently addr
         "history-preview.mjs",
         "history-salon.mjs",
         "history-linking.mjs",
+        "calendar-history.mjs",
         "history-identity-schema.mjs",
         "history-salon-schema.mjs",
         "history-reports.mjs",

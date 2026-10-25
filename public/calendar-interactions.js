@@ -191,6 +191,13 @@ export function mountCalendarInteractions({
     };
   }
   for (const column of columns) {
+    const columnResource = resource(column);
+    if (
+      !columnResource ||
+      columnResource.historyOnly ||
+      (columnResource.kind === "therapist" && columnResource.active === false)
+    )
+      continue;
     column.tabIndex = 0;
     column.setAttribute(
       "aria-label",

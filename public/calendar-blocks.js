@@ -31,7 +31,8 @@ export function calendarResourceItems(
     ...appointments
       .filter(
         (a) =>
-          !["cancelled", "no_show"].includes(a.status) &&
+          (a.imported === true ||
+            !["cancelled", "no_show"].includes(a.status)) &&
           (resource.kind === "therapist"
             ? a.therapistId === resource.id
             : a.roomId === resource.id),

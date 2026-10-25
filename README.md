@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.16.1** — 25 October 2026.
+Current implementation release, **0.18.1** — 25 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -24,6 +24,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Treatment variants with duration, price and calendar colour.
 - An empty treatment catalogue explains the setup requirement and gives the owner a direct Add treatment route from Calendar. Reception is directed to the owner. Services and prices are entered explicitly, with no automatic sample records.
 - Daily calendar by therapist, room or both; two-table couple rooms; current Belgrade time.
+- Confirmed imported history also appears on its original calendar dates, with Imported labels, original source statuses and read-only details. Explicitly mapped therapists share their existing column; unmapped source therapists get historical columns without creating or activating staff. Imported records reserve no new slots, and rooms/tables are never guessed. Reception sees operational details; therapist accounts receive no client identity or financial fields. Cancelled/no-show history is visible but excluded from the active appointment count.
 - Phone Calendar is schedule-first: a compact date bar, bottom navigation and contextual Add/View/More menus replace the desktop rail and large toolbar. Empty-treatment setup remains directly reachable. The grid fills the remaining viewport, with three equal-width resource columns and a compact 60-pixel hour; desktop retains its 120-pixel hour. Each room has one column: a lone card uses its full width, while overlapping appointments and notes share lanes within it. Physical tables remain assigned and capacity is enforced; an empty-room click or drop selects an available table rather than a hidden left/right table lane. Resizing preserves the logical scroll position and does not discard an active reschedule draft.
 - Touch layouts use readable form controls and constrain ordinary pinch/double-tap gestures while retaining one-finger scrolling and appointment dragging. Browser and system accessibility zoom remain under the user's control. Native-app/PWA installation and offline booking are not included in this release.
 - Calendar uses four 15-minute divisions per hour. Empty-slot selection uses 15-minute starts; existing appointment movement uses independent 5-minute steps. The full-day grid runs from 00:00 to 24:00, with visible boundary labels and an initial view near working hours.

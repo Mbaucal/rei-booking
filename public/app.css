@@ -759,6 +759,55 @@ main {
 .calendar-event.dragging {
   opacity: 0.35;
 }
+.calendar-event.is-imported .event-time {
+  padding-right: 0;
+}
+.calendar-event.is-imported .event-origin {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  max-width: calc(100% - 8px);
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #fffdf8dc;
+  font-size: 9px;
+  line-height: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-event.is-imported:has(.request-heart) .event-origin {
+  right: 30px;
+}
+.calendar-event.is-released {
+  background: #eeeee9;
+  border-color: #d2d4cb;
+  color: #526159;
+}
+.calendar-event .event-history-status {
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.history-calendar-label {
+  color: var(--muted);
+  margin: 0 0 16px;
+  font-size: 12px;
+}
+.calendar-history-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
 .now-line {
   position: absolute;
   height: 2px;
@@ -2814,6 +2863,42 @@ body:has(.is-rescheduling) .calendar-today-floating {
     width: 11px;
     height: 11px;
     font-size: 10px;
+  }
+  .calendar-event.is-imported .event-origin {
+    right: 1px;
+    bottom: 0;
+    padding: 0 2px;
+    font-size: 8px;
+    line-height: 10px;
+  }
+  .calendar-event.is-imported:has(.request-heart) .event-origin {
+    right: 16px;
+  }
+  .calendar-event.is-imported.short strong {
+    padding-right: 37px;
+  }
+  .calendar-event.is-imported.very-short strong {
+    padding-right: 0;
+  }
+  .calendar-event.is-imported.very-short .event-origin {
+    position: static;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+  .calendar-event .event-history-status {
+    font-size: 9px;
+    line-height: 11px;
+  }
+  .calendar-history-notice {
+    margin: 0;
+    border-radius: 0;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+  .calendar-history-notice .btn {
+    min-height: 36px;
+    padding: 4px 8px;
+    font-size: 11px;
   }
   .calendar-block {
     padding: 2px 4px;

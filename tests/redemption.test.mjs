@@ -37,6 +37,7 @@ test("Voucher Worker + D1: balances, linked treatments, concurrent use and corre
         "history-preview.mjs",
         "history-salon.mjs",
         "history-linking.mjs",
+        "calendar-history.mjs",
         "history-identity-schema.mjs",
         "history-salon-schema.mjs",
         "history-reports.mjs",

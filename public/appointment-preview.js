@@ -1,3 +1,8 @@
+import {
+  isImportedAppointment,
+  calendarHistoryDetailsHTML,
+} from "./calendar-history.js";
+
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -38,6 +43,8 @@ export function appointmentDetailsHTML(
   appointment,
   { role, catalogue, variant = "summary" },
 ) {
+  if (isImportedAppointment(appointment))
+    return calendarHistoryDetailsHTML(appointment, { role, variant });
   const a = appointment,
     preview = variant === "preview";
   const operator = role === "owner" || role === "reception";
