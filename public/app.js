@@ -24,6 +24,7 @@ import {
 import { renderClientTransfer } from "./client-transfer.js";
 import { renderHistoryPreview } from "./history-preview.js";
 import { renderHistorySalon } from "./history-salon.js";
+import { renderHistoryLinking } from "./history-linking.js";
 import { mountClientHistory } from "./client-history.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
@@ -405,6 +406,7 @@ async function setPage(page, monthlyFilters = null) {
     "client-transfer": "Clients",
     "history-preview": "Appointment history",
     "history-salon": "Set up from history",
+    "history-links": "Link imported clients",
     team: "Team",
     services: "Treatments",
     users: "Accounts",
@@ -417,9 +419,12 @@ async function setPage(page, monthlyFilters = null) {
         b.dataset.page ===
           (page === "monthly"
             ? "reports"
-            : ["client-transfer", "history-preview", "history-salon"].includes(
-                  page,
-                )
+            : [
+                  "client-transfer",
+                  "history-preview",
+                  "history-salon",
+                  "history-links",
+                ].includes(page)
               ? "clients"
               : page),
       ),
@@ -497,6 +502,16 @@ async function setPage(page, monthlyFilters = null) {
           await setPage(next);
         },
       });
+    } else if (page === "history-links") {
+      const version = state.version;
+      historyPreviewCleanup = renderHistoryLinking({
+        root: $("page-content"),
+        api,
+        esc,
+        isCurrent: () => state.version === version && owner(),
+        back: () => setPage("history-preview"),
+        openProfile: clientProfile,
+      });
     } else if (page === "history-preview") {
       const version = state.version;
       historyPreviewCleanup = renderHistoryPreview({
@@ -507,6 +522,7 @@ async function setPage(page, monthlyFilters = null) {
         back: () => setPage("clients"),
         openProfile: clientProfile,
         openSetup: () => setPage("history-salon"),
+        openLinks: () => setPage("history-links"),
       });
     } else if (page === "client-transfer") {
       const version = state.version;
@@ -575,9 +591,12 @@ function updateMobileNavigation() {
   const activePage =
     state.page === "monthly"
       ? "reports"
-      : ["client-transfer", "history-preview", "history-salon"].includes(
-            state.page,
-          )
+      : [
+            "client-transfer",
+            "history-preview",
+            "history-salon",
+            "history-links",
+          ].includes(state.page)
         ? "clients"
         : state.page;
   $("mobile-navigation")

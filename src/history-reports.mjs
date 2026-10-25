@@ -74,7 +74,7 @@ export async function loadHistoricalReportRows(db, { from, to }) {
       json_extract(h.record_json,'$.sourceCancelledAt') AS source_cancelled_at,
       (SELECT COUNT(*) FROM history_archive x WHERE x.source=h.source AND x.ref_hash=h.ref_hash) AS reference_lines,
       EXISTS(SELECT 1 FROM appointments a WHERE a.client_id=h.client_id AND a.date=h.date AND a.start_minute<h.start_minute+h.duration AND h.start_minute<a.start_minute+a.duration) AS native_overlap
-      FROM history_archive h WHERE h.date>=? AND h.date<=? ORDER BY h.date,h.start_minute,h.id LIMIT 50001`,
+      FROM history_archive_effective h WHERE h.date>=? AND h.date<=? ORDER BY h.date,h.start_minute,h.id LIMIT 50001`,
       from,
       to,
     ),

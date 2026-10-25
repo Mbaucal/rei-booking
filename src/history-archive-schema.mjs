@@ -1,3 +1,5 @@
+import { HISTORY_BULK_SCHEMA } from "./history-bulk-schema.mjs";
+import { ensureHistoryIdentitySchema } from "./history-identity-schema.mjs";
 // Accepted source evidence is separate from live appointments and financial reports.
 export const HISTORY_ARCHIVE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS history_archive_state (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL)`,
@@ -52,7 +54,12 @@ export async function ensureHistoryArchiveSchema(db) {
   let promise = initialized.get(db);
   if (!promise) {
     promise = db
-      .batch(HISTORY_ARCHIVE_SCHEMA.map((q) => db.prepare(q)))
+      .batch(
+        [...HISTORY_ARCHIVE_SCHEMA, ...HISTORY_BULK_SCHEMA].map((q) =>
+          db.prepare(q),
+        ),
+      )
+      .then(() => ensureHistoryIdentitySchema(db))
       .catch((e) => {
         initialized.delete(db);
         throw e;

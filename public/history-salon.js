@@ -96,7 +96,7 @@ export function renderHistorySalon({
   function render() {
     if (!preview.summary.rows) {
       $("salon-content").innerHTML =
-        '<section class="history-card"><h3>No saved appointment history yet</h3><p>Finish the import confirmation first. Uploading a CSV or saving a preview alone does not import its rows.</p><button class="btn primary" id="salon-import">Open history import</button></section>';
+        '<section class="history-card"><h3>No saved appointment history yet</h3><p>Open your saved history review and confirm the import first. You can import unresolved rows without client links; there is no need to match every client.</p><button class="btn primary" id="salon-import">Open history import</button></section>';
       $("salon-import").onclick = back;
       return;
     }

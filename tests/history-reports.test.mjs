@@ -13,6 +13,11 @@ import {
   comparison,
 } from "../src/reports.mjs";
 import { HISTORY_SALON_SCHEMA } from "../src/history-salon-schema.mjs";
+import { CLIENT_CONTACT_SCHEMA } from "../src/client-contacts.mjs";
+import { CLIENT_TRANSFER_SCHEMA } from "../src/client-transfer-schema.mjs";
+import { HISTORY_PREVIEW_SCHEMA } from "../src/history-preview-schema.mjs";
+import { HISTORY_ARCHIVE_SCHEMA } from "../src/history-archive-schema.mjs";
+import { HISTORY_BULK_SCHEMA } from "../src/history-bulk-schema.mjs";
 const options = (extra = {}) =>
   reportOptions(
     new URLSearchParams({
@@ -70,9 +75,22 @@ const history = (id, extra = {}) => ({
 function fixture() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(
-    `CREATE TABLE audit_log(id INTEGER PRIMARY KEY); CREATE TABLE users(id TEXT PRIMARY KEY); CREATE TABLE clients(id TEXT PRIMARY KEY); CREATE TABLE therapists(id TEXT PRIMARY KEY,name TEXT); CREATE TABLE services(id TEXT PRIMARY KEY,name TEXT); CREATE TABLE history_archive_state(id INTEGER PRIMARY KEY,revision INTEGER); INSERT INTO history_archive_state VALUES(1,7); CREATE TABLE history_archive(id TEXT,source TEXT,ref_hash TEXT,client_id TEXT,source_status TEXT,completion_state TEXT,date TEXT,start_minute INTEGER,duration INTEGER,record_json TEXT); CREATE INDEX history_ref ON history_archive(source,ref_hash); CREATE TABLE appointments(id TEXT,client_id TEXT,date TEXT,start_minute INTEGER,duration INTEGER);`,
+    `CREATE TABLE audit_log(id INTEGER PRIMARY KEY); CREATE TABLE users(id TEXT PRIMARY KEY); CREATE TABLE clients(id TEXT PRIMARY KEY); CREATE TABLE therapists(id TEXT PRIMARY KEY,name TEXT); CREATE TABLE services(id TEXT PRIMARY KEY,name TEXT); CREATE TABLE appointments(id TEXT,client_id TEXT,date TEXT,start_minute INTEGER,duration INTEGER);`,
   );
-  for (const sql of HISTORY_SALON_SCHEMA) sqlite.exec(sql);
+  // Populate the real legacy archive, then let the production loader perform
+  // its identity migration. Reduced archive columns hide integration failures.
+  for (const sql of [
+    ...CLIENT_CONTACT_SCHEMA,
+    ...CLIENT_TRANSFER_SCHEMA,
+    ...HISTORY_PREVIEW_SCHEMA,
+    ...HISTORY_ARCHIVE_SCHEMA,
+    ...HISTORY_BULK_SCHEMA,
+    ...HISTORY_SALON_SCHEMA,
+  ])
+    sqlite.exec(sql);
+  sqlite.exec(
+    "INSERT INTO users VALUES('fixture-owner'); UPDATE history_archive_state SET revision=4 WHERE id=1;",
+  );
   function prepare(sql, args = []) {
     return {
       bind(...values) {
@@ -96,7 +114,17 @@ function fixture() {
   }
   const db = {
     prepare,
-    batch: async (statements) => statements.map((s) => s.execute()),
+    batch: async (statements) => {
+      sqlite.exec("BEGIN");
+      try {
+        const results = statements.map((s) => s.execute());
+        sqlite.exec("COMMIT");
+        return results;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
   };
   const insert = (id, overrides = {}) => {
     const record = {
@@ -118,19 +146,40 @@ function fixture() {
       },
       ...overrides.record,
     };
+    const source = overrides.source || "fictional",
+      ref = overrides.ref || id,
+      client = overrides.client || "private-client-id",
+      importId = `fixture-import:${source}`;
+    sqlite.prepare("INSERT OR IGNORE INTO clients(id) VALUES(?)").run(client);
     sqlite
-      .prepare("INSERT INTO history_archive VALUES(?,?,?,?,?,?,?,?,?,?)")
+      .prepare(
+        "INSERT OR IGNORE INTO history_imports(id,owner_id,request_id,confirm_hash,commit_token,source,preview_id,preview_version,receipt_json,created_at) VALUES(?,'fixture-owner',?,'fixture-confirm','fixture-token',?,'fixture-preview',1,'{}','2026-10-25')",
+      )
+      .run(importId, source, source);
+    sqlite
+      .prepare(
+        "INSERT OR IGNORE INTO history_archive_refs(source,ref_hash,reference,mode) VALUES(?,?,?,?)",
+      )
+      .run(source, ref, ref, overrides.ref ? "service-line" : "appointment");
+    sqlite
+      .prepare(
+        "INSERT INTO history_archive(id,import_id,source,ref_hash,line_key,client_id,evidence_hash,source_status,completion_state,date,start_minute,duration,record_json,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
       .run(
         id,
-        overrides.source || "fictional",
-        overrides.ref || id,
-        overrides.client || "private-client-id",
+        importId,
+        source,
+        ref,
+        overrides.ref ? `line:${id}` : "",
+        client,
+        `fixture-evidence:${id}`,
         overrides.status ?? "New",
         overrides.completion || "unknown",
         overrides.date || "2026-08-03",
         overrides.start ?? 600,
         overrides.duration || 60,
         JSON.stringify(record),
+        "2026-10-25",
       );
   };
   return { sqlite, db, insert };

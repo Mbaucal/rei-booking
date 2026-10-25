@@ -765,3 +765,36 @@
     scroll-margin-bottom: 300px;
   }
 }
+
+.history-preview .history-unlinked-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  margin: 14px 0;
+  cursor: pointer;
+}
+.history-preview .history-unlinked-choice input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.history-preview .history-unlinked-choice span {
+  min-width: 0;
+}
+.history-preview .history-unlinked-choice small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-weight: normal;
+}
+.history-preview .history-unlinked-review {
+  padding: 16px;
+  margin-top: 18px;
+  background: #faf7ec;
+  border: 1px solid var(--gold, #a8863d);
+  border-radius: 10px;
+}
+
+.history-linking .salon-candidate {
+  overflow-wrap: anywhere;
+}
