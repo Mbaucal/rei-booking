@@ -5,6 +5,12 @@ import { readFile, mkdir } from "node:fs/promises";
 import { resolve, extname, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { TREATMENT_COLOURS } from "../src/treatment-colours.mjs";
+import {
+  buildReport,
+  comparison,
+  reportCSV,
+  reportOptions,
+} from "../src/reports.mjs";
 
 const modulePath = process.env.REI_PLAYWRIGHT_MODULE;
 if (!modulePath)
@@ -101,6 +107,7 @@ function fixture() {
     mustChangePassword: false,
     serviceWrites: [],
     clientResponses: [],
+    clientProfileResponses: [],
     clients: [
       {
         id: "c1",
@@ -119,6 +126,11 @@ function fixture() {
     clientPhotos: new Map(),
     writes: [],
     requests: [],
+    reportRows: null,
+    reportResults: [],
+    reportWait: null,
+    reportFailure: false,
+    reportHistory: null,
     delayed: new Map(),
     failDates: new Set(),
     failNextWrite: false,
@@ -263,9 +275,37 @@ const server = createServer(async (req, res) => {
           (c) => c.id === url.pathname.split("/").at(-1),
         );
         if (!client) return json({ error: "Fixture client not found" }, 404);
+        const appointments = f.appointments
+            .filter((a) => a.clientId === client.id)
+            .sort(
+              (a, b) =>
+                b.date.localeCompare(a.date) ||
+                b.start - a.start ||
+                b.id.localeCompare(a.id),
+            ),
+          page = Number(url.searchParams.get("appointments_page") || 0),
+          pageSize = 50,
+          totalPages = Math.max(1, Math.ceil(appointments.length / pageSize));
+        if (!Number.isInteger(page) || page < 0 || page >= totalPages)
+          return json({ error: "Fictional appointment page not found" }, 400);
+        const response = f.clientProfileResponses.shift();
+        if (response?.wait) await response.wait.promise;
+        if (response?.fail)
+          return json({ error: "Fictional booking-history outage" }, 503);
         return json({
           client,
-          appointments: f.appointments.filter((a) => a.clientId === client.id),
+          appointments: appointments.slice(
+            page * pageSize,
+            (page + 1) * pageSize,
+          ),
+          appointmentSummary: {
+            total: appointments.length,
+            completed: appointments.filter((a) => a.status === "done").length,
+            cancelled: appointments.filter((a) => a.status === "cancelled")
+              .length,
+            noShow: appointments.filter((a) => a.status === "no_show").length,
+          },
+          appointmentPagination: { page, pageSize, totalPages },
         });
       }
       if (
@@ -346,6 +386,39 @@ const server = createServer(async (req, res) => {
             ),
           },
         });
+      if (
+        f.reportRows &&
+        ["/api/reports/appointments", "/api/reports/appointments.csv"].includes(
+          url.pathname,
+        )
+      ) {
+        const options = reportOptions(url.searchParams, "2026-10-26"),
+          result = buildReport(f.reportRows, options),
+          previous = buildReport(f.reportRows, {
+            ...options,
+            from: options.previousFrom,
+            to: options.previousTo,
+          });
+        result.comparison = comparison(result.totals, previous.totals);
+        result.filters = f.catalogue;
+        result.history = f.reportHistory;
+        f.reportResults.push(result);
+        const delay = f.reportWait;
+        if (delay) await delay.promise;
+        if (f.reportFailure)
+          return json({ error: "Fictional report outage" }, 503);
+        if (url.pathname.endsWith(".csv")) {
+          res.writeHead(200, { "Content-Type": "text/csv" });
+          return res.end(
+            reportCSV(
+              result,
+              url.searchParams.get("view") || "summary",
+              url.searchParams.get("bonuses") !== "0",
+            ),
+          );
+        }
+        return json(result);
+      }
       if (url.pathname === "/api/reports/appointments")
         return json({
           options: { from: date, to: date },
@@ -557,6 +630,11 @@ let passed = 0;
 const failures = [];
 
 async function scenario(name, device, run) {
+  if (
+    process.env.REI_BROWSER_SCENARIO &&
+    !name.includes(process.env.REI_BROWSER_SCENARIO)
+  )
+    return;
   const id = name + "-" + device.name,
     f = fixture();
   fixtures.set(id, f);
@@ -644,6 +722,7 @@ async function scenario(name, device, run) {
     for (const delay of f.delayed.values()) delay.release();
     f.writeWait?.release();
     f.blockWriteWait?.release();
+    f.reportWait?.release();
     await context.close();
     fixtures.delete(id);
   }
@@ -1225,8 +1304,375 @@ function assertBlockSnapshot(saved, original, target) {
     assert.equal(saved[key], value, key);
 }
 
+function reportHandoffFixture(f) {
+  const native = (id, extra = {}) => ({
+    id,
+    therapist_id: "tA",
+    therapist_name: "QA Therapist A",
+    service_id: "s60",
+    service_name: "QA Massage",
+    date: "2026-10-20",
+    start_minute: 600,
+    duration: 60,
+    created_at: "2026-10-01T10:00:00Z",
+    cancelled_at: null,
+    gross_cents: 470000,
+    net_cents: 470000,
+    status: "done",
+    requested_therapist_id: null,
+    bonus_regular_cents_hour: 10000,
+    bonus_requested_cents_hour: 50000,
+    ...extra,
+  });
+  const history = (id, extra = {}) => ({
+    id: `history:${id}`,
+    report_source: "history",
+    source: "fictional",
+    visit_key: JSON.stringify(["fictional", id]),
+    therapist_id: "tA",
+    therapist_name: "QA Therapist A",
+    service_id: "s60",
+    service_name: "QA Massage",
+    date: "2026-10-23",
+    start_minute: 600,
+    duration: 45,
+    status: "booked",
+    source_status: "New",
+    completion_state: "unknown",
+    counts_as_visit: true,
+    request_state: "unknown",
+    source_net_sales_minor: 230000,
+    currency: "RSD",
+    minor_unit_digits: 2,
+    money_basis: "source",
+    source_time_zone: null,
+    native_overlap: false,
+    ...extra,
+  });
+  f.reportRows = [
+    native("qa-regular"),
+    native("qa-requested", {
+      start_minute: 720,
+      duration: 90,
+      gross_cents: 590000,
+      net_cents: 590000,
+      requested_therapist_id: "tA",
+    }),
+    native("qa-cancelled", { status: "cancelled" }),
+    native("qa-no-show", { status: "no_show" }),
+    native("qa-previous-month", { date: "2026-09-05" }),
+    history("qa-history"),
+    history("qa-history-cancelled", {
+      status: "cancelled",
+      source_status: "Cancelled",
+      counts_as_visit: false,
+    }),
+  ];
+}
+const reportControl = (page, name) =>
+  page.locator(`#report-filter [name="${name}"]`);
+async function waitForReport(page, dashboard = false) {
+  await page
+    .locator(dashboard ? "#open-reports:enabled" : "#report-export:enabled")
+    .waitFor();
+}
+async function narrowSavedReport(page) {
+  await navigate(page, "reports");
+  await waitForReport(page);
+  for (const [name, value] of Object.entries({
+    therapist: "tB",
+    service: "s90",
+    status: "cancelled",
+    requested: "yes",
+    group: "therapist_day",
+    dayBasis: "calendar",
+  }))
+    await reportControl(page, name).selectOption(value);
+  await page.locator('#report-filter [type="submit"]').click();
+  await waitForReport(page);
+  await page.locator('[name="view"]').selectOption("details");
+}
+async function assertUnrestrictedDetails(page, f, dashboardReport) {
+  await waitForReport(page);
+  for (const [name, expected] of Object.entries({
+    preset: dashboardReport.options.preset,
+    source: dashboardReport.options.source,
+    from: dashboardReport.options.from,
+    to: dashboardReport.options.to,
+    group: dashboardReport.options.group,
+    dayBasis: dashboardReport.options.dayBasis,
+    therapist: "",
+    service: "",
+    status: "all",
+    requested: "all",
+  }))
+    assert.equal(await reportControl(page, name).inputValue(), expected, name);
+  assert.equal(await page.locator('[name="view"]').inputValue(), "summary");
+  const detailReport = f.reportResults.at(-1);
+  assert.deepEqual(detailReport.options, dashboardReport.options);
+  assert.deepEqual(detailReport.totals, dashboardReport.totals);
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#report-export").click();
+  const download = await downloadPromise;
+  const chunks = [];
+  for await (const chunk of await download.createReadStream())
+    chunks.push(chunk);
+  const csv = Buffer.concat(chunks)
+    .toString("utf8")
+    .replace(/^\uFEFF/, "");
+  assert.equal(
+    csv.replace(/\r\n/g, "\n"),
+    reportCSV(detailReport)
+      .replace(/^\uFEFF/, "")
+      .replace(/\r\n/g, "\n"),
+  );
+  assert.deepEqual(f.reportResults.at(-1).options, dashboardReport.options);
+}
+
 try {
+  await scenario(
+    "client booking profile keeps lifetime counts across pages, retry and abandoned responses",
+    phone,
+    async ({ page, f }) => {
+      f.clients.push({
+        id: "c2",
+        name: "Another Fictional Client",
+        phone: "+381600000002",
+      });
+      f.appointments = Array.from({ length: 55 }, (_, index) => ({
+        ...booking(
+          `profile-${String(index).padStart(2, "0")}`,
+          "tA",
+          "r1",
+          0,
+          600 + index * 5,
+        ),
+        status:
+          index < 51
+            ? "done"
+            : index < 53
+              ? "cancelled"
+              : index === 53
+                ? "no_show"
+                : "booked",
+      }));
+      f.appointments.push({
+        ...booking("other-client-booking", "tB", "r2", 0),
+        clientId: "c2",
+        status: "done",
+      });
+      await page.goto(origin + "#page=clients");
+      await page.locator('[data-profile="c1"]').click();
+      await page.locator("#client-bookings-next").waitFor();
+      const profile = page.locator("#client-native-bookings");
+      const assertLifetime = async () => {
+        assert.match(await profile.innerText(), /51 completed visits/);
+        assert.match(
+          await profile.innerText(),
+          /55 bookings · 2 cancelled · 1 no-shows/,
+        );
+        assert.doesNotMatch(await profile.innerText(), /RSD|5900|4700/);
+      };
+      await assertLifetime();
+      assert.equal(await profile.locator("[data-client-booking]").count(), 50);
+      assert.equal(
+        await page.locator("#client-bookings-prev").isDisabled(),
+        true,
+      );
+      await page.locator("#client-bookings-next").click();
+      await page.locator("#client-bookings-next:disabled").waitFor();
+      await page.waitForFunction(() =>
+        document
+          .querySelector("#client-native-bookings")
+          ?.textContent.includes("Page 2 of 2"),
+      );
+      assert.equal(await profile.locator("[data-client-booking]").count(), 5);
+      await assertLifetime();
+      await page.locator("#client-bookings-prev").click();
+      await page.waitForFunction(() =>
+        document
+          .querySelector("#client-native-bookings")
+          ?.textContent.includes("Page 1 of 2"),
+      );
+      f.clientProfileResponses.push({ fail: true });
+      await page.locator("#client-bookings-next").click();
+      await page.locator("#client-bookings-retry").waitFor();
+      assert.match(
+        await page.locator("#client-bookings-error").innerText(),
+        /booking-history outage/,
+      );
+      assert.equal(await profile.locator("[data-client-booking]").count(), 50);
+      await assertLifetime();
+      await page.locator("#client-bookings-retry").click();
+      await page.waitForFunction(() =>
+        document
+          .querySelector("#client-native-bookings")
+          ?.textContent.includes("Page 2 of 2"),
+      );
+      assert.equal(await profile.locator("[data-client-booking]").count(), 5);
+      await page.locator("#client-bookings-prev").click();
+      await page.waitForFunction(() =>
+        document
+          .querySelector("#client-native-bookings")
+          ?.textContent.includes("Page 1 of 2"),
+      );
+
+      const held = deferred();
+      f.delayed.set("abandoned-client-bookings", held);
+      f.clientProfileResponses.push({ wait: held });
+      const pendingRequest = page.waitForRequest((request) => {
+        const url = new URL(request.url());
+        return (
+          url.pathname === "/api/clients/c1" &&
+          url.searchParams.get("appointments_page") === "1"
+        );
+      });
+      await page.locator("#client-bookings-next").click();
+      const request = await pendingRequest;
+      await page.locator("#client-native-bookings[aria-busy=true]").waitFor();
+      await page.locator("#drawer-close").click();
+      await page.locator('[data-profile="c2"]').click();
+      await page
+        .locator('[data-client-booking="other-client-booking"]')
+        .waitFor();
+      const pendingResponse = page.waitForResponse(
+        (response) => response.request() === request,
+      );
+      held.release();
+      await pendingResponse;
+      await renderedFrames(page);
+      assert.equal(
+        await page.locator("#drawer-title").innerText(),
+        "Another Fictional Client",
+      );
+      assert.equal(await profile.locator("[data-client-booking]").count(), 1);
+      assert.match(await profile.innerText(), /1 completed visit/);
+      assert.equal(await page.locator("#client-bookings-next").count(), 0);
+      assert.deepEqual(f.writes, []);
+    },
+  );
   for (const device of [desktop, phone]) {
+    await scenario(
+      "report handoff keeps Dashboard period, source and totals through details and CSV",
+      device,
+      async ({ page, f, open }) => {
+        reportHandoffFixture(f);
+        await open();
+        for (const [preset, source, minutes, included] of [
+          ["last7", "history", 45, 1],
+          ["last7", "all", 195, 3],
+          ["last_month", "native", 60, 1],
+        ]) {
+          await narrowSavedReport(page);
+          await navigate(page, "dashboard");
+          await waitForReport(page, true);
+          await reportControl(page, "preset").selectOption(preset);
+          await waitForReport(page, true);
+          await reportControl(page, "source").selectOption(source);
+          await waitForReport(page, true);
+          const dashboardReport = structuredClone(f.reportResults.at(-1));
+          assert.equal(dashboardReport.totals.totalMinutes, minutes);
+          assert.equal(dashboardReport.totals.includedTreatments, included);
+          if (source === "all") {
+            assert.equal(dashboardReport.totals.totalBonusCents, 85000);
+            assert.equal(dashboardReport.totals.revenueCents, 1060000);
+          }
+          if (preset === "last_month") {
+            assert.equal(dashboardReport.options.previousFrom, "2026-08-01");
+            assert.equal(dashboardReport.options.previousTo, "2026-08-31");
+          }
+          const period = await page.locator("#report-period").innerText();
+          await page.locator("#open-reports").click();
+          await assertUnrestrictedDetails(page, f, dashboardReport);
+          assert.equal(
+            await page.locator("#report-period").innerText(),
+            period,
+          );
+        }
+        assert.deepEqual(f.writes, []);
+      },
+    );
+    await scenario(
+      "report handoff clears stale narrow filters when showing imported dates",
+      device,
+      async ({ page, f, open }) => {
+        reportHandoffFixture(f);
+        f.reportRows = f.reportRows.filter(
+          (row) => row.report_source === "history",
+        );
+        for (const row of f.reportRows) row.date = "2026-04-10";
+        f.reportHistory = {
+          totalRows: 2,
+          minDate: "2026-04-10",
+          maxDate: "2026-04-10",
+        };
+        await open();
+        await narrowSavedReport(page);
+        await navigate(page, "dashboard");
+        await waitForReport(page, true);
+        await reportControl(page, "source").selectOption("history");
+        await waitForReport(page, true);
+        await page.locator("#report-show-history-dates").click();
+        await waitForReport(page);
+        const details = f.reportResults.at(-1);
+        assert.equal(details.options.preset, "custom");
+        assert.equal(details.options.source, "history");
+        assert.equal(details.options.from, "2026-04-10");
+        assert.equal(details.options.to, "2026-04-10");
+        assert.equal(details.totals.includedTreatments, 1);
+        assert.equal(details.totals.totalMinutes, 45);
+        await assertUnrestrictedDetails(page, f, structuredClone(details));
+      },
+    );
+    await scenario(
+      "report handoff disables stale drilldown while loading and after an error",
+      device,
+      async ({ page, f, open }) => {
+        reportHandoffFixture(f);
+        await open();
+        await navigate(page, "dashboard");
+        await waitForReport(page, true);
+        f.reportWait = deferred();
+        await reportControl(page, "preset").selectOption("last7");
+        await page.locator("#open-reports:disabled").waitFor();
+        const detailedRequests = () =>
+          f.requests.filter(
+            (request) =>
+              request.path === "/api/reports/appointments" &&
+              new URLSearchParams(request.query).has("therapist"),
+          ).length;
+        const count = detailedRequests();
+        await page
+          .locator("#open-reports")
+          .evaluate((button) => button.click());
+        assert.equal(
+          await page.locator("#app").getAttribute("data-page"),
+          "dashboard",
+        );
+        assert.equal(detailedRequests(), count);
+        f.reportFailure = true;
+        f.reportWait.release();
+        await page
+          .locator("#report-error")
+          .filter({ hasText: "Fictional report outage" })
+          .waitFor();
+        assert.equal(await page.locator("#open-reports").isDisabled(), true);
+        await page
+          .locator("#open-reports")
+          .evaluate((button) => button.click());
+        assert.equal(
+          await page.locator("#app").getAttribute("data-page"),
+          "dashboard",
+        );
+        f.reportWait = null;
+        f.reportFailure = false;
+        await page.locator('#report-filter [type="submit"]').click();
+        await waitForReport(page, true);
+        const report = structuredClone(f.reportResults.at(-1));
+        await page.locator("#open-reports").click();
+        await assertUnrestrictedDetails(page, f, report);
+      },
+    );
     await scenario(
       "refresh retains calendar date and resource mode and the current management page",
       device,

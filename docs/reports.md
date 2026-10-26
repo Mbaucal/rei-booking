@@ -4,6 +4,8 @@ Release 0.2 implements the previously approved report prototype with authenticat
 
 ## Periods and totals
 
+Opening detailed reports from Dashboard carries the loaded period and data source into Summary, clears earlier therapist/treatment/status/request filters, and preserves the comparison rule (including calendar-month comparisons). The action waits for the selected Dashboard report to finish loading. **Show imported dates** opens the archive date range with the same source and cleared detail filters.
+
 - Last 7 days / Last 30 days end yesterday in Belgrade. Their comparison is the immediately preceding equal-length period.
 - Last month is the complete previous calendar month and compares with the calendar month before it.
 - Custom periods include both endpoints, with a maximum of 366 days. Completed custom periods compare with the immediately preceding equal number of days. Periods including today or future dates have no full-day comparison.

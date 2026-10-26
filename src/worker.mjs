@@ -479,7 +479,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.18.3", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.18.4", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -711,21 +711,49 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
   const clientMatch = path.match(/^\/api\/clients\/([^/]+)$/);
   if (clientMatch && method === "GET") {
     requireRole(user, "owner", "reception");
+    const pages = url.searchParams.getAll("appointments_page"),
+      rawPage = pages[0] ?? "0",
+      pageSize = 50;
+    if (pages.length > 1 || !/^\d{1,7}$/.test(rawPage))
+      fail(400, "Choose a valid appointment page.");
+    const page = Number(rawPage);
     const client = await one(
       db,
       "SELECT c.id,c.name,c.phone,c.email,c.note,c.version,c.created_at,COALESCE(i.instagram,'') AS instagram FROM clients c LEFT JOIN client_instagram i ON i.client_id=c.id WHERE c.id=?",
       clientMatch[1],
     );
     if (!client) fail(404, "Client not found.");
-    const items = await all(
-      db,
-      APP_SELECT +
-        " WHERE a.client_id=? ORDER BY a.date DESC,a.start_minute DESC LIMIT 500",
-      client.id,
-    );
+    // The summary covers the whole client history, independently of this page.
+    // One batch gives the summary and rows the same database snapshot.
+    const [summaryResult, itemsResult] = await db.batch([
+      stmt(
+        db,
+        `SELECT COUNT(*) AS total,
+          COALESCE(SUM(status='done'),0) AS completed,
+          COALESCE(SUM(status='cancelled'),0) AS cancelled,
+          COALESCE(SUM(status='no_show'),0) AS noShow
+         FROM appointments WHERE client_id=?`,
+        client.id,
+      ),
+      stmt(
+        db,
+        APP_SELECT +
+          " WHERE a.client_id=? ORDER BY a.date DESC,a.start_minute DESC,a.id DESC LIMIT ? OFFSET ?",
+        client.id,
+        pageSize,
+        page * pageSize,
+      ),
+    ]);
+    const appointmentSummary = summaryResult.results[0],
+      totalPages = Math.max(1, Math.ceil(appointmentSummary.total / pageSize));
+    if (page >= totalPages) fail(400, "This appointment page does not exist.");
     return json({
       client: (await addPhotoMetadata(db, "clients", [client]))[0],
-      appointments: items.map((a) => projectAppointment(a, user.role)),
+      appointments: itemsResult.results.map((a) =>
+        projectAppointment(a, user.role),
+      ),
+      appointmentSummary,
+      appointmentPagination: { page, pageSize, totalPages },
     });
   }
   if (path === "/api/appointments" && method === "GET") {

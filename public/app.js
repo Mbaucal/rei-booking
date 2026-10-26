@@ -32,6 +32,7 @@ import { renderHistoryPreview } from "./history-preview.js";
 import { renderHistorySalon } from "./history-salon.js";
 import { renderHistoryLinking } from "./history-linking.js";
 import { mountClientHistory } from "./client-history.js";
+import { mountClientBookings } from "./client-bookings.js";
 import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
@@ -147,7 +148,8 @@ let state = {
   calendarLoadEpoch = 0,
   sessionEpoch = 0;
 let historyPreviewCleanup = null,
-  clientHistoryCleanup = null;
+  clientHistoryCleanup = null,
+  clientBookingsCleanup = null;
 const owner = () => state.user?.role === "owner",
   operator = () => ["owner", "reception"].includes(state.user?.role);
 const therapist = (id) => state.catalogue.therapists.find((t) => t.id === id),
@@ -239,6 +241,8 @@ let drawerEpoch = 0,
 function closeDrawer() {
   clientHistoryCleanup?.();
   clientHistoryCleanup = null;
+  clientBookingsCleanup?.();
+  clientBookingsCleanup = null;
   drawerEpoch++;
   const wasOpen = $("drawer").open;
   if (wasOpen) $("drawer").close();
@@ -265,6 +269,8 @@ function closeDrawer() {
 function showDrawer(title, kicker, html) {
   clientHistoryCleanup?.();
   clientHistoryCleanup = null;
+  clientBookingsCleanup?.();
+  clientBookingsCleanup = null;
   calendarReschedule?.cancel();
   appointmentPreview?.dismiss();
   calendarInteractions?.dismiss();
@@ -400,7 +406,7 @@ async function restorePageLocation() {
   }
   await setPage(route.page, null, { replace: true, reportId: route.reportId });
 }
-async function setPage(page, monthlyFilters = null, navigation = {}) {
+async function setPage(page, initialFilters = null, navigation = {}) {
   if (state.mustChangePassword || !canOpenPage(page, state.user?.role)) return;
   historyPreviewCleanup?.();
   historyPreviewCleanup = null;
@@ -475,7 +481,7 @@ async function setPage(page, monthlyFilters = null, navigation = {}) {
           download: downloadReport,
           openReports: () => setPage("reports"),
         },
-        monthlyFilters,
+        initialFilters,
         navigation.reportId || null,
       );
     } else if (page === "reports" || page === "dashboard") {
@@ -492,7 +498,8 @@ async function setPage(page, monthlyFilters = null, navigation = {}) {
           catalogue: state.catalogue,
           isCurrent: () => state.version === version && owner(),
           download: downloadReport,
-          openReports: () => setPage("reports"),
+          initialFilters,
+          openReports: (filters) => setPage("reports", filters),
           openMonthly: (filters) => setPage("monthly", filters),
         },
         page === "dashboard",
@@ -1865,30 +1872,47 @@ function clientDialog(c = null) {
 async function clientProfile(id, back = null) {
   const epoch = ++drawerEpoch;
   try {
-    const { client: c, appointments: items } = await api("/clients/" + id);
+    const profile = await api("/clients/" + id);
+    const c = profile.client;
     if (epoch !== drawerEpoch || !operator()) return;
     showDrawer(
       c.name,
       "Client profile",
-      `<div class="profile-top">${avatar("clients", c, esc)}<div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}${c.instagram ? `<br><a href="https://www.instagram.com/${encodeURIComponent(c.instagram)}/" target="_blank" rel="noopener noreferrer">@${esc(c.instagram)}</a>` : ""}</p></div></div><h3 class="form-section">Client note</h3><p class="client-note">${esc(c.note || "No client note yet.")}</p><h3 class="form-section">Bookings in Rei</h3><strong>${items.filter((a) => a.status === "done").length} completed visits</strong><p class="hint">${items.filter((a) => a.status === "cancelled").length} cancelled · ${items.filter((a) => a.status === "no_show").length} no-shows</p><div class="history">${items.map((a) => `<article><strong>${esc(prettyDate(a.date))} · ${clock(a.start)}</strong><p>${esc(a.serviceName)} · ${a.duration} min</p><p>${esc(therapist(a.therapistId)?.name)} · ${esc(room(a.roomId)?.name)}</p><p><span class="status ${a.status}">${statusName(a.status)}</span>${a.requestedTherapistId ? " · ♥ Requested" : ""}</p></article>`).join("") || '<p class="hint">No appointments yet.</p>'}</div>`,
+      `<div class="profile-top">${avatar("clients", c, esc)}<div><h3>${esc(c.name)}</h3><p class="hint">${esc(c.phone || "No phone")}<br>${esc(c.email || "No email")}${c.instagram ? `<br><a href="https://www.instagram.com/${encodeURIComponent(c.instagram)}/" target="_blank" rel="noopener noreferrer">@${esc(c.instagram)}</a>` : ""}</p></div></div><h3 class="form-section">Client note</h3><p class="client-note">${esc(c.note || "No client note yet.")}</p>`,
     );
+    const bookingsRoot = document.createElement("section");
+    bookingsRoot.id = "client-native-bookings";
+    $("drawer-content").append(bookingsRoot);
     const historyRoot = document.createElement("section");
     historyRoot.id = "client-imported-history";
     $("drawer-content").append(historyRoot);
     const profileEpoch = drawerEpoch,
       profileSession = sessionEpoch;
+    const isProfileCurrent = () =>
+      $("drawer").open &&
+      drawerEpoch === profileEpoch &&
+      sessionEpoch === profileSession &&
+      operator();
+    clientBookingsCleanup = mountClientBookings({
+      root: bookingsRoot,
+      api,
+      esc,
+      prettyDate,
+      clock,
+      statusName,
+      therapistName: (id) => therapist(id)?.name || "Unknown therapist",
+      roomName: (id) => room(id)?.name || "Unknown room",
+      clientId: c.id,
+      initialData: profile,
+      isCurrent: () => bookingsRoot.isConnected && isProfileCurrent(),
+    });
     clientHistoryCleanup = mountClientHistory({
       root: historyRoot,
       api,
       esc,
       clientId: c.id,
       canViewSource: owner(),
-      isCurrent: () =>
-        historyRoot.isConnected &&
-        $("drawer").open &&
-        drawerEpoch === profileEpoch &&
-        sessionEpoch === profileSession &&
-        operator(),
+      isCurrent: () => historyRoot.isConnected && isProfileCurrent(),
     });
     $("drawer-footer").innerHTML =
       `${back ? '<button class="btn" id="profile-back">Back to appointment</button>' : ""}<button class="btn" id="profile-photo">Upload / change photo</button><button class="btn primary" id="profile-edit">Edit client</button>`;

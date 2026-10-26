@@ -27,6 +27,12 @@ Clients → New client / Edit client includes **Client note** and **Instagram**.
 
 While entering a phone, email or Instagram, the form checks for matches and displays the existing client's name and contact details. **Open profile** is available in Clients and Sales. **Use this client** selects the existing record in Calendar and Sales. Saving performs the same checks on the server; unique database constraints protect concurrent entries. There is no automatic merge or reassignment of booking history. Clearing an Instagram field releases that handle; saving an older client form without that field preserves it.
 
+## Native booking history
+
+The client profile's **Bookings in Rei** section uses lifetime totals for all Rei bookings, Completed visits, Cancelled and No-show. Rows are paginated in groups of 50, newest first; counts are not limited to the displayed page. Imported history keeps its separate source-status and visit rules.
+
+`GET /api/clients/:id?appointments_page=0` (owner/reception only) returns `client`, `appointments`, `appointmentSummary` (`total`, `completed`, `cancelled`, `noShow`) and `appointmentPagination` (`page`, `pageSize`, `totalPages`). Pages are zero-based, ordered by date/start/ID descending, and have a fixed size of 50. Summary and page rows are read in one batch. Invalid, duplicated or out-of-range page parameters return 400; an empty client has page 0 of one empty page. Financial projections and therapist denial remain enforced by the API. The profile offers Previous/Next, retries failed page loads and ignores responses after the profile closes or changes.
+
 ## Export
 
 Exports all clients independently of the 100-result search page, up to 50,000 records. The CSV includes Rei client ID, Full name, Phone, Email and Instagram. Notes are excluded unless selected. Photos and appointments are excluded.

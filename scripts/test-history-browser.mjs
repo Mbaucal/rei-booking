@@ -151,7 +151,17 @@ async function fixtureAPI(f, url, method, body, json) {
       (c) => c.id === url.pathname.split("/").at(-1),
     );
     return found
-      ? json({ client: found, appointments: [] })
+      ? json({
+          client: found,
+          appointments: [],
+          appointmentSummary: {
+            total: 0,
+            completed: 0,
+            cancelled: 0,
+            noShow: 0,
+          },
+          appointmentPagination: { page: 0, pageSize: 50, totalPages: 1 },
+        })
       : json({ error: "Unknown fictional client" }, 404);
   }
   if (url.pathname === "/api/history/salon/preview" && method === "GET") {

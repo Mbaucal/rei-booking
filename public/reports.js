@@ -29,6 +29,8 @@ const hours = (n) =>
     maximumFractionDigits: 2,
   }) + " h";
 export async function renderReports(ctx, dashboard = false, snapshot = null) {
+  if (!dashboard && !snapshot && ctx.initialFilters)
+    saved = { ...saved, ...ctx.initialFilters, view: "summary" };
   const viewState = snapshot
     ? { ...saved, bonuses: snapshot.includeBonuses !== false }
     : saved;
@@ -75,6 +77,22 @@ export async function renderReports(ctx, dashboard = false, snapshot = null) {
   function showError(error) {
     $("report-error").textContent = error.message;
     $("report-error").hidden = false;
+  }
+  function openDashboardDetails(range = {}) {
+    if (!dashboard || !report || !isCurrent()) return;
+    openReports({
+      preset: report.options.preset,
+      from: report.options.from,
+      to: report.options.to,
+      source: report.options.source,
+      group: report.options.group,
+      dayBasis: report.options.dayBasis,
+      therapist: "",
+      service: "",
+      status: "all",
+      requested: "all",
+      ...range,
+    });
   }
   function metric(label, value, change, format, cost = false) {
     let note = "";
@@ -162,8 +180,7 @@ export async function renderReports(ctx, dashboard = false, snapshot = null) {
       $("report-show-history-dates").onclick = () => {
         if (!isCurrent()) return;
         if (dashboard) {
-          Object.assign(saved, selectedRange, { source: dashboardSource });
-          openReports();
+          openDashboardDetails(selectedRange);
         } else {
           for (const [key, value] of Object.entries(selectedRange))
             filter.elements[key].value = value;
@@ -394,6 +411,7 @@ export async function renderReports(ctx, dashboard = false, snapshot = null) {
   async function load() {
     const seq = ++sequence;
     report = null;
+    if (dashboard) $("open-reports").disabled = true;
     $("report-error").hidden = true;
     $("report-history-dates").hidden = true;
     $("report-metrics").innerHTML = "";
@@ -420,6 +438,7 @@ export async function renderReports(ctx, dashboard = false, snapshot = null) {
       }
       refreshCatalogues();
       renderData();
+      if (dashboard) $("open-reports").disabled = false;
     } catch (error) {
       if (isCurrent() && seq === sequence) {
         $("report-period").textContent = "";
@@ -448,7 +467,7 @@ export async function renderReports(ctx, dashboard = false, snapshot = null) {
     if (dashboard) load();
   };
   datesVisibility();
-  if (dashboard) $("open-reports").onclick = openReports;
+  if (dashboard) $("open-reports").onclick = () => openDashboardDetails();
   else {
     root.querySelector('[name="view"]').onchange = (e) => {
       viewState.view = e.target.value;
