@@ -3062,6 +3062,109 @@ body:has(.is-rescheduling) .calendar-today-floating {
   padding-top: 20px;
   border-top: 1px solid var(--line);
 }
+
+.report-access-intro {
+  max-width: 760px;
+  margin-bottom: 20px;
+}
+.report-access-panel {
+  margin: 16px 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper, #fffdf8);
+}
+.report-access-panel h3 {
+  margin: 0 0 12px;
+}
+.report-access-panel p {
+  margin: 12px 0;
+}
+.report-access-create {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, 220px) auto;
+  gap: 12px;
+  align-items: end;
+}
+.report-access-secret {
+  border-color: var(--gold);
+  background: #fff8e8;
+}
+#report-token-secret {
+  width: 100%;
+  resize: vertical;
+  font-family: monospace;
+  overflow-wrap: anywhere;
+}
+.report-access-list-heading,
+.report-token-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.report-token-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.report-token-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.report-token-heading strong {
+  overflow-wrap: anywhere;
+}
+.report-token-dates {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.report-token-dates dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.report-token-dates dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.report-access-setup summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 4px 0;
+}
+.report-access-setup li {
+  margin: 16px 0;
+}
+.report-access-properties dt {
+  margin-top: 12px;
+}
+.report-access-properties dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .report-access-panel {
+    padding: 14px;
+  }
+  .report-access-create {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .report-token-dates {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .report-access-setup ol {
+    padding-left: 22px;
+  }
+  .report-access-setup code {
+    overflow-wrap: anywhere;
+  }
+}
 .account-access > .hint,
 .account-access > label,
 .account-access > button {

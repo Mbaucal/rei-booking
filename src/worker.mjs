@@ -1,3 +1,5 @@
+import { reportAccessRoutes, performanceApi } from "./report-access.mjs";
+import { loadPerformanceReport } from "./report-data.mjs";
 import { ensureAccountAccessSchema } from "./account-access-schema.mjs";
 import {
   loginIdentifier,
@@ -20,7 +22,6 @@ import { historyPreviewRoutes } from "./history-preview.mjs";
 import { historyArchiveRoutes } from "./history-archive.mjs";
 import { historySalonRoutes } from "./history-salon.mjs";
 import { historyLinkingRoutes } from "./history-linking.mjs";
-import { loadHistoricalReportRows } from "./history-reports.mjs";
 import { historyBulkRoutes } from "./history-bulk.mjs";
 import { monthlyRoutes, runMonthly } from "./monthly-reports.mjs";
 import { ensurePhotoSchema } from "./photo-schema.mjs";
@@ -67,13 +68,7 @@ import {
 } from "./treatment-colours.mjs";
 import { salesRoutes } from "./sales.mjs";
 import { emailWebhook } from "./voucher-email.mjs";
-import {
-  bonusInput,
-  reportOptions,
-  buildReport,
-  comparison,
-  reportCSV,
-} from "./reports.mjs";
+import { bonusInput, reportOptions, reportCSV } from "./reports.mjs";
 
 const now = () => new Date().toISOString();
 const json = (value, status = 200, headers = {}) =>
@@ -488,8 +483,10 @@ async function routes(request, env) {
   if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
+  if (path === "/api/v1/reports/performance")
+    return performanceApi(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.19.0", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.20.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const principal = await authenticate(request, db);
   await ensureAccountAccessSchema(db);
@@ -541,6 +538,8 @@ async function routes(request, env) {
   }
   if (!effective.preview && user.must_change_password)
     fail(403, "Change your temporary password before continuing.");
+  const reportAccessResponse = await reportAccessRoutes(request, env, user);
+  if (reportAccessResponse) return reportAccessResponse;
   const accountResponse = await accountAccessRoutes(request, db, user);
   if (accountResponse) return accountResponse;
   await ensureReportSchema(db);
@@ -599,59 +598,7 @@ async function routes(request, env) {
   ) {
     requireRole(user, "owner");
     const options = reportOptions(url.searchParams);
-    const historical = await loadHistoricalReportRows(db, {
-      from: options.compare ? options.previousFrom : options.from,
-      to: options.to,
-    });
-    const inputs = await db.batch([
-      stmt(
-        db,
-        `SELECT a.*,t.name AS therapist_name,rt.name AS requested_name,b.mode AS bonus_mode,b.regular_rate,b.requested_rate
-FROM appointments a JOIN therapists t ON t.id=a.therapist_id LEFT JOIN therapists rt ON rt.id=a.requested_therapist_id LEFT JOIN appointment_bonus_rules b ON b.appointment_id=a.id
-WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
-        options.compare ? options.previousFrom : options.from,
-        options.to,
-      ),
-      stmt(db, "SELECT id,name FROM therapists ORDER BY name"),
-      stmt(db, "SELECT id,name,duration FROM services ORDER BY name,duration"),
-      stmt(
-        db,
-        "SELECT (SELECT revision FROM history_archive_state WHERE id=1) AS archiveRevision,(SELECT revision FROM history_salon_state WHERE id=1) AS catalogueRevision,COALESCE(MAX(id),0) AS nativeAuditId FROM audit_log",
-      ),
-    ]);
-    const clocks = inputs[3].results[0];
-    if (
-      ["archiveRevision", "catalogueRevision", "nativeAuditId"].some(
-        (key) => clocks[key] !== historical.metadata[key],
-      )
-    )
-      fail(
-        409,
-        "Report data changed while it was being prepared. Run the report again.",
-      );
-    if (inputs[0].results.length > 20000)
-      fail(
-        400,
-        "Choose a shorter report period (maximum 20,000 Rei appointments).",
-      );
-    const rows = [...inputs[0].results, ...historical.rows];
-    const mergeById = (items) => [
-      ...new Map(items.map((v) => [v.id, v])).values(),
-    ];
-    const therapists = mergeById([
-      ...historical.therapists,
-      ...inputs[1].results,
-    ]);
-    const services = mergeById([...historical.services, ...inputs[2].results]);
-    const report = buildReport(rows, options, therapists);
-    const {
-      archiveRevision,
-      catalogueRevision,
-      nativeAuditId,
-      ...historySummary
-    } = historical.metadata;
-    report.history = historySummary;
-    report.filters = { therapists, services };
+    const { report } = await loadPerformanceReport(db, options);
     if (path.endsWith(".csv"))
       return new Response(
         reportCSV(
@@ -666,18 +613,7 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
           },
         },
       );
-    const previous = options.compare
-      ? buildReport(
-          rows,
-          { ...options, from: options.previousFrom, to: options.previousTo },
-          therapists,
-        ).totals
-      : null;
-    return json({
-      ...report,
-      previous,
-      comparison: previous ? comparison(report.totals, previous) : null,
-    });
+    return json(report);
   }
   if (path === "/api/clients/matches" && method === "GET") {
     requireRole(user, "owner", "reception");

@@ -8,13 +8,13 @@ All application UI is English. Conversations and planning can remain Serbian. Pr
 | ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | MBA-71 | Private repository and test environment | GitHub repository public; dedicated test Worker/D1 deployed; owner confirms hosted sign-in; device/backup acceptance pending                     |
 | MBA-72 | Calendar                                | Persistent day/calendar/API, therapist/room views, optional client, 5-minute edits, pointer drag, conflict protection; device acceptance pending |
-| MBA-73 | Clients and treatments                  | Persistent CRUD/search/history and treatment variants; private profile photos; imports pending                                                   |
-| MBA-74 | Permissions                             | Owner/reception/therapist server projections and protected actions; hosted acceptance pending                                                    |
+| MBA-73 | Clients and treatments                  | Persistent CRUD/search/history, treatment variants, private photos and client/history imports with review and deduplication                      |
+| MBA-74 | Permissions                             | Owner/reception/therapist API permissions; username access, Team account controls and read-only owner preview in v0.19                           |
 | MBA-79 | Team                                    | Profiles, weekly hours, dated time off, bonus configuration and account separation; private profile photos included                              |
 
 ## Reports and bonuses: MBA-80
 
-Implemented in v0.2 with persistent Worker/D1-backed report and CSV endpoints, Team rate settings, booking rate snapshots, owner-only access and Dashboard comparisons. Monthly delivery/archive is implemented in v0.7; Sheets credentials remain separate work.
+Implemented in v0.2 with persistent Worker/D1-backed report and CSV endpoints, Team rate settings, booking rate snapshots, owner-only access and Dashboard comparisons. Monthly delivery/archive is implemented in v0.7; scoped report credentials and the optional Sheets script are implemented in v0.20.
 
 Detailed rows: therapist, massage date/time, duration, full and discounted price, when booked, cancellation/status and requested flag. Filter/group by therapist, date/month and treatment. Summary: treatment count, completed hours, requested hours, earned treatment revenue, average earned revenue per massage, average hours per day and total hours for the chosen period. Implemented both denominators: default distinct dates with completed massages, or all calendar days in the selected/group period; labels and CSV identify the choice.
 
@@ -24,7 +24,7 @@ Main Dashboard: Last 7 days / Last 30 days, total earnings and change versus the
 
 ## Scheduled exports and integration: MBA-81 / MBA-82
 
-MBA-81 is implemented in v0.7: owner-selected monthly schedules, immutable report versions and CSV archive, Belgrade-time execution and catch-up, prior-month comparison, explicit corrections, verified-recipient notifications and persistent delivery state. Live sending stays disabled pending sender setup; hosted timing, delivery and device acceptance remain open. See [monthly reports](monthly-reports.md). Salon timezone and month boundary must be explicit. Optional owner-only scoped API for automatic Google Sheets Apps Script retrieval, with revoked credentials and clear report definitions. This is an application feature, not a ChatGPT reminder automation.
+MBA-81 is implemented in v0.7: owner-selected monthly schedules, immutable report versions and CSV archive, Belgrade-time execution and catch-up, prior-month comparison, explicit corrections, verified-recipient notifications and persistent delivery state. Live sending stays disabled pending sender setup; hosted timing, delivery and device acceptance remain open. See [monthly reports](monthly-reports.md). Salon timezone and month boundary must be explicit. MBA-82 is implemented in v0.20: owner-managed report-only credentials, a versioned aggregate API using the application report calculation, and a downloadable Apps Script. The script validates all year-sized responses before creating separate snapshot tabs, preserves existing sheets, and requires a successful manual sync before its optional daily trigger. Credentials are hashed, revocable and bound to the issuing account access version. Native revenue/bonuses remain separate from imported source money and unknown historical values. No real Google workbook, credentials or trigger have been configured. See [report API](report-api.md) and [Google Sheets setup](google-sheets.md). This is an application feature, not a ChatGPT reminder automation.
 
 ## Sales and gift vouchers: MBA-76
 
@@ -44,7 +44,7 @@ Optional upload/change/remove for clients and team, supported file validation, s
 
 ## Import: MBA-75
 
-Client CSV import/export is implemented in v0.8, with owner-only mapping/preview, explicit selection, safe duplicate handling, atomic confirmation and repeat receipts. See [client transfer](client-transfer.md). Real Fresha file acceptance and historical appointment import remain pending; do not infer completed/requested status or link clients using names alone.
+Client CSV import/export is implemented in v0.8, with owner-only mapping/preview, explicit selection, safe duplicate handling, atomic confirmation and repeat receipts. See [client transfer](client-transfer.md). Historical report import, therapist/treatment setup, explicit client links, duplicate detection, archive reconciliation and read-only historical calendar visibility are implemented. Real export coverage still requires user reconciliation; do not infer completed/requested status or link clients using names alone. Imported attendance counts every supplied status except no-show and cancelled; native completed-booking revenue and bonuses retain their separate calculation.
 
 Import clients and past appointments from exports, with preview, normalization, duplicate resolution and rollback/reconciliation. Retain original booking dates, treatment duration, therapist and request history where present. Work on copies; import real records only after access and recovery checks.
 

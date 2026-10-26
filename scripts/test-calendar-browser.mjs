@@ -154,6 +154,12 @@ function fixture() {
     reportWait: null,
     reportFailure: false,
     reportHistory: null,
+    reportCredentials: [],
+    reportCredentialWrites: [],
+    reportCredentialSecrets: new Map(),
+    reportCredentialResponses: [],
+    reportCredentialWriteResponses: [],
+    reportCredentialSequence: 0,
     delayed: new Map(),
     failDates: new Set(),
     failNextWrite: false,
@@ -462,6 +468,73 @@ const server = createServer(async (req, res) => {
           body: structuredClone(body),
         });
         return json({ id: saved.id, account: saved }, previous ? 200 : 201);
+      }
+      if (
+        /^\/api\/report-access\/tokens(?:\/[^/]+(?:\/rotate)?)?$/.test(
+          url.pathname,
+        )
+      ) {
+        if (f.role !== "owner" || f.preview)
+          return json({ error: "Owner access required" }, 403);
+        if (req.method === "GET") {
+          const response = f.reportCredentialResponses.shift();
+          if (response?.wait) await response.wait.promise;
+          if (response?.fail)
+            return json({ error: "Fictional report access outage" }, 503);
+          return json({
+            tokens: structuredClone(f.reportCredentials),
+            apiBase: origin + "/api",
+            scriptPath: "/rei-reports-sync.gs",
+            schemaVersion: "1",
+          });
+        }
+        const body = await accessBody(req),
+          response = f.reportCredentialWriteResponses.shift();
+        assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        if (response?.wait) await response.wait.promise;
+        if (response?.fail)
+          return json({ error: "Fictional credential save outage" }, 503);
+        const targetId = url.pathname.split("/")[4],
+          previous = f.reportCredentials.find((item) => item.id === targetId);
+        if (targetId && !previous)
+          return json({ error: "Credential not found" }, 404);
+        if (req.method === "DELETE") {
+          previous.revokedAt = "2026-10-26T12:00:00.000Z";
+          previous.active = false;
+          f.reportCredentialWrites.push({
+            method: req.method,
+            path: url.pathname,
+            body,
+          });
+          return json({ ok: true });
+        }
+        if (req.method !== "POST")
+          return json({ error: "Read-only action" }, 405);
+        if (previous) {
+          previous.revokedAt = "2026-10-26T12:00:00.000Z";
+          previous.active = false;
+        }
+        const id = `qa-report-key-${++f.reportCredentialSequence}`,
+          secret = `rei_rpt_FICTIONAL_SECRET_${String(f.reportCredentialSequence).padStart(32, "0")}`,
+          credential = {
+            id,
+            name: body.name || previous?.name || "QA Sheets",
+            scope: "reports:read",
+            createdAt: "2026-10-26T12:00:00.000Z",
+            expiresAt:
+              body.expiresInDays === null ? null : "2027-01-24T12:00:00.000Z",
+            lastUsedAt: null,
+            revokedAt: null,
+            active: true,
+          };
+        f.reportCredentials.push(credential);
+        f.reportCredentialSecrets.set(id, secret);
+        f.reportCredentialWrites.push({
+          method: req.method,
+          path: url.pathname,
+          body,
+        });
+        return json({ token: secret, credential }, 201);
       }
       if (
         f.preview &&
@@ -1755,8 +1828,256 @@ async function anonymousPreview(page) {
     /QA Therapist A/,
   );
 }
+async function openReportAccess(page) {
+  await page.goto(origin + "#page=reports");
+  await page.locator("#report-access-open").click();
+  await page.locator("#report-access-create").waitFor();
+}
+async function issueReportCredential(page, name = "QA spreadsheet") {
+  await page.locator("#report-access-name").fill(name);
+  await page.locator("#report-access-expiry").selectOption("90");
+  await page.locator("#report-access-submit").click();
+  await page.locator("#report-token-secret").waitFor();
+  return page.locator("#report-token-secret").inputValue();
+}
+async function secretAbsent(page, secret) {
+  assert.equal(await page.locator("#report-token-secret").isVisible(), false);
+  assert.equal(
+    await page.evaluate((value) => {
+      const inputs = [...document.querySelectorAll("input,textarea")].map(
+        (el) => el.value,
+      );
+      return [
+        document.documentElement.outerHTML,
+        location.href,
+        JSON.stringify(Object.entries(localStorage)),
+        JSON.stringify(Object.entries(sessionStorage)),
+        ...inputs,
+      ].some((s) => s.includes(value));
+    }, secret),
+    false,
+    "A secret is not retained in the DOM, URL or browser storage",
+  );
+}
 
 try {
+  for (const device of [desktop, phone]) {
+    await scenario(
+      "report access issues a one-time key and rotates or revokes it without exposing old secrets",
+      device,
+      async ({ page, f }) => {
+        await page.addInitScript(() => {
+          Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+              writeText: async (value) => {
+                window.qaCopiedReportToken = value;
+              },
+            },
+          });
+        });
+        await openReportAccess(page);
+        const secret = await issueReportCredential(page);
+        assert.equal(f.reportCredentialWrites.length, 1);
+        assert.deepEqual(f.reportCredentialWrites[0].body, {
+          name: "QA spreadsheet",
+          expiresInDays: 90,
+        });
+        assert.equal(
+          secret,
+          f.reportCredentialSecrets.get(f.reportCredentials[0].id),
+        );
+        await page.locator("#report-token-copy").click();
+        await page.waitForFunction(
+          (value) => window.qaCopiedReportToken === value,
+          secret,
+        );
+        assert.equal(
+          await page.locator("#report-access-submit").isDisabled(),
+          true,
+        );
+        await noPageOverflow(page, "Report access one-time secret");
+        await navigate(page, "team");
+        await page.locator("#team-add").waitFor();
+        await secretAbsent(page, secret);
+        await page.goBack();
+        await page.locator("#report-access-create").waitFor();
+        await secretAbsent(page, secret);
+        await page.reload();
+        await page.locator("#report-access-create").waitFor();
+        await secretAbsent(page, secret);
+        const oldId = f.reportCredentials[0].id;
+        await page.locator(`[data-token-rotate="${oldId}"]`).click();
+        assert.match(
+          await page.locator("#report-access-confirmation").innerText(),
+          /QA spreadsheet/,
+        );
+        await page.locator("#report-access-confirm").click();
+        await page.locator("#report-token-secret").waitFor();
+        const replacement = await page
+          .locator("#report-token-secret")
+          .inputValue();
+        assert.notEqual(replacement, secret);
+        assert.equal(f.reportCredentials[0].active, false);
+        assert.equal(f.reportCredentialWrites.length, 2);
+        await page.locator("#report-token-dismiss").click();
+        await secretAbsent(page, replacement);
+        const newId = f.reportCredentials.at(-1).id;
+        await page.locator(`[data-token-revoke="${newId}"]`).click();
+        assert.match(
+          await page.locator("#report-access-confirmation").innerText(),
+          /QA spreadsheet/,
+        );
+        await page.locator("#report-access-cancel").click();
+        assert.equal(f.reportCredentialWrites.length, 2);
+        await page.locator(`[data-token-revoke="${newId}"]`).click();
+        await page.locator("#report-access-confirm").click();
+        await page.waitForFunction(
+          () => document.querySelector("#report-access-confirmation")?.hidden,
+        );
+        assert.equal(f.reportCredentials.at(-1).active, false);
+        assert.equal(f.reportCredentialWrites.length, 3);
+        await noPageOverflow(page, "Report access controls");
+        await capture(page, `report-access-${device.name}`);
+        const script = await page.request.get(origin + "/rei-reports-sync.gs");
+        assert.equal(script.status(), 200);
+        const source = await script.text();
+        assert.match(source, /REI_API_TOKEN/);
+        assert.match(source, /REI_SPREADSHEET_ID/);
+        assert.equal(source.includes(secret), false);
+        assert.equal(source.includes(replacement), false);
+      },
+    );
+  }
+  await scenario(
+    "report access retries loading but never duplicates a pending issuance or restores a late secret",
+    phone,
+    async ({ page, f }) => {
+      f.reportCredentialResponses.push({ fail: true });
+      await page.goto(origin + "#page=report-access");
+      await page
+        .getByText("Fictional report access outage", { exact: false })
+        .waitFor();
+      await page.locator("#report-access-reload").click();
+      await page.locator("#report-access-create").waitFor();
+      f.reportCredentialWriteResponses.push({ fail: true });
+      await page.locator("#report-access-name").fill("QA retry key");
+      await page.locator("#report-access-submit").click();
+      await page
+        .getByText("Fictional credential save outage", { exact: false })
+        .waitFor();
+      assert.equal(f.reportCredentialWrites.length, 0);
+      assert.equal(
+        await page.locator("#report-access-submit").isDisabled(),
+        true,
+      );
+      await page.locator("#report-access-reload").click();
+      const hold = deferred();
+      f.delayed.set("report-issuance", hold);
+      f.reportCredentialWriteResponses.push({ wait: hold });
+      const requested = page.waitForRequest(
+        (r) =>
+          r.method() === "POST" &&
+          new URL(r.url()).pathname === "/api/report-access/tokens",
+      );
+      await page.locator("#report-access-submit").click();
+      await requested;
+      await page.locator("#report-access-submit").dispatchEvent("click");
+      assert.equal(
+        f.requests.filter(
+          (r) => r.path === "/api/report-access/tokens" && r.method === "POST",
+        ).length,
+        2,
+      );
+      await navigate(page, "team");
+      await page.locator("#team-add").waitFor();
+      const completed = page.waitForResponse(
+        (r) =>
+          r.request().method() === "POST" &&
+          new URL(r.url()).pathname === "/api/report-access/tokens",
+      );
+      hold.release();
+      await completed;
+      await renderedFrames(page);
+      assert.equal(f.reportCredentialWrites.length, 1);
+      const secret = f.reportCredentialSecrets.get(f.reportCredentials[0].id);
+      await secretAbsent(page, secret);
+      assert.equal(
+        await page.locator("#app").getAttribute("data-page"),
+        "team",
+      );
+      await openReportAccess(page);
+      await page
+        .locator(`[data-token-revoke="${f.reportCredentials[0].id}"]`)
+        .waitFor();
+      await secretAbsent(page, secret);
+      assert.equal(
+        await page
+          .locator(`[data-token-revoke="${f.reportCredentials[0].id}"]`)
+          .count(),
+        1,
+      );
+    },
+  );
+  await scenario(
+    "report access secret is cleared on sign out and a member preview cannot restore the owner page",
+    desktop,
+    async ({ page, f }) => {
+      accessAccount(f);
+      await openReportAccess(page);
+      const secret = await issueReportCredential(page);
+      await page.locator("#sign-out").click();
+      await page.locator("#login-screen").waitFor();
+      await secretAbsent(page, secret);
+      await page
+        .locator('#login-form [name="email"]')
+        .fill("owner@example.test");
+      await page
+        .locator('#login-form [name="password"]')
+        .fill("FictionalQAOwner123");
+      await page.locator('#login-form button[type="submit"]').click();
+      await page.locator("#app").waitFor();
+      await openTeamAccess(page);
+      await page.locator("#access-preview").click();
+      await page.locator("#account-preview-banner").waitFor();
+      const before = f.requests.length;
+      await page.evaluate(() => {
+        location.hash = "page=report-access";
+      });
+      await page.locator("#calendar-grid").waitFor();
+      await renderedFrames(page);
+      await secretAbsent(page, secret);
+      assert.equal(
+        f.requests
+          .slice(before)
+          .filter((r) => r.path.startsWith("/api/report-access")).length,
+        0,
+      );
+      assert.equal(
+        await page.locator("#app").getAttribute("data-page"),
+        "calendar",
+      );
+    },
+  );
+  for (const role of ["reception", "therapist"]) {
+    await scenario(
+      `report access ${role} cannot open credentials through a remembered link`,
+      phone,
+      async ({ page, f }) => {
+        f.role = role;
+        await page.goto(origin + "#page=report-access");
+        await page.locator("#calendar-grid").waitFor();
+        assert.equal(await page.locator("#report-access-open").count(), 0);
+        assert.equal(await page.locator("#report-access-create").count(), 0);
+        assert.equal(
+          f.requests.filter((r) => r.path.startsWith("/api/report-access"))
+            .length,
+          0,
+        );
+        assert.equal(f.reportCredentialWrites.length, 0);
+      },
+    );
+  }
   for (const device of [desktop, phone]) {
     await scenario(
       "team access creates username login and updates role or disables without altering profile",

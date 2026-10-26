@@ -1,10 +1,12 @@
 # Rei Booking
 
-Current implementation release, **0.19.0** — 26 October 2026.
+Current implementation release, **0.20.0** — 26 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
 ## Included
+
+- Owner **Reports → Google Sheets / API** provides scoped, revocable read-only report credentials and a downloadable Apps Script template. The API shares the application's report loader and calculations; the script creates separate dated snapshot tabs and preserves existing workbook content. No Google connection or automatic sync is enabled by deployment. See [API contract](docs/report-api.md) and [Google Sheets setup](docs/google-sheets.md).
 
 - Team → Edit access management: email or username sign-in, editable account roles, enable/disable and password replacement. Owner-only View as member uses actual target-role reads in a read-only preview, with Return to Owner. Profiles and login access remain separate. See [team access](docs/team-access.md).
 
@@ -124,7 +126,7 @@ The report update automatically creates two empty bonus-rule tables after authen
 
 1. Confirm Reports/Team/Dashboard and Sales on the test URL and complete role/device acceptance.
 2. Validate imported history and explicit client matches against the [history import contract](docs/history-import-contract.md). Apply the agreed imported-visit rule while keeping unknown source completion, requested flags and other missing evidence separate.
-3. Complete hosted monthly report acceptance and add an authenticated Google Sheets integration. Agree loyalty rules before implementing rewards.
+3. Complete hosted monthly report acceptance. Optionally connect the delivered Google Sheets integration and reconcile its first snapshot before enabling a daily trigger. Agree loyalty rules before implementing rewards.
 4. Last, finish [voucher email setup](docs/email-setup.md) and agree package, substitution and reception sales permissions, as requested by Marko. See [the implemented Sales scope](docs/sales.md).
 
 These requirements are preserved in [scope and decisions](docs/scope.md). An item being in the prototype does not mean it is implemented in this release.

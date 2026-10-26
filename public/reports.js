@@ -500,9 +500,15 @@ export async function renderReports(ctx, dashboard = false, snapshot = null) {
     const toolbar = document.createElement("div");
     toolbar.className = "toolbar";
     toolbar.innerHTML =
-      '<button class="btn" data-monthly>Monthly reports</button><button class="btn" data-schedule>Save filters as monthly schedule</button>';
+      '<button class="btn" data-monthly>Monthly reports</button><button class="btn" data-schedule>Save filters as monthly schedule</button>' +
+      (ctx.openReportAccess
+        ? '<button class="btn" id="report-access-open" type="button">Google Sheets / API</button>'
+        : "");
     root.prepend(toolbar);
     toolbar.querySelector("[data-monthly]").onclick = () => ctx.openMonthly();
+    if (ctx.openReportAccess)
+      toolbar.querySelector("#report-access-open").onclick = () =>
+        ctx.openReportAccess();
     toolbar.querySelector("[data-schedule]").onclick = () =>
       ctx.openMonthly({
         ...Object.fromEntries(new FormData(filter)),

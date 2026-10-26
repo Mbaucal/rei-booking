@@ -7,6 +7,7 @@ const pages = new Set([
   "users",
   "reports",
   "monthly",
+  "report-access",
   "sales",
   "client-transfer",
   "history-preview",

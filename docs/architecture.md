@@ -40,6 +40,8 @@ Password hashes use scrypt N=32768, r=8, p=3, a per-password random salt and 32-
 
 ## Reports and Sales
 
+Version 0.20 exposes one sessionless, read-only performance route using owner-issued scoped tokens. Only that endpoint accepts bearer credentials; calendar, clients, sales, account administration and report-token management retain session/role checks. Credentials are stored as hashes and bound to the issuing owner's access version. See [report API](report-api.md). The live JSON/CSV and bearer routes share report loading and revision checks as well as the existing calculator.
+
 Version 0.2 implements the Dashboard, report API/CSV, Team bonus editor and saved booking rules. See [report definitions](reports.md) for completed-only treatment revenue, requested hours, percentage bonuses and rounding. Payout/adjustment history is not yet implemented.
 
 Version 0.3 adds immutable Sales/voucher snapshots, transactional issuance with request idempotency and catalogue-change guards, and a separate persisted email delivery lifecycle. Sale totals do not alter treatment-performance reports. See [Sales invariants](sales.md). All financial routes remain owner-only; the signed email webhook is the sole sessionless write route and verifies raw-body HMAC before storing events.

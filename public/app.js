@@ -38,6 +38,7 @@ import { renderMonthly } from "./monthly.js";
 import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
 import { renderReports } from "./reports.js";
+import { renderReportAccess } from "./report-access.js";
 import { renderSales } from "./sales.js";
 import {
   canOpenPage,
@@ -150,6 +151,7 @@ let state = {
   calendarLoadEpoch = 0,
   sessionEpoch = 0;
 let historyPreviewCleanup = null,
+  reportAccessCleanup = null,
   clientHistoryCleanup = null,
   clientBookingsCleanup = null,
   accountAccess = null,
@@ -221,6 +223,8 @@ function disposeCalendarUI() {
   preview?.dispose();
 }
 function signOutView() {
+  reportAccessCleanup?.();
+  reportAccessCleanup = null;
   historyPreviewCleanup?.();
   historyPreviewCleanup = null;
   disposeCalendarUI();
@@ -353,6 +357,8 @@ function bindForm(id, save, label = "Save changes") {
   };
 }
 async function enterApp(session, { page = null } = {}) {
+  reportAccessCleanup?.();
+  reportAccessCleanup = null;
   const epoch = ++sessionEpoch;
   clearInterval(refreshTimer);
   historyPreviewCleanup?.();
@@ -524,6 +530,8 @@ async function setPage(page, initialFilters = null, navigation = {}) {
     !canOpenPage(page, state.user?.role)
   )
     return;
+  reportAccessCleanup?.();
+  reportAccessCleanup = null;
   historyPreviewCleanup?.();
   historyPreviewCleanup = null;
   disposeCalendarUI();
@@ -549,6 +557,7 @@ async function setPage(page, initialFilters = null, navigation = {}) {
     dashboard: "Dashboard",
     reports: "Reports",
     monthly: "Reports",
+    "report-access": "Google Sheets / API",
     sales: "Sales",
     clients: "Clients",
     "client-transfer": "Clients",
@@ -565,7 +574,7 @@ async function setPage(page, initialFilters = null, navigation = {}) {
       b.classList.toggle(
         "active",
         b.dataset.page ===
-          (page === "monthly"
+          (["monthly", "report-access"].includes(page)
             ? "reports"
             : [
                   "client-transfer",
@@ -581,6 +590,16 @@ async function setPage(page, initialFilters = null, navigation = {}) {
     if (page === "calendar") {
       renderCalendarShell();
       await loadCalendar();
+    } else if (page === "report-access") {
+      const version = state.version;
+      reportAccessCleanup = renderReportAccess({
+        root: $("page-content"),
+        api,
+        esc,
+        stamp,
+        isCurrent: () => state.version === version && owner(),
+        back: () => setPage("reports"),
+      });
     } else if (page === "monthly") {
       const version = state.version;
       await renderMonthly(
@@ -617,6 +636,7 @@ async function setPage(page, initialFilters = null, navigation = {}) {
           initialFilters,
           openReports: (filters) => setPage("reports", filters),
           openMonthly: (filters) => setPage("monthly", filters),
+          openReportAccess: () => setPage("report-access"),
         },
         page === "dashboard",
       );
@@ -738,17 +758,16 @@ function resources(mode = state.mode) {
   ];
 }
 function updateMobileNavigation() {
-  const activePage =
-    state.page === "monthly"
-      ? "reports"
-      : [
-            "client-transfer",
-            "history-preview",
-            "history-salon",
-            "history-links",
-          ].includes(state.page)
-        ? "clients"
-        : state.page;
+  const activePage = ["monthly", "report-access"].includes(state.page)
+    ? "reports"
+    : [
+          "client-transfer",
+          "history-preview",
+          "history-salon",
+          "history-links",
+        ].includes(state.page)
+      ? "clients"
+      : state.page;
   $("mobile-navigation")
     .querySelectorAll("[data-mobile-page]")
     .forEach((button) => {
