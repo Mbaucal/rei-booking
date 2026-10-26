@@ -1,4 +1,5 @@
 import { renderReports } from "./reports.js";
+import { writePageLocation } from "./navigation.js";
 const groups = {
   therapist: "Therapist",
   month: "Month",
@@ -254,10 +255,10 @@ export async function renderMonthly(
     const version = ++seq,
       r = await api("/reports/archive/" + encodeURIComponent(id));
     if (!isCurrent() || seq !== version) return;
-    history.replaceState(null, "", "#report=" + encodeURIComponent(id));
+    writePageLocation({ page: "monthly", reportId: id }, true);
     root.innerHTML = `<div class="toolbar"><button class="btn" id="back-archive">Monthly reports</button><button class="btn" id="revise-report">Create corrected version</button></div><h2>${esc(r.name)} · ${esc(r.period)} · Version ${r.version}</h2><p class="hint">Saved ${esc(stamp(r.generated_at))}. Data captured ${esc(stamp(r.cutoff_at))}. Template version ${r.template_revision}. ${r.supersedes_id ? "Replaces an earlier version; both remain in the archive." : ""}</p>${r.reason ? `<p>Correction reason: ${esc(r.reason)}</p>` : ""}<p>${esc(status(r.email_status))}${r.email_error ? " (" + esc(r.email_error) + ")" : ""}</p>${r.job_id && ["queued", "retry", "sending"].includes(r.email_status) ? `<button class="btn" id="retry-notification">Retry notification</button>` : ""}<p class="error" id="monthly-error" role="alert" hidden></p>${r.report.warnings.map((w) => `<p class="notice" role="status">${esc(w)}</p>`).join("")}<div class="toolbar" id="saved-exports">${["summary", "details", "comparison"].map((v) => `<button class="btn" data-csv="${v}">${v === "summary" ? "Summary" : v === "details" ? "Appointment list" : "Comparison"} CSV</button>`).join("")}</div><section id="revision-form"></section><section id="saved-report"></section>`;
     $("#back-archive").onclick = () => {
-      history.replaceState(null, "", location.pathname);
+      writePageLocation({ page: "monthly" }, true);
       load().catch(error);
     };
     $("#revise-report").onclick = () => {

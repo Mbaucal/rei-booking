@@ -37,6 +37,11 @@ import { avatar, mountPhotoEditor } from "./photos.js";
 import { openVoucherRedemption } from "./voucher-redemption.js";
 import { renderReports } from "./reports.js";
 import { renderSales } from "./sales.js";
+import {
+  canOpenPage,
+  readPageLocation,
+  writePageLocation,
+} from "./navigation.js";
 document.addEventListener(
   "error",
   (event) => {
@@ -122,6 +127,7 @@ let calendarLayoutKey = calendarLayout(),
 let state = {
     user: null,
     csrf: "",
+    mustChangePassword: false,
     page: "calendar",
     date: today(),
     mode: calendarModes[calendarLayoutKey],
@@ -320,6 +326,7 @@ async function enterApp(session) {
   sessionEpoch++;
   state.user = session.user;
   state.csrf = session.csrf;
+  state.mustChangePassword = !!session.mustChangePassword;
   $("mobile-navigation").hidden = !!session.mustChangePassword;
   $("mobile-navigation")
     .querySelectorAll("[data-mobile-operator]")
@@ -357,13 +364,7 @@ async function enterApp(session) {
     return;
   }
   await loadCatalogue();
-  await setPage(
-    owner() && /^#report=[a-f0-9]{64}$/.test(location.hash)
-      ? "monthly"
-      : owner() && !mobileCalendarMedia.matches
-        ? "dashboard"
-        : "calendar",
-  );
+  await restorePageLocation();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
     if (
@@ -382,14 +383,33 @@ function showAppError(error) {
 async function loadCatalogue() {
   state.catalogue = await api("/catalogue");
 }
-async function setPage(page, monthlyFilters = null) {
-  if (!state.user) return;
-  if (page !== "calendar" && (!operator() || (page !== "clients" && !owner())))
-    return;
+async function restorePageLocation() {
+  if (!state.user || state.mustChangePassword) return;
+  const layout = calendarLayout();
+  const route = readPageLocation(location.hash, {
+    role: state.user.role,
+    compact: mobileCalendarMedia.matches,
+    date: today(),
+    mode: calendarModes[layout],
+  });
+  if (route.page === "calendar") {
+    state.date = route.date;
+    state.mode = route.mode;
+    calendarLayoutKey = layout;
+    calendarModes[layout] = route.mode;
+  }
+  await setPage(route.page, null, { replace: true, reportId: route.reportId });
+}
+async function setPage(page, monthlyFilters = null, navigation = {}) {
+  if (state.mustChangePassword || !canOpenPage(page, state.user?.role)) return;
   historyPreviewCleanup?.();
   historyPreviewCleanup = null;
   disposeCalendarUI();
   state.page = page;
+  writePageLocation(
+    { ...state, reportId: navigation.reportId },
+    navigation.replace,
+  );
   updateMobileNavigation();
   $("app").dataset.page = page;
   $("page-title")
@@ -399,8 +419,6 @@ async function setPage(page, monthlyFilters = null) {
     "calendar-page-heading",
     page === "calendar",
   );
-  if (page !== "monthly" && location.hash.startsWith("#report="))
-    history.replaceState(null, "", location.pathname);
   closeDrawer();
   state.version++;
   $("app-error").hidden = true;
@@ -458,9 +476,7 @@ async function setPage(page, monthlyFilters = null) {
           openReports: () => setPage("reports"),
         },
         monthlyFilters,
-        /^#report=[a-f0-9]{64}$/.test(location.hash)
-          ? location.hash.slice(8)
-          : null,
+        navigation.reportId || null,
       );
     } else if (page === "reports" || page === "dashboard") {
       const version = state.version;
@@ -795,6 +811,7 @@ function renderCalendarShell() {
     state.mode = calendarModes[layout];
     calendarLayoutKey = layout;
   }
+  writePageLocation(state, true);
   $("page-content").innerHTML =
     `<div class="toolbar calendar-toolbar"><div class="toolgroup calendar-primary-tools"><div class="calendar-date-controls"><button class="btn" id="calendar-today">Today</button><button class="btn" id="calendar-prev" aria-label="Previous day">‹</button><input id="calendar-date" type="date" value="${state.date}" aria-label="Calendar date"><button class="btn" id="calendar-next" aria-label="Next day">›</button><button type="button" class="btn mobile-calendar-control" id="calendar-view-options" aria-label="Calendar view and options" aria-haspopup="dialog">View</button></div><div class="calendar-resource-controls"><div class="segments" aria-label="Calendar resources">${[
       ["all", "All resources"],
@@ -825,6 +842,7 @@ function renderCalendarShell() {
   const change = async (date) => {
     disposeCalendarUI();
     state.date = date;
+    writePageLocation(state, true);
     $("calendar-date").value = date;
     updateClock();
     try {
@@ -2229,6 +2247,5 @@ try {
 }
 
 window.addEventListener("hashchange", () => {
-  if (owner() && /^#report=[a-f0-9]{64}$/.test(location.hash))
-    setPage("monthly");
+  void restorePageLocation().catch(showAppError);
 });

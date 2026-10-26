@@ -98,6 +98,7 @@ function fixture() {
     },
     role: "owner",
     authenticated: true,
+    mustChangePassword: false,
     serviceWrites: [],
     clientResponses: [],
     clients: [
@@ -207,7 +208,7 @@ const server = createServer(async (req, res) => {
         return json({
           user: { id: "qa-owner", role: f.role, name: "Fictional QA Owner" },
           csrf: "fixture-csrf",
-          mustChangePassword: false,
+          mustChangePassword: f.mustChangePassword,
         });
       if (url.pathname === "/api/catalogue") return json(f.catalogue);
       if (
@@ -293,6 +294,58 @@ const server = createServer(async (req, res) => {
         res.writeHead(200, { "Content-Type": "image/jpeg" });
         return res.end(Buffer.from(data, "base64"));
       }
+      if (url.pathname === "/api/reports/monthly")
+        return json({
+          schedules: [],
+          recipients: [],
+          verificationJobs: [],
+          emailReady: false,
+          accountEmail: "qa@example.test",
+        });
+      if (url.pathname === "/api/reports/archive")
+        return json({ snapshots: [], nextOffset: null });
+      if (/^\/api\/reports\/archive\/[a-f0-9]{64}$/.test(url.pathname))
+        return json({
+          id: url.pathname.split("/").at(-1),
+          name: "Fictional saved report",
+          period: "2026-09",
+          version: 1,
+          generated_at: "2026-10-01T08:00:00Z",
+          cutoff_at: "2026-10-01T08:00:00Z",
+          template_revision: 1,
+          report: {
+            warnings: [],
+            options: {
+              from: "2026-09-01",
+              to: "2026-09-30",
+              group: "therapist",
+              source: "native",
+              dayBasis: "active",
+            },
+            comparison: null,
+            groups: [],
+            details: [],
+            totals: Object.fromEntries(
+              [
+                "appointments",
+                "completed",
+                "cancelled",
+                "noShow",
+                "pending",
+                "totalMinutes",
+                "regularMinutes",
+                "requestedMinutes",
+                "revenueCents",
+                "averageRevenueCents",
+                "dayCount",
+                "averageMinutesPerDay",
+                "regularBonusCents",
+                "requestedBonusCents",
+                "totalBonusCents",
+              ].map((key) => [key, 0]),
+            ),
+          },
+        });
       if (url.pathname === "/api/reports/appointments")
         return json({
           options: { from: date, to: date },
@@ -1173,6 +1226,212 @@ function assertBlockSnapshot(saved, original, target) {
 }
 
 try {
+  for (const device of [desktop, phone]) {
+    await scenario(
+      "refresh retains calendar date and resource mode and the current management page",
+      device,
+      async ({ page, f, open }) => {
+        await open();
+        const chosenDate = "2026-10-20";
+        await page.locator("#calendar-date").fill(chosenDate);
+        await page.locator("#calendar-date").dispatchEvent("change");
+        await selectMode(page, "rooms");
+        await page.waitForURL((url) => {
+          const params = new URLSearchParams(url.hash.slice(1));
+          return (
+            params.get("page") === "calendar" &&
+            params.get("date") === chosenDate &&
+            params.get("mode") === "rooms"
+          );
+        });
+        await page.reload();
+        await page
+          .locator('#app[data-page="calendar"] #calendar-grid')
+          .waitFor();
+        assert.equal(
+          await page.locator("#calendar-date").inputValue(),
+          chosenDate,
+        );
+        await page
+          .locator('#calendar-body [data-kind="room"]')
+          .first()
+          .waitFor();
+        assert.equal(
+          await page.locator('#calendar-body [data-kind="therapist"]').count(),
+          0,
+          "Reload keeps Rooms instead of switching to all resources or therapists",
+        );
+        assert.ok(
+          f.requests.some(
+            (r) =>
+              r.path === "/api/appointments" &&
+              new URLSearchParams(r.query).get("from") === chosenDate,
+          ),
+          "The restored date is requested from the API",
+        );
+        for (const [destination, selector] of [
+          ["clients", "#client-results [data-profile]"],
+          ["team", "#team-add"],
+          ["services", "#service-add"],
+        ]) {
+          await navigate(page, destination);
+          await page.locator(selector).first().waitFor();
+          await page.waitForURL(
+            (url) =>
+              new URLSearchParams(url.hash.slice(1)).get("page") ===
+              destination,
+          );
+          await page.reload();
+          await page.locator(`#app[data-page="${destination}"]`).waitFor();
+          await page.locator(selector).first().waitFor();
+          assert.equal(await page.locator("#app-error").isVisible(), false);
+        }
+        await page.goBack();
+        await page.locator('#app[data-page="team"] #team-add').waitFor();
+        await page.goForward();
+        await page.locator('#app[data-page="services"] #service-add').waitFor();
+        assert.deepEqual(f.serviceWrites, []);
+        assert.deepEqual(f.writes, []);
+      },
+    );
+    await scenario(
+      "refresh preserves an owner saved-report deep link and the monthly archive page",
+      device,
+      async ({ page, f }) => {
+        const reportId = "a".repeat(64),
+          hash = "#report=" + reportId;
+        await page.goto(origin + hash);
+        await page.locator("#back-archive").waitFor();
+        await page.locator("#saved-report .report-metric").first().waitFor();
+        assert.match(
+          await page.locator("#page-content").innerText(),
+          /Fictional saved report/,
+        );
+        assert.equal(new URL(page.url()).hash, hash);
+        await page.reload();
+        await page.locator("#back-archive").waitFor();
+        assert.equal(
+          await page.locator("#app").getAttribute("data-page"),
+          "monthly",
+        );
+        assert.equal(new URL(page.url()).hash, hash);
+        assert.equal(
+          f.requests.filter(
+            (r) => r.path === "/api/reports/archive/" + reportId,
+          ).length,
+          2,
+        );
+        await page.locator("#back-archive").click();
+        await page.locator("#monthly-archive").waitFor();
+        assert.equal(
+          new URLSearchParams(new URL(page.url()).hash.slice(1)).get("page"),
+          "monthly",
+        );
+        await page.reload();
+        await page
+          .locator('#app[data-page="monthly"] #monthly-archive')
+          .waitFor();
+        assert.equal(await page.locator("#back-archive").count(), 0);
+        assert.deepEqual(f.writes, []);
+      },
+    );
+    await scenario(
+      "unknown and unauthorized remembered pages fall back without protected requests",
+      device,
+      async ({ page, f }) => {
+        const expected = device.mobile ? "calendar" : "dashboard";
+        await page.goto(origin + "#page=unknown-page");
+        await page.locator(`#app[data-page="${expected}"]`).waitFor();
+        await page
+          .locator(
+            expected === "calendar"
+              ? "#calendar-grid"
+              : "#report-metrics .report-metric",
+          )
+          .first()
+          .waitFor();
+        assert.equal(
+          new URLSearchParams(new URL(page.url()).hash.slice(1)).get("page"),
+          expected,
+        );
+        f.requests.length = 0;
+        await page.goto(
+          origin + "?qa-invalid-date#page=calendar&date=2026-02-31&mode=tables",
+        );
+        await page
+          .locator('#app[data-page="calendar"] #calendar-grid')
+          .waitFor();
+        const restoredDate = await page.locator("#calendar-date").inputValue();
+        assert.match(restoredDate, /^\d{4}-\d{2}-\d{2}$/);
+        assert.equal(
+          new Date(restoredDate + "T12:00:00Z").toISOString().slice(0, 10),
+          restoredDate,
+        );
+        assert.notEqual(restoredDate, "2026-02-31");
+        const restoredMode = new URLSearchParams(
+          new URL(page.url()).hash.slice(1),
+        ).get("mode");
+        assert.equal(restoredMode, device.mobile ? "therapists" : "all");
+        assert.equal(
+          f.requests.some((r) => r.query.includes("2026-02-31")),
+          false,
+          "Malformed dates never reach the booking API",
+        );
+        for (const [index, role, hash] of [
+          [0, "reception", "#page=services"],
+          [1, "therapist", "#page=clients"],
+          [2, "reception", "#report=" + "b".repeat(64)],
+        ]) {
+          f.role = role;
+          f.requests.length = 0;
+          await page.goto(origin + "?qa-route=" + index + hash);
+          await page
+            .locator('#app[data-page="calendar"] #calendar-grid')
+            .waitFor();
+          assert.equal(
+            new URLSearchParams(new URL(page.url()).hash.slice(1)).get("page"),
+            "calendar",
+          );
+          assert.equal(
+            f.requests.some((r) =>
+              /\/api\/(clients|reports|users|sales)/.test(r.path),
+            ),
+            false,
+            "Forbidden remembered routes never fetch their protected page data",
+          );
+        }
+      },
+    );
+    await scenario(
+      "required password replacement cannot be bypassed by a remembered route or hash change",
+      device,
+      async ({ page, f }) => {
+        f.mustChangePassword = true;
+        await page.goto(origin + "#page=calendar&date=2026-10-20&mode=rooms");
+        await page
+          .locator('#app[data-page="password"] #required-password-open')
+          .waitFor();
+        await page.locator("#password-form").waitFor();
+        await page.evaluate(() => {
+          location.hash = "#page=services";
+        });
+        await page.reload();
+        await page
+          .locator('#app[data-page="password"] #required-password-open')
+          .waitFor();
+        await page.locator("#password-form").waitFor();
+        assert.equal(
+          f.requests.some((r) => r.path !== "/api/session"),
+          false,
+          "The gate blocks catalogue and page data before password replacement",
+        );
+        assert.equal(
+          await page.locator("#service-add, #calendar-grid").count(),
+          0,
+        );
+      },
+    );
+  }
   for (const device of [desktop, phone])
     await scenario(
       "treatment colour swatches preview locally and preserve manual edits on save",

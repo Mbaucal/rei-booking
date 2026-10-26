@@ -1,10 +1,12 @@
 # Rei Booking
 
-Current implementation release, **0.18.2** — 26 October 2026.
+Current implementation release, **0.18.3** — 26 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
 ## Included
+
+- Refresh restores the current page. Calendar refresh also keeps its selected date and resource view; browser Back/Forward and existing monthly-report links remain supported. Navigation URLs contain no client details or unsaved forms.
 
 - Owner **Sales → Gift vouchers**: sold register, search/date filters, CSV, treatment/custom-amount cart and atomic checkout with an optional buyer.
 - Voucher code lookup from Sales/Calendar, completed-appointment use, partial amount balances, exact treatment entitlements and auditable corrections. See [voucher use](docs/voucher-redemption.md).
