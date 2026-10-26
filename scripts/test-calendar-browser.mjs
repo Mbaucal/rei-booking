@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { readFile, mkdir } from "node:fs/promises";
 import { resolve, extname, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { TREATMENT_COLOURS } from "../src/treatment-colours.mjs";
 
 const modulePath = process.env.REI_PLAYWRIGHT_MODULE;
 if (!modulePath)
@@ -70,6 +71,7 @@ function fixture() {
   }));
   return {
     catalogue: {
+      treatmentColours: TREATMENT_COLOURS,
       therapists,
       rooms: [
         { id: "r1", name: "QA Couple", capacity: 2 },
@@ -1171,6 +1173,77 @@ function assertBlockSnapshot(saved, original, target) {
 }
 
 try {
+  for (const device of [desktop, phone])
+    await scenario(
+      "treatment colour swatches preview locally and preserve manual edits on save",
+      device,
+      async ({ page, f, open }) => {
+        f.catalogue.services[0].version = 1;
+        await open();
+        await navigate(page, "services");
+        await page.locator('[data-service="s60"]').click();
+        const swatch = TREATMENT_COLOURS.find((c) => c.key === "aroma"),
+          button = () =>
+            page.locator(`[data-treatment-colour="${swatch.color}"]`),
+          colour = () => page.locator('#service-form [name="color"]');
+        await button().click();
+        assert.equal(await colour().inputValue(), swatch.color);
+        assert.equal(await button().getAttribute("aria-pressed"), "true");
+        assert.deepEqual(
+          f.serviceWrites,
+          [],
+          "Choosing a swatch only previews until Save",
+        );
+        await page.locator("#form-cancel").click();
+        assert.equal(
+          f.catalogue.services[0].color,
+          "#2e87a0",
+          "Cancel preserves the stored colour",
+        );
+        await page.locator('[data-service="s60"]').click();
+        assert.equal(await colour().inputValue(), "#2e87a0");
+        await button().click();
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(f.serviceWrites.length, 1);
+        assert.equal(f.serviceWrites[0].body.color, swatch.color);
+        assert.equal(f.serviceWrites[0].body.version, 1);
+        await page.locator('[data-service="s60"]').click();
+        assert.equal(await colour().inputValue(), swatch.color);
+        assert.equal(await button().getAttribute("aria-pressed"), "true");
+        await colour().fill("#1254a7");
+        await colour().dispatchEvent("input");
+        assert.equal(
+          await page
+            .locator('[data-treatment-colour][aria-pressed="true"]')
+            .count(),
+          0,
+          "Custom colour is not mislabelled as a preset",
+        );
+        assert.equal(
+          await page
+            .locator("#treatment-colour-preview")
+            .evaluate((el) => el.style.getPropertyValue("--service")),
+          "#1254a7",
+        );
+        await noPageOverflow(
+          page,
+          "Treatment palette and manual colour picker",
+        );
+        await capture(page, device.name + "-treatment-colour-picker");
+        await page.locator("#form-save").click();
+        await page.locator("#drawer").waitFor({ state: "hidden" });
+        assert.equal(f.serviceWrites.length, 2);
+        assert.equal(f.serviceWrites[1].body.color, "#1254a7");
+        assert.equal(f.serviceWrites[1].body.version, 2);
+        await page.locator('[data-service="s60"]').click();
+        assert.equal(
+          await colour().inputValue(),
+          "#1254a7",
+          "Reopening preserves the custom colour",
+        );
+      },
+    );
   for (const device of [desktop, phone, tablet]) {
     await scenario(
       "room quick action automatically chooses a free table, rechecks treatment and saves intact",

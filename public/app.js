@@ -2037,11 +2037,41 @@ async function renderServices() {
     );
 }
 function serviceDialog(s = null) {
+  const colours = (state.catalogue.treatmentColours || []).filter((c) =>
+    /^#[0-9a-f]{6}$/i.test(c.color),
+  );
+  const colourOptions = colours.length
+    ? `<fieldset class="treatment-colour-options"><legend>Suggested colours</legend><div class="treatment-colour-swatches">${colours.map((c) => `<button type="button" class="treatment-colour-swatch" data-treatment-colour="${esc(c.color)}" style="--service:${esc(c.color)}" aria-label="Use ${esc(c.label)} colour" aria-pressed="false"><i aria-hidden="true"></i>${esc(c.label)}</button>`).join("")}</div><div class="treatment-colour-preview" id="treatment-colour-preview"><small>Calendar preview</small><strong></strong></div></fieldset>`
+    : "";
   showDrawer(
     s ? "Edit treatment" : "New treatment",
     "Treatment catalogue",
-    `<form id="service-form"><div class="fields">${input("name", "Treatment name", s?.name, "text", 'required maxlength="120"')}${input("duration", "Duration (minutes)", s?.duration || 60, "number", 'min="5" max="720" step="5" required')}${input("price", "Price (RSD)", s ? (s.priceCents / 100).toFixed(2) : "", "number", 'min="0" step="0.01" required')}${input("color", "Calendar colour", s?.color || "#2e87a0", "color")}</div><label class="check"><input name="active" type="checkbox" ${s?.active !== false ? "checked" : ""}>Active treatment</label><p class="hint">Existing appointments keep their recorded treatment name and price.</p>${errorBox()}</form>`,
+    `<form id="service-form"><div class="fields">${input("name", "Treatment name", s?.name, "text", 'required maxlength="120"')}${input("duration", "Duration (minutes)", s?.duration || 60, "number", 'min="5" max="720" step="5" required')}${input("price", "Price (RSD)", s ? (s.priceCents / 100).toFixed(2) : "", "number", 'min="0" step="0.01" required')}${input("color", "Calendar colour", s?.color || colours[0]?.color || "#2e87a0", "color")}</div>${colourOptions}<label class="check"><input name="active" type="checkbox" ${s?.active !== false ? "checked" : ""}>Active treatment</label><p class="hint">Existing appointments keep their recorded treatment name and price.</p>${errorBox()}</form>`,
   );
+  const form = $("service-form"),
+    colour = form.elements.color,
+    preview = $("treatment-colour-preview");
+  const syncColourPreview = () => {
+    form.querySelectorAll("[data-treatment-colour]").forEach((button) => {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.treatmentColour === colour.value.toLowerCase()),
+      );
+    });
+    if (preview) {
+      preview.style.setProperty("--service", colour.value);
+      preview.querySelector("strong").textContent =
+        `${form.elements.name.value || "Treatment"} · ${form.elements.duration.value || 60} min`;
+    }
+  };
+  form.querySelectorAll("[data-treatment-colour]").forEach((button) => {
+    button.onclick = () => {
+      colour.value = button.dataset.treatmentColour;
+      syncColourPreview();
+    };
+  });
+  form.addEventListener("input", syncColourPreview);
+  syncColourPreview();
   bindForm(
     "service-form",
     async (fd) => {

@@ -52,6 +52,7 @@ test("Sales Worker + D1: atomic checkout, immutable gifts and independently addr
     convertV4MiniflareOptions({
       modules: [
         "worker.mjs",
+        "treatment-colours.mjs",
         "history-preview.mjs",
         "history-salon.mjs",
         "history-linking.mjs",

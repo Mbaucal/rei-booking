@@ -1,6 +1,6 @@
 # Rei Booking
 
-Current implementation release, **0.18.1** — 25 October 2026.
+Current implementation release, **0.18.2** — 26 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
@@ -22,6 +22,7 @@ An English-language internal booking application for Rei Thailand Massage. This 
 - Owner client CSV import of one file up to 50,000 rows / 25 MiB, automatic resumable upload parts, explicit column mapping, preview/selection, duplicate and conflict checks, atomic repeat-safe confirmation; all-client CSV export with optional notes. See [client transfer](docs/client-transfer.md).
 - Therapist profiles, weekly hours and dated time off, independent of login accounts.
 - Treatment variants with duration, price and calendar colour.
+- Distinct treatment-family colours across durations, stronger calendar-card contrast and editable palette swatches with a preview in Treatments. Untouched history-created default colours are initialized once without overwriting manual choices. See [treatment colours and review notes](docs/treatment-colours.md).
 - An empty treatment catalogue explains the setup requirement and gives the owner a direct Add treatment route from Calendar. Reception is directed to the owner. Services and prices are entered explicitly, with no automatic sample records.
 - Daily calendar by therapist, room or both; two-table couple rooms; current Belgrade time.
 - Confirmed imported history also appears on its original calendar dates, with Imported labels, original source statuses and read-only details. Explicitly mapped therapists share their existing column; unmapped source therapists get historical columns without creating or activating staff. Imported records reserve no new slots, and rooms/tables are never guessed. Reception sees operational details; therapist accounts receive no client identity or financial fields. Cancelled/no-show history is visible but excluded from the active appointment count.

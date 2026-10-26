@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { readFile, mkdir } from "node:fs/promises";
 import { resolve, extname, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { TREATMENT_COLOURS } from "../src/treatment-colours.mjs";
 
 if (!process.env.REI_PLAYWRIGHT_MODULE)
   throw new Error(
@@ -78,6 +79,7 @@ function fixture() {
     delayed: new Map(),
     omitHistory: false,
     appointments: [],
+    blocks: [],
     history: [
       historical("linked"),
       historical("unlinked", sourceTherapist, {
@@ -211,7 +213,9 @@ const server = createServer(async (req, res) => {
           appointments: structuredClone(
             f.appointments.filter((a) => a.date >= from && a.date <= to),
           ),
-          blocks: [],
+          blocks: structuredClone(
+            f.blocks.filter((b) => b.date >= from && b.date <= to),
+          ),
           ...(!f.omitHistory ? { history: historyPayload(f, from, to) } : {}),
         };
         if (f.delayed.has(from)) await f.delayed.get(from).promise;
@@ -401,6 +405,190 @@ async function scenario(name, device, run) {
   }
 }
 try {
+  for (const device of [desktop, phone])
+    await scenario(
+      "treatment colours distinguish native and imported cards with readable text",
+      device,
+      async ({ page, f, open }) => {
+        const names = [
+            "Rei Combination",
+            "NUAD Thai",
+            "Aroma Oil",
+            "Foot",
+            "Head & Facial",
+            "Back & Neck",
+          ],
+          colours = TREATMENT_COLOURS.slice(0, 6);
+        f.catalogue.therapists = f.catalogue.therapists.slice(0, 3);
+        f.catalogue.services = colours.map((colour, index) => ({
+          id: "palette-" + index,
+          name: names[index],
+          duration: 60,
+          priceCents: 470000,
+          color: colour.color,
+          active: true,
+          version: 1,
+        }));
+        f.history = colours
+          .slice(0, 3)
+          .map((colour, index) =>
+            historical("palette-" + index, "t" + "ABC"[index], {
+              color: colour.color,
+              serviceName: names[index],
+              clientName: "Fictional guest " + (index + 1),
+            }),
+          );
+        f.appointments = colours.slice(3).map((colour, index) =>
+          native({
+            id: "palette-" + (index + 3),
+            therapistId: "t" + "ABC"[index],
+            start: 660,
+            color: colour.color,
+            serviceName: names[index + 3],
+            clientName: "Fictional guest " + (index + 4),
+          }),
+        );
+        f.history.push(
+          historical("cancelled", "tA", {
+            start: 720,
+            status: "cancelled",
+            sourceStatus: "Cancelled",
+            color: colours[0].color,
+          }),
+          historical("no-show", "tB", {
+            start: 720,
+            status: "no_show",
+            sourceStatus: "No Show",
+            color: colours[1].color,
+          }),
+        );
+        f.blocks = [
+          {
+            id: "palette-block",
+            date,
+            start: 720,
+            duration: 60,
+            resourceType: "therapist",
+            resourceId: "tC",
+            bed: null,
+            title: "Lunch break",
+            note: "",
+            blocksAvailability: true,
+            version: 1,
+          },
+        ];
+        await open();
+        await page.locator("#calendar-scroll").evaluate(
+          (el, scale) => {
+            el.scrollTop = 570 * scale;
+          },
+          device.isMobile ? 1 : 2,
+        );
+        await frames(page);
+        await noOverflow(page);
+        const measurements = await page
+          .locator("#calendar-body .calendar-event")
+          .evaluateAll((cards) => {
+            const canvas = document.createElement("canvas");
+            canvas.width = canvas.height = 1;
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            const rgb = (css) => {
+              ctx.clearRect(0, 0, 1, 1);
+              ctx.fillStyle = css;
+              ctx.fillRect(0, 0, 1, 1);
+              return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+            };
+            const luminance = (colour) =>
+              colour
+                .map((x) => {
+                  x /= 255;
+                  return x <= 0.04045
+                    ? x / 12.92
+                    : ((x + 0.055) / 1.055) ** 2.4;
+                })
+                .reduce(
+                  (sum, x, i) => sum + x * [0.2126, 0.7152, 0.0722][i],
+                  0,
+                );
+            return cards.map((el) => {
+              const style = getComputedStyle(el),
+                background = rgb(style.backgroundColor),
+                foreground = rgb(style.color),
+                a = luminance(background),
+                b = luminance(foreground);
+              const clock = el.querySelector(".event-time"),
+                range = document.createRange();
+              range.selectNodeContents(clock);
+              const time = range.getBoundingClientRect(),
+                bounds = el.getBoundingClientRect();
+              return {
+                id: el.dataset.appointment,
+                background,
+                released: el.classList.contains("is-released"),
+                contrast: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
+                clockFits:
+                  time.left >= bounds.left && time.right <= bounds.right + 1,
+                service: el.querySelector(".event-service")?.textContent,
+              };
+            });
+          });
+        const active = measurements.filter((m) => !m.released),
+          released = measurements.filter((m) => m.released);
+        assert.equal(
+          new Set(active.map((m) => m.background.join(","))).size,
+          6,
+          "Each treatment family has a distinct rendered background",
+        );
+        assert.ok(
+          measurements.every((m) => m.contrast >= 4.5),
+          "Calendar text meets 4.5:1 contrast: " + JSON.stringify(measurements),
+        );
+        assert.ok(
+          active.every((m) => m.clockFits && names.includes(m.service)),
+          "Times fit the columns and treatment labels remain present",
+        );
+        assert.ok(
+          released.every(
+            (m) => Math.max(...m.background) - Math.min(...m.background) < 15,
+          ),
+          "Cancelled and no-show remain neutral with their status labels",
+        );
+        assert.match(
+          await card(page, "history:cancelled").innerText(),
+          /Cancelled/,
+        );
+        assert.match(
+          await card(page, "history:no-show").innerText(),
+          /No Show/,
+        );
+        assert.equal(
+          await page.locator('[data-calendar-block="palette-block"]').count(),
+          1,
+        );
+        if (device.isMobile) {
+          const sizes = await page
+            .locator("#calendar-scroll")
+            .evaluate((el) => ({
+              width: el.clientWidth,
+              column: el
+                .querySelector(".calendar-column")
+                .getBoundingClientRect().width,
+              axis: el.querySelector(".time-axis").getBoundingClientRect()
+                .width,
+            }));
+          assert.ok(
+            Math.abs(sizes.width - sizes.axis - sizes.column * 3) <= 3,
+            "Three columns still fit on the phone",
+          );
+        }
+        assert.deepEqual(
+          f.writes,
+          [],
+          "Viewing colours never mutates bookings",
+        );
+        await capture(page, device.name + "-treatment-palette");
+      },
+    );
   await scenario(
     "imported dates render mapped, inactive and unmapped columns with overlap lanes",
     desktop,

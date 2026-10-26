@@ -52,6 +52,10 @@ import { ensureReportSchema } from "./report-schema.mjs";
 import { ensureCalendarBlockSchema } from "./calendar-block-schema.mjs";
 import { calendarBlockRoutes, listCalendarBlocks } from "./calendar-blocks.mjs";
 import { loadCalendarHistory } from "./calendar-history.mjs";
+import {
+  TREATMENT_COLOURS,
+  ensureImportedTreatmentColours,
+} from "./treatment-colours.mjs";
 import { salesRoutes } from "./sales.mjs";
 import { emailWebhook } from "./voucher-email.mjs";
 import {
@@ -475,7 +479,7 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.18.1", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.18.2", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
   const user = await authenticate(request, db);
   if (
@@ -534,6 +538,8 @@ async function routes(request, env) {
     return photoRoute(request, db, user, photoMatch[1], photoMatch[2]);
   if (path.startsWith("/api/sales/")) return salesRoutes(request, env, user);
   if (path === "/api/catalogue" && method === "GET") {
+    if (user.role === "owner")
+      await ensureImportedTreatmentColours(db, user.id);
     const [therapists, rooms, services] = await Promise.all([
       all(
         db,
@@ -543,6 +549,7 @@ async function routes(request, env) {
       all(db, "SELECT * FROM services ORDER BY name,duration"),
     ]);
     return json({
+      treatmentColours: TREATMENT_COLOURS,
       therapists: await addPhotoMetadata(
         db,
         "therapists",

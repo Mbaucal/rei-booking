@@ -6,6 +6,7 @@ import { ensureHistoryPreviewSchema } from "./history-preview-schema.mjs";
 import { parseHistoryMoney } from "./history-normalize.mjs";
 import { ensureHistoryArchiveSchema } from "./history-archive-schema.mjs";
 import { ensureHistorySalonSchema } from "./history-salon-schema.mjs";
+import { suggestedTreatmentColour } from "./treatment-colours.mjs";
 export const HISTORY_SALON_LIMITS = Object.freeze({
   rows: 50000,
   candidates: 1000,
@@ -588,6 +589,7 @@ async function apply(db, user, body) {
           name,
           duration,
           priceMinor: c.kind === "service" ? choice.priceMinor : null,
+          color: c.kind === "service" ? suggestedTreatmentColour(name) : null,
           active: c.kind === "service" ? choice.active : false,
         };
       if (newEntities.has(dedupe)) {
@@ -676,7 +678,7 @@ async function apply(db, user, body) {
     ),
     stmt(
       db,
-      `INSERT INTO services(id,name,duration,price_cents,active,created_at,updated_at) SELECT json_extract(value,'$.id'),json_extract(value,'$.name'),json_extract(value,'$.duration'),json_extract(value,'$.priceMinor'),json_extract(value,'$.active'),?,? FROM json_each(?) WHERE json_extract(value,'$.kind')='service' AND ${guard}`,
+      `INSERT INTO services(id,name,duration,price_cents,color,active,created_at,updated_at) SELECT json_extract(value,'$.id'),json_extract(value,'$.name'),json_extract(value,'$.duration'),json_extract(value,'$.priceMinor'),json_extract(value,'$.color'),json_extract(value,'$.active'),?,? FROM json_each(?) WHERE json_extract(value,'$.kind')='service' AND ${guard}`,
       now,
       now,
       packed,

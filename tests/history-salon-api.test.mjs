@@ -14,6 +14,7 @@ import {
   readHistorySalonContext,
 } from "../src/history-salon.mjs";
 import { HISTORY_SALON_SCHEMA } from "../src/history-salon-schema.mjs";
+import { suggestedTreatmentColour } from "../src/treatment-colours.mjs";
 import { historyArchiveRoutes } from "../src/history-archive.mjs";
 
 function statements(sql) {
@@ -469,6 +470,10 @@ test("Historical salon setup Worker + D1: owner review, catalogue mapping and im
           [60, 600000, 1],
           [90, 750000, 0],
         ],
+      );
+      assert.ok(
+        service.every((s) => s.color === suggestedTreatmentColour(s.name)),
+        "new historical treatment variants persist the shared palette",
       );
       assert.deepEqual(
         await sql("SELECT * FROM services WHERE id='service'").first(),
