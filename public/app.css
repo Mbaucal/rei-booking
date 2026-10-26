@@ -3056,3 +3056,73 @@ body:has(.is-rescheduling) .calendar-today-floating {
     max-height: 100dvh;
   }
 }
+
+.account-access {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.account-access > .hint,
+.account-access > label,
+.account-access > button {
+  margin-bottom: 12px;
+}
+.account-access #access-form,
+.account-access-fields {
+  display: grid;
+  gap: 12px;
+}
+.account-access .form-section {
+  margin-top: 0;
+}
+.account-access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.account-access #access-preview {
+  margin-top: 16px;
+}
+.account-preview-banner {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--gold);
+  border-radius: 10px;
+  background: #fff3d3;
+  color: var(--green-dark);
+}
+.account-preview-banner > div {
+  display: grid;
+  min-width: 0;
+}
+.account-preview-banner strong {
+  overflow-wrap: anywhere;
+}
+.account-preview-banner > div > span {
+  font-size: 13px;
+}
+.account-preview-banner .btn {
+  flex-shrink: 0;
+}
+@media (max-width: 700px), (max-height: 560px) and (pointer: coarse) {
+  .account-preview-banner {
+    gap: 4px 8px;
+    padding: 8px 10px;
+    margin: 0 0 8px;
+    border-radius: 0;
+    font-size: 13px;
+  }
+  .account-preview-banner .btn {
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+  .shell[data-page="calendar"] .account-preview-banner {
+    margin-bottom: 0;
+  }
+}

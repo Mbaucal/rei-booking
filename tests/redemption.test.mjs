@@ -34,6 +34,8 @@ test("Voucher Worker + D1: balances, linked treatments, concurrent use and corre
     convertV4MiniflareOptions({
       modules: [
         "worker.mjs",
+        "account-access.mjs",
+        "account-access-schema.mjs",
         "treatment-colours.mjs",
         "history-preview.mjs",
         "history-salon.mjs",

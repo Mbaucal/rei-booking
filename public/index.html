@@ -17,9 +17,11 @@
         <p>Sign in to Rei Booking.</p>
         <form id="login-form">
           <label
-            >Email<input
+            >Email or username<input
               name="email"
-              type="email"
+              type="text"
+              autocapitalize="none"
+              spellcheck="false"
               autocomplete="username"
               required /></label
           ><label
@@ -60,6 +62,22 @@
         </div>
       </aside>
       <main>
+        <section
+          id="account-preview-banner"
+          class="account-preview-banner"
+          aria-label="Account preview"
+          hidden
+        >
+          <div>
+            <strong
+              >Viewing as <span id="preview-account-name"></span> ·
+              <span id="preview-account-role"></span></strong
+            ><span>Read-only preview</span>
+          </div>
+          <button id="preview-return" type="button" class="btn">
+            Return to Owner
+          </button>
+        </section>
         <header class="page-top">
           <div>
             <p class="eyebrow">Rei Thailand Massage</p>

@@ -103,6 +103,29 @@ function fixture() {
       ],
     },
     role: "owner",
+    accounts: [
+      {
+        id: "qa-owner",
+        name: "Fictional QA Owner",
+        login: "owner@example.test",
+        role: "owner",
+        therapistId: null,
+        active: true,
+        mustChangePassword: false,
+        version: 1,
+      },
+    ],
+    accountPasswords: new Map([["qa-owner", "FictionalQAOwner123"]]),
+    validateLogins: false,
+    signedUserId: "qa-owner",
+    loginAttempts: [],
+    accountWrites: [],
+    accessResponses: [],
+    accountWriteFailure: null,
+    preview: null,
+    previewFailure: false,
+    previewExitFailure: false,
+    previewCatalogueResponses: [],
     authenticated: true,
     mustChangePassword: false,
     serviceWrites: [],
@@ -186,6 +209,77 @@ function calendarBlock(id, extra = {}) {
     ...extra,
   };
 }
+function accessUser(f) {
+  return (
+    f.accounts.find((account) => account.id === f.signedUserId) || f.accounts[0]
+  );
+}
+function accessPreviewUnavailable(f) {
+  if (!f.preview) return false;
+  const target = f.accounts.find(
+    (account) => account.id === f.preview.targetId,
+  );
+  return (
+    !target?.active ||
+    target.version !== f.preview.version ||
+    (target.role === "therapist" &&
+      !f.catalogue.therapists.find((member) => member.id === target.therapistId)
+        ?.active)
+  );
+}
+function accessSession(f) {
+  const owner = accessUser(f);
+  const target = f.preview
+    ? f.accounts.find((account) => account.id === f.preview.targetId)
+    : null;
+  return {
+    user: f.preview
+      ? {
+          id: f.preview.targetId,
+          name: f.preview.targetName,
+          role: f.preview.role,
+          therapistId: target?.therapistId || null,
+        }
+      : {
+          id: owner.id,
+          role: f.role,
+          name: owner.name,
+          therapistId: owner.therapistId,
+        },
+    csrf: "fixture-csrf",
+    mustChangePassword: f.preview ? false : f.mustChangePassword,
+    preview: f.preview
+      ? {
+          ownerName: owner.name,
+          targetName: f.preview.targetName,
+          targetId: f.preview.targetId,
+          role: f.preview.role,
+          unavailable: accessPreviewUnavailable(f),
+        }
+      : null,
+  };
+}
+async function accessBody(req) {
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  return raw ? JSON.parse(raw) : {};
+}
+function accessAccount(f, extra = {}) {
+  const account = {
+    id: `qa-member-${f.accounts.length}`,
+    name: "QA Therapist A",
+    login: "qa.therapist",
+    role: "therapist",
+    therapistId: "tA",
+    active: true,
+    mustChangePassword: false,
+    version: 1,
+    ...extra,
+  };
+  f.accounts.push(account);
+  f.accountPasswords.set(account.id, "FictionalQAMember123");
+  return account;
+}
 const mime = {
   ".html": "text/html",
   ".js": "text/javascript",
@@ -215,14 +309,182 @@ const server = createServer(async (req, res) => {
       });
       if (url.pathname === "/api/session" && !f.authenticated)
         return json({ error: "Fictional signed-out session" }, 401);
-      if (url.pathname === "/api/login") f.authenticated = true;
+      if (url.pathname === "/api/login") {
+        const body = await accessBody(req),
+          login = String(body.login || body.email || "")
+            .trim()
+            .toLowerCase();
+        f.loginAttempts.push(login);
+        if (f.validateLogins) {
+          const account = f.accounts.find(
+            (candidate) => candidate.login === login && candidate.active,
+          );
+          if (!account || f.accountPasswords.get(account.id) !== body.password)
+            return json(
+              { error: "Email or username and password are incorrect." },
+              401,
+            );
+          f.signedUserId = account.id;
+          f.role = account.role;
+          f.mustChangePassword = account.mustChangePassword;
+        }
+        f.authenticated = true;
+      }
       if (["/api/session", "/api/login"].includes(url.pathname))
+        return json(accessSession(f));
+      if (url.pathname === "/api/account-preview" && req.method === "DELETE") {
+        assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        if (f.previewExitFailure)
+          return json({ error: "Fictional preview exit outage" }, 503);
+        f.preview = null;
+        return json(accessSession(f));
+      }
+      if (url.pathname === "/api/logout") {
+        f.authenticated = false;
+        f.preview = null;
+        return json({ ok: true });
+      }
+      if (f.preview && !["GET", "HEAD"].includes(req.method))
+        return json(
+          { error: "Preview is read-only. Return to Owner to make changes." },
+          403,
+        );
+      if (f.preview && accessPreviewUnavailable(f))
+        return json(
+          { error: "Preview is no longer available. Return to Owner." },
+          409,
+        );
+      if (url.pathname === "/api/account-preview" && req.method === "POST") {
+        assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        if (f.role !== "owner")
+          return json({ error: "Owner access required" }, 403);
+        if (f.previewFailure)
+          return json({ error: "Fictional preview start outage" }, 503);
+        const body = await accessBody(req),
+          target = f.accounts.find((account) => account.id === body.userId);
+        if (
+          !target?.active ||
+          !["therapist", "reception"].includes(target.role)
+        )
+          return json({ error: "Choose an active staff account" }, 400);
+        f.preview = {
+          targetId: target.id,
+          targetName: target.name,
+          role: target.role,
+          version: target.version,
+        };
+        return json(accessSession(f));
+      }
+      if (/^\/api\/therapists\/[^/]+\/access$/.test(url.pathname)) {
+        if (f.role !== "owner" || f.preview)
+          return json({ error: "Owner access required" }, 403);
+        const therapistId = url.pathname.split("/").at(-2),
+          response = f.accessResponses.shift();
+        if (response?.wait) await response.wait.promise;
+        if (response?.fail)
+          return json({ error: "Fictional access outage" }, 503);
         return json({
-          user: { id: "qa-owner", role: f.role, name: "Fictional QA Owner" },
-          csrf: "fixture-csrf",
-          mustChangePassword: f.mustChangePassword,
+          accounts: structuredClone(
+            f.accounts.filter((account) => account.therapistId === therapistId),
+          ),
         });
-      if (url.pathname === "/api/catalogue") return json(f.catalogue);
+      }
+      if (/^\/api\/users(?:\/[^/]+)?$/.test(url.pathname)) {
+        if (f.role !== "owner" || f.preview)
+          return json({ error: "Owner access required" }, 403);
+        if (req.method === "GET")
+          return json({
+            users: f.accounts.map((account) => ({
+              ...account,
+              email: account.login,
+              therapist_id: account.therapistId,
+              must_change_password: account.mustChangePassword,
+            })),
+          });
+        const body = await accessBody(req);
+        assert.equal(req.headers["x-csrf-token"], "fixture-csrf");
+        if (f.accountWriteFailure) {
+          const status = f.accountWriteFailure;
+          f.accountWriteFailure = null;
+          return json(
+            {
+              error:
+                status === 409
+                  ? "This account changed. Reload access before saving again."
+                  : "Fictional account save outage",
+            },
+            status,
+          );
+        }
+        const previous = f.accounts.find(
+          (account) => account.id === url.pathname.split("/").at(-1),
+        );
+        if (
+          req.method === "PUT" &&
+          (!previous || body.version !== previous.version)
+        )
+          return json(
+            {
+              error: "This account changed. Reload access before saving again.",
+            },
+            409,
+          );
+        const login = String(body.login ?? body.email ?? previous?.login ?? "")
+          .trim()
+          .toLowerCase();
+        if (
+          f.accounts.some(
+            (account) => account.login === login && account.id !== previous?.id,
+          )
+        )
+          return json(
+            { error: "This email or username is already in use." },
+            409,
+          );
+        const saved = {
+          ...previous,
+          ...body,
+          login,
+          id: previous?.id || `qa-created-${f.accounts.length}`,
+          active: body.active ?? true,
+          mustChangePassword: body.password
+            ? true
+            : previous?.mustChangePassword || false,
+          version: (previous?.version || 0) + 1,
+        };
+        delete saved.password;
+        if (body.password) f.accountPasswords.set(saved.id, body.password);
+        if (previous) f.accounts[f.accounts.indexOf(previous)] = saved;
+        else f.accounts.push(saved);
+        f.accountWrites.push({
+          path: url.pathname,
+          method: req.method,
+          body: structuredClone(body),
+        });
+        return json({ id: saved.id, account: saved }, previous ? 200 : 201);
+      }
+      if (
+        f.preview &&
+        (url.pathname.startsWith("/api/reports/") ||
+          url.pathname.startsWith("/api/sales/") ||
+          (f.preview.role === "therapist" &&
+            (url.pathname.startsWith("/api/clients") ||
+              url.pathname.startsWith("/api/photos/clients/"))))
+      )
+        return json({ error: "This role cannot access this data" }, 403);
+      if (url.pathname === "/api/catalogue") {
+        if (!f.preview) return json(f.catalogue);
+        const response = f.previewCatalogueResponses.shift();
+        if (response?.wait) await response.wait.promise;
+        if (response?.fail)
+          return json({ error: "Fictional preview catalogue outage" }, 503);
+        const catalogue = structuredClone(f.catalogue);
+        for (const service of catalogue.services) delete service.priceCents;
+        for (const member of catalogue.therapists)
+          for (const field of ["fullName", "email", "phone", "note", "bonus"])
+            delete member[field];
+        return json(catalogue);
+      }
       if (
         /^\/api\/services(?:\/[^/]+)?$/.test(url.pathname) &&
         ["POST", "PUT"].includes(req.method)
@@ -433,6 +695,21 @@ const server = createServer(async (req, res) => {
             (a) => (!from || a.date >= from) && (!to || a.date <= to),
           ),
         );
+        if (f.preview)
+          for (const appointment of result) {
+            delete appointment.grossCents;
+            delete appointment.netCents;
+            if (f.preview.role === "therapist")
+              for (const field of [
+                "clientId",
+                "clientName",
+                "note",
+                "createdAt",
+                "updatedAt",
+                "cancelledAt",
+              ])
+                delete appointment[field];
+          }
         const delay = f.delayed.get(from);
         if (delay) await delay.promise;
         if (f.failDates.has(from))
@@ -1429,7 +1706,378 @@ async function assertUnrestrictedDetails(page, f, dashboardReport) {
   assert.deepEqual(f.reportResults.at(-1).options, dashboardReport.options);
 }
 
+async function openTeamAccess(page, therapistId = "tA") {
+  await page.goto(origin + "#page=team");
+  await page.locator(`[data-team="${therapistId}"]`).click();
+  await page.locator("#access-role").waitFor();
+}
+async function savedAccess(page) {
+  await page
+    .locator("#access-result")
+    .filter({ hasText: "Access saved." })
+    .waitFor();
+  assert.equal(await page.locator("#access-password").inputValue(), "");
+}
+async function previewCalendarDate(page) {
+  await page.locator("#calendar-date").fill(date);
+  await page.locator("#calendar-date").dispatchEvent("change");
+  await page.waitForFunction(
+    (expected) =>
+      document
+        .querySelector("#calendar-summary")
+        ?.textContent.includes(expected),
+    "1 Oct 2026",
+  );
+}
+async function anonymousPreview(page) {
+  assert.equal(
+    await page.locator("#app").getAttribute("data-page"),
+    "calendar",
+  );
+  assert.doesNotMatch(
+    await page.locator("#page-content").innerText(),
+    /Fictional QA Client|PRIVATE_QA_NOTE|qa@example.test|4700|5900/,
+  );
+  const copies = await page
+    .locator('[data-appointment="preview-booking"]')
+    .count();
+  assert.ok(
+    copies > 0,
+    "Requested booking is visible in each selected resource",
+  );
+  assert.equal(
+    await page.locator(".calendar-event .request-heart").count(),
+    copies,
+  );
+  assert.equal(await page.locator("#account-preview-banner").isVisible(), true);
+  assert.match(
+    await page.locator("#account-preview-banner").innerText(),
+    /QA Therapist A/,
+  );
+}
+
 try {
+  for (const device of [desktop, phone]) {
+    await scenario(
+      "team access creates username login and updates role or disables without altering profile",
+      device,
+      async ({ page, f }) => {
+        f.catalogue.therapists[0].email = "contact-only@example.test";
+        const profileBefore = structuredClone(f.catalogue.therapists[0]);
+        const ownerPasswordBefore = f.accountPasswords.get("qa-owner");
+        await openTeamAccess(page);
+        assert.equal(await page.locator("#access-role").inputValue(), "none");
+        await page.locator("#access-role").selectOption("therapist");
+        await page.locator('#access-form [name="name"]').fill("QA Therapist A");
+        await page.locator("#access-login").fill("qa.therapist");
+        await page.locator("#access-password").fill("FictionalQAMember123");
+        await page.locator("#access-save").click();
+        await savedAccess(page);
+        assert.equal(f.accountWrites.length, 1);
+        assert.equal(f.accountWrites[0].body.login, "qa.therapist");
+        assert.equal(f.accountWrites[0].body.therapistId, "tA");
+        assert.equal(f.accounts.at(-1).role, "therapist");
+        assert.deepEqual(f.catalogue.therapists[0], profileBefore);
+        assert.equal(f.accountPasswords.get("qa-owner"), ownerPasswordBefore);
+        await page.locator("#access-role").selectOption("reception");
+        await page.locator("#access-save").click();
+        await savedAccess(page);
+        assert.equal(f.accounts.at(-1).role, "reception");
+        assert.equal(f.accounts.at(-1).therapistId, "tA");
+        assert.equal("password" in f.accountWrites.at(-1).body, false);
+        await page.locator("#access-role").selectOption("none");
+        await page.locator("#access-save").click();
+        await savedAccess(page);
+        assert.equal(f.accounts.at(-1).active, false);
+        assert.equal(f.accountWrites.length, 3);
+        assert.equal(
+          f.requests.filter(
+            (r) =>
+              /^\/api\/therapists(?:\/[^/]+)?$/.test(r.path) &&
+              r.method !== "GET",
+          ).length,
+          0,
+        );
+        assert.deepEqual(f.catalogue.therapists[0], profileBefore);
+        await noPageOverflow(page, "Team access editor");
+        await page.locator("#drawer-close").click();
+        await navigate(page, "users");
+        const memberId = f.accounts.at(-1).id;
+        await page.locator(`[data-user-edit="${memberId}"]`).click();
+        await page.locator("#access-role").waitFor();
+        assert.equal(await page.locator("#access-role").inputValue(), "none");
+        assert.equal(
+          await page.locator("#access-login").inputValue(),
+          "qa.therapist",
+        );
+        assert.equal(await page.locator("#access-profile").inputValue(), "tA");
+        await page.locator("#access-close").click();
+        await page.locator('[data-user-edit="qa-owner"]').click();
+        await page.locator("#access-role").waitFor();
+        assert.equal(await page.locator("#access-role").inputValue(), "owner");
+        assert.equal(
+          await page
+            .locator('#access-role option[value="none"]')
+            .evaluate((option) => option.disabled),
+          true,
+        );
+        assert.equal(
+          await page.locator("#access-login").getAttribute("readonly"),
+          "",
+        );
+        assert.equal(await page.locator("#access-password").isDisabled(), true);
+        assert.equal(await page.locator("#access-preview").count(), 0);
+        assert.equal(f.accountWrites.length, 3);
+        assert.equal(f.accountPasswords.get("qa-owner"), ownerPasswordBefore);
+      },
+    );
+    await scenario(
+      "team access preview clears owner data and survives refresh until explicit return",
+      device,
+      async ({ page, f }) => {
+        const account = accessAccount(f);
+        f.appointments = [
+          {
+            ...booking("preview-booking", "tA", "r1", 0),
+            note: "PRIVATE_QA_NOTE",
+            requestedTherapistId: "tA",
+          },
+        ];
+        await openTeamAccess(page);
+        const heldCatalogue = deferred();
+        f.delayed.set("held-preview-catalogue", heldCatalogue);
+        f.previewCatalogueResponses.push({ wait: heldCatalogue });
+        const catalogueRequested = page.waitForRequest(
+          (r) => new URL(r.url()).pathname === "/api/catalogue",
+        );
+        await page.locator("#access-preview").click();
+        await catalogueRequested;
+        // Old Team details must disappear before the target's catalogue returns.
+        assert.equal(await page.locator("#team-form").count(), 0);
+        assert.doesNotMatch(
+          await page.locator("#page-content").innerText(),
+          /contact-only@example.test|PRIVATE_QA_NOTE|Regular bonus|Requested bonus/,
+        );
+        const catalogueReturned = page.waitForResponse(
+          (r) => new URL(r.url()).pathname === "/api/catalogue",
+        );
+        heldCatalogue.release();
+        await catalogueReturned;
+        await page.locator("#account-preview-banner").waitFor();
+        await previewCalendarDate(page);
+        await anonymousPreview(page);
+        assert.equal(f.preview.targetId, account.id);
+        const afterPreview = f.requests.length;
+        await page.reload();
+        await page.locator("#account-preview-banner").waitFor();
+        await page
+          .locator('[data-appointment="preview-booking"]')
+          .first()
+          .waitFor();
+        await anonymousPreview(page);
+        await page.evaluate(() => {
+          location.hash = "page=users";
+        });
+        await renderedFrames(page);
+        assert.equal(
+          await page.locator("#app").getAttribute("data-page"),
+          "calendar",
+        );
+        assert.equal(
+          f.requests
+            .slice(afterPreview)
+            .filter(
+              (r) =>
+                r.path === "/api/users" || r.path.startsWith("/api/reports/"),
+            ).length,
+          0,
+        );
+        await page.locator("#preview-return").click();
+        await page.locator("#team-add").waitFor();
+        assert.equal(
+          await page.locator("#account-preview-banner").isVisible(),
+          false,
+        );
+        assert.equal(f.preview, null);
+        await navigate(page, "calendar");
+        await previewCalendarDate(page);
+        await page
+          .locator('[data-appointment="preview-booking"]')
+          .first()
+          .waitFor();
+        assert.match(
+          await page.locator("#page-content").innerText(),
+          /Fictional QA Client/,
+        );
+        assert.equal(f.accountWrites.length, 0);
+        assert.equal(f.writes.length, 0);
+      },
+    );
+    await scenario(
+      "team access username signs in without requiring an email address",
+      device,
+      async ({ page, f }) => {
+        const account = accessAccount(f);
+        f.validateLogins = true;
+        f.authenticated = false;
+        await page.goto(origin);
+        await page.locator("#login-screen").waitFor();
+        const identity = page.locator('#login-form [name="email"]');
+        assert.equal(await identity.getAttribute("type"), "text");
+        await identity.fill("QA.THERAPIST");
+        await page
+          .locator('#login-form [name="password"]')
+          .fill("FictionalQAMember123");
+        await page.locator('#login-form button[type="submit"]').click();
+        await page.locator("#calendar-grid").waitFor();
+        assert.equal(f.signedUserId, account.id);
+        assert.deepEqual(f.loginAttempts, ["qa.therapist"]);
+        assert.equal(
+          await page.locator("#signed-role").innerText(),
+          "Therapist",
+        );
+        assert.equal(
+          await page.locator("#account-preview-banner").isVisible(),
+          false,
+        );
+        assert.equal(f.accountWrites.length, 0);
+      },
+    );
+  }
+  await scenario(
+    "team access ignores old drawer responses and selects exact linked account",
+    phone,
+    async ({ page, f }) => {
+      accessAccount(f, { id: "qa-a", login: "qa.alpha" });
+      accessAccount(f, {
+        id: "qa-b-first",
+        name: "QA Therapist B",
+        login: "qa.beta",
+        therapistId: "tB",
+      });
+      accessAccount(f, {
+        id: "qa-b-second",
+        name: "QA Other B",
+        login: "qa.beta.second",
+        therapistId: "tB",
+        role: "reception",
+      });
+      const held = deferred();
+      f.delayed.set("held-team-access", held);
+      f.accessResponses.push({ wait: held });
+      await page.goto(origin + "#page=team");
+      const requestedA = page.waitForRequest(
+        (r) => new URL(r.url()).pathname === "/api/therapists/tA/access",
+      );
+      await page.locator('[data-team="tA"]').click();
+      await requestedA;
+      await page.locator("#drawer-close").click();
+      await page.locator('[data-team="tB"]').click();
+      await page.locator("#access-account").waitFor();
+      await page.locator("#access-account").selectOption("qa-b-second");
+      assert.equal(
+        await page.locator("#access-login").inputValue(),
+        "qa.beta.second",
+      );
+      const completedA = page.waitForResponse(
+        (r) => new URL(r.url()).pathname === "/api/therapists/tA/access",
+      );
+      held.release();
+      await completedA;
+      await renderedFrames(page);
+      assert.equal(
+        await page.locator("#access-login").inputValue(),
+        "qa.beta.second",
+      );
+      await page.locator("#access-role").selectOption("none");
+      await page.locator("#access-save").click();
+      await savedAccess(page);
+      assert.equal(
+        f.accounts.find((a) => a.id === "qa-b-second").active,
+        false,
+      );
+      assert.equal(f.accounts.find((a) => a.id === "qa-b-first").active, true);
+      assert.equal(f.accounts.find((a) => a.id === "qa-a").active, true);
+      assert.equal(f.accountWrites.length, 1);
+      assert.equal(f.accountWrites[0].path, "/api/users/qa-b-second");
+    },
+  );
+  await scenario(
+    "team access stale save requires reload and access loading can retry",
+    desktop,
+    async ({ page, f }) => {
+      const account = accessAccount(f);
+      f.accessResponses.push({ fail: true });
+      await page.goto(origin + "#page=team");
+      await page.locator('[data-team="tA"]').click();
+      await page.locator("#access-reload").waitFor();
+      assert.match(
+        await page.locator("#team-access").innerText(),
+        /Fictional access outage/,
+      );
+      await page.locator("#access-reload").click();
+      await page.locator("#access-role").waitFor();
+      await page.locator("#access-role").selectOption("reception");
+      f.accountWriteFailure = 409;
+      account.version++;
+      await page.locator("#access-save").click();
+      await page.locator("#access-reload").waitFor();
+      assert.match(
+        await page.locator("#team-access").innerText(),
+        /account changed/,
+      );
+      assert.equal(f.accountWrites.length, 0);
+      await page.locator("#access-reload").click();
+      await page.locator("#access-role").waitFor();
+      assert.equal(
+        await page.locator("#access-role").inputValue(),
+        "therapist",
+      );
+      assert.equal(
+        f.accounts.find((a) => a.id === account.id).role,
+        "therapist",
+      );
+    },
+  );
+  await scenario(
+    "team access preview failures leave a usable owner return and unavailable preview fails closed",
+    phone,
+    async ({ page, f }) => {
+      const account = accessAccount(f);
+      await openTeamAccess(page);
+      f.previewFailure = true;
+      await page.locator("#access-preview").click();
+      await page
+        .getByText("Fictional preview start outage", { exact: false })
+        .waitFor();
+      assert.equal(f.preview, null);
+      assert.equal(
+        await page.locator("#app").getAttribute("data-page"),
+        "team",
+      );
+      f.previewFailure = false;
+      await page.locator("#access-preview").click();
+      await page.locator("#calendar-grid").waitFor();
+      f.previewExitFailure = true;
+      await page.locator("#preview-return").click();
+      await page
+        .getByText("Fictional preview exit outage", { exact: false })
+        .waitFor();
+      assert.equal(await page.locator("#preview-return").isEnabled(), true);
+      assert.ok(f.preview);
+      account.active = false;
+      account.version++;
+      await page.reload();
+      await page.locator("#account-preview-banner").waitFor();
+      assert.equal(await page.locator("#calendar-grid").count(), 0);
+      assert.equal(await page.locator("#preview-return").isEnabled(), true);
+      f.previewExitFailure = false;
+      await page.locator("#preview-return").click();
+      await page.locator("#team-add").waitFor();
+      assert.equal(f.preview, null);
+      assert.deepEqual(f.writes, []);
+    },
+  );
   await scenario(
     "client booking profile keeps lifetime counts across pages, retry and abandoned responses",
     phone,

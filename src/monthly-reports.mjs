@@ -575,7 +575,7 @@ export async function monthlyRoutes(request, env, user) {
       schedules: await Promise.all(rows.map((r) => scheduleView(db, r))),
       recipients,
       emailReady: monthlyEmailReady(env),
-      accountEmail: user.email,
+      accountEmail: user.email.includes("@") ? user.email : "",
       verificationJobs: jobs.map(jobView),
     });
   }

@@ -37,6 +37,8 @@ test("real Worker + D1: authenticated booking workflow, privacy and persistence"
   const options = convertV4MiniflareOptions({
     modules: [
       "worker.mjs",
+      "account-access.mjs",
+      "account-access-schema.mjs",
       "treatment-colours.mjs",
       "history-preview.mjs",
       "history-salon.mjs",

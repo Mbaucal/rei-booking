@@ -1,3 +1,12 @@
+import { ensureAccountAccessSchema } from "./account-access-schema.mjs";
+import {
+  loginIdentifier,
+  accountSession,
+  resolveAccountPreview,
+  previewRoute,
+  logoutAccount,
+  accountAccessRoutes,
+} from "./account-access.mjs";
 import { CSVError } from "./client-csv.mjs";
 import {
   ensureClientContacts,
@@ -122,7 +131,7 @@ async function rateLimit(db, key, limit) {
 }
 async function login(request, env) {
   const body = await readJSON(request, 4096),
-    mail = email(body.email, false);
+    mail = loginIdentifier(body.login ?? body.email);
   await rateLimit(
     env.DB,
     "ip:" + digest(request.headers.get("cf-connecting-ip") || "local"),
@@ -134,7 +143,8 @@ async function login(request, env) {
     body.password,
     user?.password_hash || DUMMY_HASH,
   );
-  if (!valid || !user?.active) fail(401, "Email or password is incorrect.");
+  if (!valid || !user?.active)
+    fail(401, "Email, username or password is incorrect.");
   if (
     user.role === "therapist" &&
     !(await one(
@@ -143,7 +153,7 @@ async function login(request, env) {
       user.therapist_id,
     ))
   )
-    fail(401, "Email or password is incorrect.");
+    fail(401, "Email, username or password is incorrect.");
   const raw = token(),
     csrf = token();
   await env.DB.batch([
@@ -479,30 +489,36 @@ async function routes(request, env) {
   if (path === "/api/email/webhook") return emailWebhook(request, env);
   checkOrigin(request, env);
   if (path === "/api/health" && method === "GET")
-    return json({ ok: true, version: "0.18.4", environment: env.APP_ENV });
+    return json({ ok: true, version: "0.19.0", environment: env.APP_ENV });
   if (path === "/api/login" && method === "POST") return login(request, env);
-  const user = await authenticate(request, db);
+  const principal = await authenticate(request, db);
+  await ensureAccountAccessSchema(db);
+  const effective = await resolveAccountPreview(db, principal);
+  const user = effective.user;
   if (
     !["GET", "HEAD"].includes(method) &&
     digest(request.headers.get("x-csrf-token") || "") !==
-      digest(user.csrf_token)
+      digest(principal.csrf_token)
   )
     fail(403, "The session changed. Refresh the page.");
   if (path === "/api/session" && method === "GET")
-    return json({
-      user: publicUser(user),
-      csrf: user.csrf_token,
-      mustChangePassword: !!user.must_change_password,
-    });
+    return json(accountSession(principal, user, effective.preview));
+  if (path === "/api/account-preview")
+    return previewRoute(request, db, principal, effective.preview);
   if (path === "/api/logout" && method === "POST") {
-    await stmt(
-      db,
-      "DELETE FROM sessions WHERE token_hash=?",
-      user.token_hash,
-    ).run();
+    await logoutAccount(db, principal);
     return json({ ok: true }, 200, {
       "Set-Cookie": sessionCookie("", url.protocol === "https:", true),
     });
+  }
+  if (effective.preview) {
+    if (effective.preview.unavailable)
+      fail(409, "This member preview is no longer available. Return to Owner.");
+    if (!["GET", "HEAD"].includes(method))
+      fail(
+        403,
+        "Member preview is read-only. Return to Owner to make changes.",
+      );
   }
   if (path === "/api/password" && method === "POST") {
     const body = await readJSON(request, 4096);
@@ -523,8 +539,10 @@ async function routes(request, env) {
       "Set-Cookie": sessionCookie("", url.protocol === "https:", true),
     });
   }
-  if (user.must_change_password)
+  if (!effective.preview && user.must_change_password)
     fail(403, "Change your temporary password before continuing.");
+  const accountResponse = await accountAccessRoutes(request, db, user);
+  if (accountResponse) return accountResponse;
   await ensureReportSchema(db);
   await ensurePhotoSchema(db);
   await ensureClientContacts(db);
@@ -802,93 +820,6 @@ WHERE a.date BETWEEN ? AND ? ORDER BY a.date,a.start_minute,a.id LIMIT 20001`,
         await readJSON(request, 250000),
         match[1],
       );
-  }
-  if (path === "/api/users" && method === "GET") {
-    requireRole(user, "owner");
-    return json({
-      users: await all(
-        db,
-        "SELECT id,name,email,role,therapist_id,active,must_change_password FROM users ORDER BY name",
-      ),
-    });
-  }
-  if (path === "/api/users" && method === "POST") {
-    requireRole(user, "owner");
-    const body = await readJSON(request, 8192),
-      mail = email(body.email, false),
-      name = text(body.name, 100, "name");
-    if (!["owner", "reception", "therapist"].includes(body.role))
-      fail(400, "Choose a user role.");
-    const therapistId =
-      body.role === "therapist"
-        ? text(body.therapistId, 100, "therapist profile")
-        : null;
-    if (
-      therapistId &&
-      !(await one(
-        db,
-        "SELECT id FROM therapists WHERE id=? AND active=1",
-        therapistId,
-      ))
-    )
-      fail(400, "Choose an active therapist profile.");
-    const hash = await hashPassword(body.password),
-      id = randomUUID();
-    await auditedWrite(
-      db,
-      stmt(
-        db,
-        "INSERT INTO users(id,email,name,password_hash,role,therapist_id,must_change_password,created_at) VALUES(?,?,?,?,?,?,1,?)",
-        id,
-        mail,
-        name,
-        hash,
-        body.role,
-        therapistId,
-        now(),
-      ),
-      user,
-      "user",
-      id,
-      "create",
-      null,
-      { email: mail, name, role: body.role, therapistId },
-    );
-    return json({ id }, 201);
-  }
-  const userMatch = path.match(/^\/api\/users\/([^/]+)\/active$/);
-  if (userMatch && method === "PUT") {
-    requireRole(user, "owner");
-    if (userMatch[1] === user.id)
-      fail(400, "You cannot disable your own account.");
-    const body = await readJSON(request, 4096);
-    if (typeof body.active !== "boolean") fail(400, "Set active status.");
-    const target = await one(
-      db,
-      "SELECT id,active FROM users WHERE id=?",
-      userMatch[1],
-    );
-    if (!target) fail(404, "User not found.");
-    await db.batch([
-      stmt(
-        db,
-        "UPDATE users SET active=? WHERE id=?",
-        body.active ? 1 : 0,
-        target.id,
-      ),
-      stmt(db, "DELETE FROM sessions WHERE user_id=?", target.id),
-      stmt(
-        db,
-        "INSERT INTO audit_log(actor_id,action,entity,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?)",
-        user.id,
-        "set_active",
-        "user",
-        target.id,
-        JSON.stringify({ active: body.active }),
-        now(),
-      ),
-    ]);
-    return json({ ok: true });
   }
   if (path === "/api/audit" && method === "GET") {
     requireRole(user, "owner");

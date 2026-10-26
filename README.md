@@ -1,10 +1,12 @@
 # Rei Booking
 
-Current implementation release, **0.18.4** — 26 October 2026.
+Current implementation release, **0.19.0** — 26 October 2026.
 
 An English-language internal booking application for Rei Thailand Massage. This is a working development slice with a real server and persistent database. The test Worker is deployed, the database tables exist, and the owner confirmed successful hosted sign-in. This is **not the complete approved product**. The approved v11 prototype remains the reference for the remaining screens and workflows.
 
 ## Included
+
+- Team → Edit access management: email or username sign-in, editable account roles, enable/disable and password replacement. Owner-only View as member uses actual target-role reads in a read-only preview, with Return to Owner. Profiles and login access remain separate. See [team access](docs/team-access.md).
 
 - Dashboard → Open detailed reports keeps the displayed period, source and comparison, with previous detail-only filters cleared. Client profiles show lifetime Rei booking counts and all appointments in pages of 50, including records older than the former 500-row cutoff. These display fixes do not change stored bookings or reporting rules.
 

@@ -1,3 +1,4 @@
+import { mountAccountAccess } from "./team-access.js";
 import { mountClientMatches } from "./client-matches.js";
 import { mountBookingAvailability } from "./calendar-availability.js";
 import { bookingSummaryHTML } from "./booking-presentation.js";
@@ -129,6 +130,7 @@ let state = {
     user: null,
     csrf: "",
     mustChangePassword: false,
+    preview: null,
     page: "calendar",
     date: today(),
     mode: calendarModes[calendarLayoutKey],
@@ -149,7 +151,9 @@ let state = {
   sessionEpoch = 0;
 let historyPreviewCleanup = null,
   clientHistoryCleanup = null,
-  clientBookingsCleanup = null;
+  clientBookingsCleanup = null,
+  accountAccess = null,
+  sessionRefreshPromise = null;
 const owner = () => state.user?.role === "owner",
   operator = () => ["owner", "reception"].includes(state.user?.role);
 const therapist = (id) => state.catalogue.therapists.find((t) => t.id === id),
@@ -172,6 +176,14 @@ function toast(message) {
   toastTimer = setTimeout(() => ($("toast").hidden = true), 4500);
 }
 async function api(path, { method = "GET", body } = {}) {
+  if (
+    state.preview &&
+    method !== "GET" &&
+    !(path === "/account-preview" && method === "DELETE") &&
+    !(path === "/logout" && method === "POST")
+  ) {
+    throw new Error("Preview is read-only. Return to Owner to make changes.");
+  }
   const epoch = sessionEpoch;
   const response = await fetch("/api" + path, {
     method,
@@ -217,6 +229,7 @@ function signOutView() {
     ...state,
     user: null,
     csrf: "",
+    preview: null,
     appointments: [],
     history: { appointments: [], therapists: [], metadata: {} },
     blocks: [],
@@ -225,6 +238,13 @@ function signOutView() {
     version: state.version + 1,
   };
   clearInterval(refreshTimer);
+  clearTimeout(toastTimer);
+  $("toast").hidden = true;
+  $("toast").textContent = "";
+  $("account-preview-banner").hidden = true;
+  $("preview-account-name").textContent = "";
+  $("preview-account-role").textContent = "";
+  $("change-password").hidden = false;
   closeDrawer();
   $("page-content").textContent = "";
   $("drawer-content").textContent = "";
@@ -239,6 +259,8 @@ function signOutView() {
 let drawerEpoch = 0,
   drawerReturnFocus = null;
 function closeDrawer() {
+  accountAccess?.dispose();
+  accountAccess = null;
   clientHistoryCleanup?.();
   clientHistoryCleanup = null;
   clientBookingsCleanup?.();
@@ -267,6 +289,8 @@ function closeDrawer() {
   scheduleCalendarLayoutSync();
 }
 function showDrawer(title, kicker, html) {
+  accountAccess?.dispose();
+  accountAccess = null;
   clientHistoryCleanup?.();
   clientHistoryCleanup = null;
   clientBookingsCleanup?.();
@@ -328,11 +352,32 @@ function bindForm(id, save, label = "Save changes") {
     }
   };
 }
-async function enterApp(session) {
-  sessionEpoch++;
-  state.user = session.user;
-  state.csrf = session.csrf;
-  state.mustChangePassword = !!session.mustChangePassword;
+async function enterApp(session, { page = null } = {}) {
+  const epoch = ++sessionEpoch;
+  clearInterval(refreshTimer);
+  historyPreviewCleanup?.();
+  historyPreviewCleanup = null;
+  disposeCalendarUI();
+  closeDrawer();
+  clearTimeout(toastTimer);
+  $("toast").hidden = true;
+  $("toast").textContent = "";
+  $("page-content").textContent = "";
+  $("app-error").hidden = true;
+  $("app-error").textContent = "";
+  state = {
+    ...state,
+    user: session.user,
+    csrf: session.csrf,
+    mustChangePassword: !!session.mustChangePassword,
+    preview: session.preview || null,
+    catalogue: { therapists: [], rooms: [], services: [] },
+    appointments: [],
+    history: { appointments: [], therapists: [], metadata: {} },
+    blocks: [],
+    clients: [],
+    version: state.version + 1,
+  };
   $("mobile-navigation").hidden = !!session.mustChangePassword;
   $("mobile-navigation")
     .querySelectorAll("[data-mobile-operator]")
@@ -342,22 +387,25 @@ async function enterApp(session) {
   $("login-screen").hidden = true;
   $("app").hidden = false;
   $("signed-name").textContent = session.user.name;
-  $("signed-role").textContent = {
-    owner: "Owner",
-    reception: "Reception",
-    therapist: "Therapist",
-  }[session.user.role];
-  document
-    .querySelectorAll("nav [data-page]")
-    .forEach(
-      (b) =>
-        (b.hidden =
-          b.dataset.page === "calendar"
-            ? false
-            : b.dataset.page === "clients"
-              ? !operator()
-              : !owner()),
-    );
+  $("signed-role").textContent = roleLabel(session.user.role);
+  $("change-password").hidden = !!state.preview;
+  $("account-preview-banner").hidden = !state.preview;
+  $("preview-account-name").textContent = state.preview?.targetName || "";
+  $("preview-account-role").textContent = state.preview
+    ? roleLabel(state.preview.role)
+    : "";
+  $("preview-return").disabled = false;
+  document.querySelectorAll("nav [data-page]").forEach((button) => {
+    button.hidden = !canOpenPage(button.dataset.page, state.user.role);
+  });
+  if (state.preview?.unavailable) {
+    $("app").dataset.page = "preview";
+    $("page-title").textContent = "Account preview";
+    $("page-title").closest(".page-top").classList.remove("calendar-page-top");
+    $("page-content").innerHTML =
+      '<div class="empty"><h2>This preview is no longer available</h2><p>The account or its access changed. Return to Owner to continue.</p></div>';
+    return;
+  }
   if (session.mustChangePassword) {
     $("app").dataset.page = "password";
     $("page-title").textContent = "Your account";
@@ -369,20 +417,82 @@ async function enterApp(session) {
     passwordDialog(true);
     return;
   }
-  await loadCatalogue();
-  await restorePageLocation();
-  clearInterval(refreshTimer);
+  try {
+    await loadCatalogue();
+    if (epoch !== sessionEpoch) return;
+    if (page) await setPage(page, null, { replace: true });
+    else await restorePageLocation();
+  } catch (error) {
+    if (epoch === sessionEpoch) showAppError(error);
+  }
+  if (epoch !== sessionEpoch) return;
   refreshTimer = setInterval(() => {
-    if (
-      state.user &&
-      state.page === "calendar" &&
-      !document.hidden &&
-      !calendarReschedule?.isActive()
-    )
-      loadCalendar().catch(showAppError);
+    if (state.user && !document.hidden && !calendarReschedule?.isActive())
+      refreshSessionContext().catch(showAppError);
   }, 30000);
 }
+const roleLabel = (role) =>
+  ({ owner: "Owner", reception: "Reception", therapist: "Therapist" })[role] ||
+  role;
+function sessionContext(session) {
+  return JSON.stringify([
+    session.user?.id,
+    session.user?.role,
+    session.user?.name,
+    session.csrf,
+    !!session.mustChangePassword,
+    session.preview?.targetId || null,
+    session.preview?.role || null,
+    !!session.preview?.unavailable,
+  ]);
+}
+async function refreshSessionContext() {
+  if (!state.user) return;
+  if (sessionRefreshPromise) return sessionRefreshPromise;
+  sessionRefreshPromise = (async () => {
+    const before = sessionContext(state),
+      previousPreview = !!state.preview;
+    const session = await api("/session");
+    if (sessionContext(session) !== before) {
+      await enterApp(session, {
+        page: session.preview ? "calendar" : previousPreview ? "team" : null,
+      });
+    } else if (
+      state.page === "calendar" &&
+      !state.preview?.unavailable &&
+      !calendarReschedule?.isActive()
+    ) {
+      await loadCalendar();
+    }
+  })();
+  try {
+    await sessionRefreshPromise;
+  } finally {
+    sessionRefreshPromise = null;
+  }
+}
+async function startAccountPreview(userId) {
+  const session = await api("/account-preview", {
+    method: "POST",
+    body: { userId },
+  });
+  await enterApp(session, { page: "calendar" });
+}
+async function returnToOwner() {
+  const button = $("preview-return");
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const session = await api("/account-preview", { method: "DELETE" });
+    await enterApp(session, { page: "team" });
+  } catch (error) {
+    showAppError(error);
+  } finally {
+    button.disabled = false;
+  }
+}
 function showAppError(error) {
+  if (error.message === "The session changed.") return;
   $("app-error").textContent = error.message;
   $("app-error").hidden = false;
 }
@@ -390,7 +500,8 @@ async function loadCatalogue() {
   state.catalogue = await api("/catalogue");
 }
 async function restorePageLocation() {
-  if (!state.user || state.mustChangePassword) return;
+  if (!state.user || state.mustChangePassword || state.preview?.unavailable)
+    return;
   const layout = calendarLayout();
   const route = readPageLocation(location.hash, {
     role: state.user.role,
@@ -407,7 +518,12 @@ async function restorePageLocation() {
   await setPage(route.page, null, { replace: true, reportId: route.reportId });
 }
 async function setPage(page, initialFilters = null, navigation = {}) {
-  if (state.mustChangePassword || !canOpenPage(page, state.user?.role)) return;
+  if (
+    state.mustChangePassword ||
+    state.preview?.unavailable ||
+    !canOpenPage(page, state.user?.role)
+  )
+    return;
   historyPreviewCleanup?.();
   historyPreviewCleanup = null;
   disposeCalendarUI();
@@ -664,9 +780,10 @@ function mobileMenu() {
   showDrawer(
     "Menu",
     "Rei Booking",
-    `<div class="mobile-menu-list">${pages.map(([page, label]) => `<button type="button" class="btn mobile-menu-route" data-mobile-page="${page}">${label}</button>`).join("")}</div><section class="mobile-account"><h3>${esc(state.user.name)}</h3><p>${esc($("signed-role").textContent)}</p><button type="button" class="btn" id="mobile-change-password">Change password</button><button type="button" class="btn" id="mobile-sign-out">Sign out</button></section>${errorBox()}`,
+    `<div class="mobile-menu-list">${pages.map(([page, label]) => `<button type="button" class="btn mobile-menu-route" data-mobile-page="${page}">${label}</button>`).join("")}</div><section class="mobile-account"><h3>${esc(state.user.name)}</h3><p>${esc($("signed-role").textContent)}</p>${state.preview ? "" : '<button type="button" class="btn" id="mobile-change-password">Change password</button>'}<button type="button" class="btn" id="mobile-sign-out">Sign out</button></section>${errorBox()}`,
   );
-  $("mobile-change-password").onclick = () => passwordDialog();
+  if ($("mobile-change-password"))
+    $("mobile-change-password").onclick = () => passwordDialog();
   $("mobile-sign-out").onclick = async (event) => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -1998,9 +2115,28 @@ function teamDialog(t = null) {
   showDrawer(
     t ? "Edit team member" : "New team member",
     "Team",
-    `<form id="team-form"><div id="team-photo-editor"></div><div class="fields">${input("name", "Display name", t?.name, "text", 'required maxlength="70"')}${input("fullName", "Full name", t?.fullName)}${input("phone", "Phone", t?.phone, "tel")}${input("email", "Email", t?.email, "email")}<label class="wide"><span>Owner note</span><textarea name="note" maxlength="2000">${esc(t?.note || "")}</textarea></label></div><label class="check"><input name="active" type="checkbox" ${t?.active !== false ? "checked" : ""}>Active therapist</label><h3 class="form-section">Weekly working hours</h3>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<div class="weekly-row"><label><input type="checkbox" name="day-${d}" ${week[d].enabled ? "checked" : ""}>${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label><input name="start-${d}" type="time" value="${clock(week[d].start)}" step="300" required aria-label="Start on day ${d}"><span>–</span><input name="end-${d}" type="time" value="${clock(week[d].end)}" step="300" required aria-label="End on day ${d}"></div>`).join("")}${bonusFields(t)}<h3 class="form-section">Time off</h3><label><span>Dates · one YYYY-MM-DD date per line</span><textarea name="timeOff" rows="3">${esc(t?.timeOff.join("\n") || "")}</textarea></label><p class="hint">Existing bookings must be moved before changing availability that would conflict with them. Account access is managed in Accounts.</p>${errorBox()}</form>`,
+    `<form id="team-form"><div id="team-photo-editor"></div><div class="fields">${input("name", "Display name", t?.name, "text", 'required maxlength="70"')}${input("fullName", "Full name", t?.fullName)}${input("phone", "Phone", t?.phone, "tel")}${input("email", "Contact email (optional)", t?.email, "email")}<label class="wide"><span>Owner note</span><textarea name="note" maxlength="2000">${esc(t?.note || "")}</textarea></label></div><label class="check"><input name="active" type="checkbox" ${t?.active !== false ? "checked" : ""}>Active therapist</label><h3 class="form-section">Weekly working hours</h3>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<div class="weekly-row"><label><input type="checkbox" name="day-${d}" ${week[d].enabled ? "checked" : ""}>${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label><input name="start-${d}" type="time" value="${clock(week[d].start)}" step="300" required aria-label="Start on day ${d}"><span>–</span><input name="end-${d}" type="time" value="${clock(week[d].end)}" step="300" required aria-label="End on day ${d}"></div>`).join("")}${bonusFields(t)}<h3 class="form-section">Time off</h3><label><span>Dates · one YYYY-MM-DD date per line</span><textarea name="timeOff" rows="3">${esc(t?.timeOff.join("\n") || "")}</textarea></label><p class="hint">Existing bookings must be moved before changing availability that would conflict with them.</p>${errorBox()}</form><div id="team-access"></div>`,
   );
-  const epoch = sessionEpoch;
+  const epoch = sessionEpoch,
+    opening = drawerEpoch;
+  if (t) {
+    accountAccess = mountAccountAccess({
+      root: $("team-access"),
+      api,
+      esc,
+      profile: t,
+      ownerId: state.user.id,
+      isCurrent: () =>
+        epoch === sessionEpoch &&
+        opening === drawerEpoch &&
+        owner() &&
+        $("drawer").open,
+      onPreview: startAccountPreview,
+    });
+  } else {
+    $("team-access").innerHTML =
+      '<section class="account-access"><h3 class="form-section">Access &amp; permissions</h3><p class="hint">Save this team member before setting account access.</p></section>';
+  }
   const photo = mountPhotoEditor(
     $("team-photo-editor"),
     t,
@@ -2032,6 +2168,12 @@ function teamDialog(t = null) {
   bindForm(
     "team-form",
     async (fd, current) => {
+      if (accountAccess?.isBusy())
+        throw new Error("Wait for account access to finish saving.");
+      if (accountAccess?.hasUnsavedChanges())
+        throw new Error(
+          "Save or discard access changes before saving team details.",
+        );
       const body = {
         photo: photo.payload(),
         name: fd.get("name"),
@@ -2139,50 +2281,41 @@ async function renderUsers() {
   const { users } = await api("/users");
   if (state.page !== "users") return;
   $("page-content").innerHTML =
-    `<div class="toolbar"><p class="hint">Grant access separately from team profiles.</p><button class="btn primary" id="user-add">+ Account</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Access</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.role)}</td><td>${u.active ? "Enabled" : "Disabled"}</td><td>${u.id !== state.user.id ? `<button class="btn" data-user="${esc(u.id)}">${u.active ? "Disable" : "Enable"}</button>` : "Your account"}</td></tr>`).join("")}</tbody></table></div>`;
-  $("user-add").onclick = userDialog;
-  document.querySelectorAll("[data-user]").forEach(
-    (b) =>
-      (b.onclick = async () => {
-        const u = users.find((u) => u.id === b.dataset.user);
-        try {
-          await api("/users/" + u.id + "/active", {
-            method: "PUT",
-            body: { active: !u.active },
-          });
-          await renderUsers();
-          toast("Account access updated.");
-        } catch (error) {
-          showAppError(error);
-        }
-      }),
-  );
+    `<div class="toolbar"><p class="hint">Use a username or email to sign in. Team access can also be edited in Team.</p><button class="btn primary" id="user-add">+ Account</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Email or username</th><th>Role</th><th>Access</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.login || u.email)}</td><td>${esc(roleLabel(u.role))}</td><td>${u.active ? "Enabled" : "No access"}</td><td><button class="btn" data-user-edit="${esc(u.id)}">Edit access</button>${u.id === state.user.id ? " · Your account" : ""}</td></tr>`).join("")}</tbody></table></div>`;
+  $("user-add").onclick = () => userDialog();
+  document.querySelectorAll("[data-user-edit]").forEach((button) => {
+    button.onclick = () => userDialog(button.dataset.userEdit);
+  });
 }
-function userDialog() {
+function userDialog(accountId = null) {
   showDrawer(
-    "New account",
+    accountId ? "Edit account" : "New account",
     "Access management",
-    `<form id="user-form"><div class="fields">${input("name", "Name", "", "text", "required")}${input("email", "Email", "", "email", 'required autocomplete="off"')}<label><span>Role</span><select name="role" id="user-role"><option value="reception">Reception</option><option value="therapist">Therapist</option><option value="owner">Owner</option></select></label><label id="user-therapist-field" hidden><span>Therapist profile</span><select name="therapistId">${opts(
-      state.catalogue.therapists.filter((t) => t.active),
-      "",
-      "Select therapist",
-    )}</select></label><label class="wide"><span>Temporary password</span><input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></label></div><p class="hint">Share the temporary password privately. The user must choose their own password at first sign-in. Therapists see the whole anonymous calendar; reception has no financial values or reports.</p>${errorBox()}</form>`,
+    '<div id="team-access"></div>',
   );
-  $("user-role").onchange = () => {
-    $("user-therapist-field").hidden = $("user-role").value !== "therapist";
-  };
-  bindForm(
-    "user-form",
-    async (fd) => {
-      await api("/users", { method: "POST", body: Object.fromEntries(fd) });
-      closeDrawer();
-      await renderUsers();
-      toast("Account created.");
-    },
-    "Create account",
-  );
+  const epoch = sessionEpoch,
+    opening = drawerEpoch;
+  accountAccess = mountAccountAccess({
+    root: $("team-access"),
+    api,
+    esc,
+    accountId,
+    profiles: state.catalogue.therapists,
+    ownerId: state.user.id,
+    isCurrent: () =>
+      epoch === sessionEpoch &&
+      opening === drawerEpoch &&
+      owner() &&
+      $("drawer").open,
+    onPreview: startAccountPreview,
+    onSaved: () => (state.page === "users" ? renderUsers() : undefined),
+  });
+  $("drawer-footer").innerHTML =
+    '<button type="button" class="btn" id="access-close">Close</button>';
+  $("access-close").onclick = closeDrawer;
 }
 function passwordDialog(required = false) {
+  if (state.preview) return;
   showDrawer(
     "Change password",
     required ? "First sign-in" : "Your account",
@@ -2234,6 +2367,7 @@ async function signOut() {
     else showAppError(error);
   }
 }
+$("preview-return").onclick = returnToOwner;
 $("sign-out").onclick = signOut;
 $("change-password").onclick = () => passwordDialog();
 $("mobile-more").onclick = mobileMenu;
@@ -2252,12 +2386,11 @@ document
   .querySelectorAll("nav [data-page]")
   .forEach((b) => (b.onclick = () => setPage(b.dataset.page)));
 window.addEventListener("focus", () => {
-  if (
-    state.user &&
-    state.page === "calendar" &&
-    !calendarReschedule?.isActive()
-  )
-    loadCalendar().catch(showAppError);
+  if (state.user) refreshSessionContext().catch(showAppError);
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.user)
+    refreshSessionContext().catch(showAppError);
 });
 setInterval(updateClock, 15000);
 try {
