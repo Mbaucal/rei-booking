@@ -136,6 +136,8 @@ let state = {
     date: today(),
     mode: calendarModes[calendarLayoutKey],
     catalogue: { therapists: [], rooms: [], services: [] },
+    calendarDataDate: null,
+    calendarLoadFailed: false,
     appointments: [],
     history: { appointments: [], therapists: [], metadata: {} },
     blocks: [],
@@ -234,6 +236,8 @@ function signOutView() {
     user: null,
     csrf: "",
     preview: null,
+    calendarDataDate: null,
+    calendarLoadFailed: false,
     appointments: [],
     history: { appointments: [], therapists: [], metadata: {} },
     blocks: [],
@@ -378,6 +382,8 @@ async function enterApp(session, { page = null } = {}) {
     mustChangePassword: !!session.mustChangePassword,
     preview: session.preview || null,
     catalogue: { therapists: [], rooms: [], services: [] },
+    calendarDataDate: null,
+    calendarLoadFailed: false,
     appointments: [],
     history: { appointments: [], therapists: [], metadata: {} },
     blocks: [],
@@ -588,6 +594,7 @@ async function setPage(page, initialFilters = null, navigation = {}) {
     );
   try {
     if (page === "calendar") {
+      state.calendarDataDate = null;
       renderCalendarShell();
       await loadCalendar();
     } else if (page === "report-access") {
@@ -911,10 +918,13 @@ function scheduleCalendarLayoutSync() {
       calendarLayoutPending = true;
       return;
     }
-    const changed =
-      calendarLayoutKey !== calendarLayout() ||
-      SCALE !== (mobileCalendarMedia.matches ? 1 : 2) ||
-      Math.abs($("calendar-scroll").clientWidth - calendarRenderedWidth) >= 1;
+    const scroll = $("calendar-scroll"),
+      changed =
+        calendarLayoutKey !== calendarLayout() ||
+        (scroll.hidden && state.calendarDataDate === state.date) ||
+        (!scroll.hidden &&
+          (SCALE !== (mobileCalendarMedia.matches ? 1 : 2) ||
+            Math.abs(scroll.clientWidth - calendarRenderedWidth) >= 1));
     calendarLayoutPending = false;
     if (changed) renderCalendar();
   });
@@ -939,14 +949,15 @@ function calendarTreatmentSetupHTML() {
   return `<div class="calendar-setup-hint" id="calendar-treatment-setup" role="status"><p>${owner() ? "Add a treatment to start booking." : "Ask the owner to add treatments."}</p>${owner() ? '<button type="button" class="btn" id="calendar-treatment-add">Add treatment</button>' : ""}</div>`;
 }
 function renderCalendarShell() {
-  const previousScroll = $("calendar-scroll")?.dataset.initialized
-    ? {
-        minute:
-          $("calendar-scroll").scrollTop /
-          (Number($("calendar-scroll").dataset.scale) || SCALE),
-        left: $("calendar-scroll").scrollLeft,
-      }
-    : null;
+  const oldScroll = $("calendar-scroll"),
+    previousScroll = oldScroll?.dataset.initialized
+      ? {
+          minute:
+            oldScroll.dataset.restoreMinute ??
+            oldScroll.scrollTop / (Number(oldScroll.dataset.scale) || SCALE),
+          left: oldScroll.dataset.restoreLeft ?? oldScroll.scrollLeft,
+        }
+      : null;
   disposeCalendarUI();
   const layout = calendarLayout();
   if (layout !== calendarLayoutKey) {
@@ -967,7 +978,7 @@ function renderCalendarShell() {
       )
       .join(
         "",
-      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div></div>${operator() ? '<div class="calendar-add-actions"><button class="btn" id="calendar-block-add">Add blocked time</button><button class="btn primary" id="appointment-add">+ Add appointment</button></div>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Book in 15-minute steps · move in 5-minute steps · hold on touch" : "Full salon schedule · requested · read-only"}</span></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><button class="btn calendar-today-floating" id="calendar-today-floating" aria-label="Return to today" ${state.date === today() ? "hidden" : ""}><svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15h6m-3-3v6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>Today</span></button><div class="legend">${state.catalogue.services
+      )}</div><button class="btn" id="calendar-refresh">Refresh</button></div></div>${operator() ? '<div class="calendar-add-actions"><button class="btn" id="calendar-block-add">Add blocked time</button><button class="btn primary" id="appointment-add">+ Add appointment</button></div>' : ""}</div><div class="calendar-card"><div class="calendar-meta"><span id="calendar-summary"></span><span>${operator() ? "Book in 15-minute steps · move in 5-minute steps · hold on touch" : "Full salon schedule · requested · read-only"}</span></div><div class="empty" id="calendar-load-state" hidden><p id="calendar-load-message" role="status"></p><button type="button" class="btn" id="calendar-load-retry" hidden>Try again</button></div><div class="calendar-scroll" id="calendar-scroll"><div class="calendar-grid" id="calendar-grid"><div class="calendar-headers" id="calendar-headers"></div><div class="calendar-body" id="calendar-body"></div></div></div></div><button class="btn calendar-today-floating" id="calendar-today-floating" aria-label="Return to today" ${state.date === today() ? "hidden" : ""}><svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15h6m-3-3v6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>Today</span></button><div class="legend">${state.catalogue.services
       .filter((s) => s.active)
       .map(
         (s) =>
@@ -983,9 +994,12 @@ function renderCalendarShell() {
     $("calendar-scroll").dataset.restoreLeft = String(previousScroll.left);
   }
   const change = async (date) => {
-    disposeCalendarUI();
-    state.date = date;
-    writePageLocation(state, true);
+    if (date !== state.date) {
+      disposeCalendarUI();
+      state.date = date;
+      state.calendarDataDate = null;
+      writePageLocation(state, true);
+    }
     $("calendar-date").value = date;
     updateClock();
     try {
@@ -1009,6 +1023,11 @@ function renderCalendarShell() {
       change(d.toISOString().slice(0, 10));
     };
   $("calendar-refresh").onclick = () => loadCalendar().catch(showAppError);
+  $("calendar-load-retry").onclick = (event) => {
+    if (document.activeElement === event.currentTarget)
+      $("calendar-date").focus({ preventScroll: true });
+    loadCalendar().catch(showAppError);
+  };
   $("calendar-view-options").onclick = calendarOptions;
   if (operator()) {
     $("appointment-add").onclick = () => appointmentDialog();
@@ -1029,17 +1048,27 @@ async function loadCalendar() {
   if (calendarReschedule?.isActive()) return;
   const requestEpoch = ++calendarLoadEpoch,
     date = state.date,
-    version = state.version,
+    version = state.version;
+  const current = () =>
+    requestEpoch === calendarLoadEpoch &&
+    !calendarReschedule?.isActive() &&
+    date === state.date &&
+    state.page === "calendar" &&
+    version === state.version &&
+    !!state.user;
+  state.calendarLoadFailed = false;
+  if (state.calendarDataDate !== date) renderCalendar();
+  let data;
+  try {
     data = await api(`/appointments?from=${date}&to=${date}`);
-  if (
-    requestEpoch !== calendarLoadEpoch ||
-    calendarReschedule?.isActive() ||
-    date !== state.date ||
-    state.page !== "calendar" ||
-    version !== state.version ||
-    !state.user
-  )
+  } catch (error) {
+    if (!current()) return;
+    if (state.calendarDataDate === date) throw error;
+    state.calendarLoadFailed = true;
+    renderCalendar();
     return;
+  }
+  if (!current()) return;
   state.appointments = data.appointments;
   state.blocks = data.blocks || [];
   state.history = {
@@ -1047,30 +1076,58 @@ async function loadCalendar() {
     therapists: data.history?.therapists || [],
     metadata: data.history?.metadata || {},
   };
+  state.calendarDataDate = date;
   renderCalendar();
+}
+function renderCalendarLoadState() {
+  disposeCalendarUI();
+  const scroll = $("calendar-scroll");
+  if (
+    scroll.dataset.initialized &&
+    scroll.dataset.restoreMinute === undefined
+  ) {
+    scroll.dataset.restoreMinute = String(
+      scroll.scrollTop / (Number(scroll.dataset.scale) || SCALE),
+    );
+    scroll.dataset.restoreLeft = String(scroll.scrollLeft);
+  }
+  $("calendar-history-notice")?.remove();
+  $("calendar-summary").textContent = "";
+  $("calendar-summary").parentElement.hidden = true;
+  $("calendar-headers").replaceChildren();
+  $("calendar-body").replaceChildren();
+  scroll.hidden = true;
+  $("calendar-load-state").hidden = false;
+  const message = state.calendarLoadFailed
+    ? "Calendar could not be loaded."
+    : "Loading calendar…";
+  if ($("calendar-load-message").textContent !== message)
+    $("calendar-load-message").textContent = message;
+  $("calendar-load-retry").hidden = !state.calendarLoadFailed;
 }
 function renderCalendar() {
   if (!$("calendar-grid")) return;
   if (calendarReschedule?.isActive()) return;
+  if (state.calendarDataDate !== state.date) {
+    renderCalendarLoadState();
+    return;
+  }
   const mobile = mobileCalendarMedia.matches,
-    desiredScale = mobile ? 1 : 2;
+    desiredScale = mobile ? 1 : 2,
+    previousScroll = $("calendar-scroll");
   if (
     $("drawer").open &&
     (calendarLayoutKey !== calendarLayout() ||
-      SCALE !== desiredScale ||
-      Math.abs($("calendar-scroll").clientWidth - calendarRenderedWidth) >= 1)
+      (!previousScroll.hidden &&
+        (SCALE !== desiredScale ||
+          Math.abs(previousScroll.clientWidth - calendarRenderedWidth) >= 1)))
   ) {
     calendarLayoutPending = true;
     return;
   }
   if (calendarLayoutKey !== calendarLayout()) renderCalendarShell();
   disposeCalendarUI();
-  const list = resources(),
-    displayedAppointments = [
-      ...state.appointments,
-      ...state.history.appointments,
-    ],
-    scroll = $("calendar-scroll"),
+  const scroll = $("calendar-scroll"),
     oldScale = Number(scroll.dataset.scale) || SCALE,
     logicalTop =
       scroll.dataset.restoreMinute !== undefined
@@ -1082,10 +1139,19 @@ function renderCalendar() {
       scroll.dataset.restoreLeft !== undefined
         ? Number(scroll.dataset.restoreLeft)
         : scroll.scrollLeft;
+  $("calendar-history-notice")?.remove();
+  $("calendar-summary").parentElement.hidden = false;
+  $("calendar-load-state").hidden = true;
+  scroll.hidden = false;
+  calendarLayoutPending = false;
+  const list = resources(),
+    displayedAppointments = [
+      ...state.appointments,
+      ...state.history.appointments,
+    ];
   setCalendarScale(desiredScale);
   scroll.dataset.scale = String(SCALE);
   calendarRenderedWidth = scroll.clientWidth;
-  calendarLayoutPending = false;
   delete scroll.dataset.restoreMinute;
   delete scroll.dataset.restoreLeft;
   scroll.dataset.initialized = "true";
@@ -1095,7 +1161,6 @@ function renderCalendar() {
   );
   $("calendar-summary").textContent =
     `${prettyDate(state.date)} · ${counts.appointments} appointments${counts.imported ? ` · ${counts.imported} imported` : ""}`;
-  $("calendar-history-notice")?.remove();
   if (state.mode === "rooms" && state.history.appointments.length) {
     $("calendar-scroll")
       .closest(".calendar-card")
