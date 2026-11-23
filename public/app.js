@@ -1367,7 +1367,7 @@ async function appointmentDialog(existing = null, defaults = {}) {
   if (!operator()) return;
   const needsTreatment = !state.catalogue.services.some((s) => s.active);
   const needsTherapist = !state.catalogue.therapists.some((t) => t.active);
-  if (needsTreatment || needsTherapist) {
+  if (!existing && (needsTreatment || needsTherapist)) {
     showDrawer(
       "Set up bookings",
       "Calendar",

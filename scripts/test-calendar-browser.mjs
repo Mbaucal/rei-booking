@@ -5873,6 +5873,60 @@ try {
         assert.equal(f.serviceWrites.length, 0);
       },
     );
+  for (const [role, device] of [
+    ["owner", desktop],
+    ["reception", phone],
+  ])
+    await scenario(
+      `${role} can edit an existing booking after the last active treatment is archived`,
+      device,
+      async ({ page, f, open }) => {
+        f.role = role;
+        f.catalogue.services = [{ ...f.catalogue.services[0], active: false }];
+        f.appointments = [booking("archived-treatment-booking", "tA", "r1", 0)];
+        await open();
+        await page
+          .locator('[data-appointment="archived-treatment-booking"]')
+          .first()
+          .click();
+        await page.locator("#appointment-summary-edit").click();
+        const form = page.locator("#appointment-form"),
+          setup = page.getByRole("heading", {
+            name: "Set up bookings",
+            exact: true,
+          });
+        await form.or(setup).waitFor();
+        assert.equal(
+          await form.isVisible(),
+          true,
+          "Archived treatment setup must not block editing the existing booking",
+        );
+        assert.equal(await control(page, "serviceId").inputValue(), "s60");
+        await control(page, "status").selectOption("confirmed");
+        await control(page, "note").fill("Fictional corrected note");
+        await page.locator("#form-save").click();
+        await page
+          .locator("#toast")
+          .filter({ hasText: "Appointment saved." })
+          .waitFor();
+
+        assert.equal(f.writes.length, 1);
+        const [{ body, method, path }] = f.writes;
+        assert.equal(method, "PUT");
+        assert.equal(path, "/api/appointments/archived-treatment-booking");
+        assert.equal(body.serviceId, "s60");
+        assert.equal(body.status, "confirmed");
+        assert.equal(body.note, "Fictional corrected note");
+        assert.equal(body.version, 1);
+        assert.equal("grossCents" in body, role === "owner");
+        assert.equal("netCents" in body, role === "owner");
+
+        await openAdd(page, "appointment");
+        await setup.waitFor();
+        assert.equal(await form.count(), 0);
+        assert.equal(f.writes.length, 1);
+      },
+    );
   for (const device of [phone, tablet])
     await scenario(
       "touch pinch has a working positive control and cannot enlarge calendar or booking form",
