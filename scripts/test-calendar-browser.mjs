@@ -4122,6 +4122,203 @@ try {
     },
   );
   await scenario(
+    "calendar date changes replace the old grid immediately on Previous day",
+    desktop,
+    async ({ page, f, open }) => {
+      const emptyDate = "2026-11-22",
+        selectedDate = "2026-11-21";
+      f.appointments = [
+        booking("selected-day", "tB", "r1", 1, 660, 60, selectedDate),
+      ];
+      await open();
+      await page.locator("#calendar-date").fill(emptyDate);
+      await page.locator("#calendar-date").dispatchEvent("change");
+      const summary = page.locator("#calendar-summary"),
+        grid = page.locator("#calendar-grid"),
+        selected = page.locator('[data-appointment="selected-day"]');
+      await summary
+        .filter({ hasText: "22 Nov 2026 · 0 appointments" })
+        .waitFor();
+      assert.equal(await grid.isVisible(), true);
+
+      const hold = deferred();
+      f.delayed.set(selectedDate, hold);
+      const started = page.waitForRequest(
+        (r) => new URL(r.url()).searchParams.get("from") === selectedDate,
+      );
+      await page.locator("#calendar-prev").click();
+      const request = await started;
+      assert.equal(
+        await page.locator("#calendar-date").inputValue(),
+        selectedDate,
+      );
+      assert.equal(
+        await grid.isVisible(),
+        false,
+        "The old grid stays visible after changing the date",
+      );
+      assert.equal(await summary.isVisible(), false);
+      await page
+        .locator("#calendar-load-message")
+        .filter({ hasText: "Loading calendar" })
+        .waitFor();
+
+      const finished = page.waitForResponse((r) => r.request() === request);
+      hold.release();
+      assert.equal((await finished).status(), 200);
+      await selected.first().waitFor();
+      await summary.filter({ hasText: "21 Nov 2026" }).waitFor();
+    },
+  );
+  await scenario(
+    "calendar date changes keep prior-day records out of loading and failed views",
+    desktop,
+    async ({ page, f, open }) => {
+      f.appointments = [
+        booking("prior-day", "tA", "r1", 0),
+        booking("selected-day", "tB", "r1", 1, 660, 60, nextDate),
+      ];
+      f.blocks = [calendarBlock("prior-day-block")];
+      await open();
+      const prior = page.locator('[data-appointment="prior-day"]'),
+        priorBlock = page.locator('[data-calendar-block="prior-day-block"]'),
+        selected = page.locator('[data-appointment="selected-day"]');
+      assert.ok((await prior.count()) > 0);
+      assert.ok((await priorBlock.count()) > 0);
+      const scroll = page.locator("#calendar-scroll");
+      await scroll.evaluate((element) => (element.scrollTop = 900));
+
+      const hold = deferred();
+      f.delayed.set(nextDate, hold);
+      f.failDates.add(nextDate);
+      const started = page.waitForRequest(
+        (r) => new URL(r.url()).searchParams.get("from") === nextDate,
+      );
+      await page.locator("#calendar-next").click();
+      const request = await started;
+      await page.locator('[data-mode="rooms"]').click();
+      assert.equal(await page.locator("#calendar-date").inputValue(), nextDate);
+      assert.equal(
+        await prior.count(),
+        0,
+        "Prior-day booking was redrawn for the selected day",
+      );
+      assert.equal(
+        await priorBlock.count(),
+        0,
+        "Prior-day block was redrawn for the selected day",
+      );
+      assert.equal(await selected.count(), 0);
+      assert.match(
+        await page.locator("#calendar-load-state").textContent(),
+        /Loading/,
+      );
+
+      const finished = page.waitForResponse((r) => r.request() === request);
+      hold.release();
+      assert.equal((await finished).status(), 503);
+      await page.locator("#calendar-load-retry").waitFor();
+      assert.equal(await prior.count(), 0);
+      assert.equal(await priorBlock.count(), 0);
+      assert.equal(await page.locator("#calendar-slot-menu").count(), 0);
+      f.failDates.delete(nextDate);
+
+      await page.locator("#calendar-load-retry").press("Enter");
+      await selected.waitFor();
+      assert.equal(await prior.count(), 0);
+      assert.equal(await priorBlock.count(), 0);
+      assert.equal(
+        await page.locator("#calendar-load-state").isVisible(),
+        false,
+      );
+      assert.equal(
+        await page
+          .locator("#calendar-date")
+          .evaluate((input) => input === document.activeElement),
+        true,
+      );
+      assert.equal(await scroll.evaluate((element) => element.scrollTop), 900);
+      assert.equal(f.writes.length, 0);
+      assert.equal(f.blockWrites.length, 0);
+    },
+  );
+  await scenario(
+    "calendar date changes discard failures from superseded requests",
+    desktop,
+    async ({ page, f, open }) => {
+      f.appointments = [booking("prior-day", "tA", "r1", 0)];
+      await open();
+      const hold = deferred();
+      f.delayed.set(nextDate, hold);
+      f.failDates.add(nextDate);
+      const started = page.waitForRequest(
+        (r) => new URL(r.url()).searchParams.get("from") === nextDate,
+      );
+      await page.locator("#calendar-next").click();
+      const request = await started;
+      await page.locator("#calendar-load-message").waitFor();
+
+      await page.locator("#calendar-prev").click();
+      const prior = page.locator('[data-appointment="prior-day"]').first();
+      await prior.waitFor();
+      const finished = page.waitForResponse((r) => r.request() === request);
+      hold.release();
+      const response = await finished;
+      assert.equal(response.status(), 503);
+      await response.finished();
+      await renderedFrames(page);
+
+      assert.equal(await page.locator("#calendar-date").inputValue(), date);
+      assert.equal(
+        await page.locator("#calendar-load-state").isVisible(),
+        false,
+      );
+      assert.equal(await page.locator("#app-error").isVisible(), false);
+      await prior.click();
+      await page.locator("#appointment-summary-reschedule").waitFor();
+      assert.equal(f.writes.length, 0);
+    },
+  );
+  await scenario(
+    "calendar date changes finish after resizing with mobile options open",
+    phone,
+    async ({ page, f, open }) => {
+      f.appointments = [
+        booking("prior-day", "tA", "r1", 0),
+        booking("selected-day", "tB", "r1", 1, 660, 60, nextDate),
+      ];
+      await open();
+      const hold = deferred();
+      f.delayed.set(nextDate, hold);
+      const started = page.waitForRequest(
+        (r) => new URL(r.url()).searchParams.get("from") === nextDate,
+      );
+      await page.locator("#calendar-next").tap();
+      const request = await started;
+      await page.locator("#calendar-load-message").waitFor();
+      await page.locator("#calendar-view-options").tap();
+      await page.setViewportSize({ width: 820, height: 1024 });
+      assert.equal(
+        await page.locator('[data-appointment="prior-day"]').count(),
+        0,
+      );
+
+      const finished = page.waitForResponse((r) => r.request() === request);
+      hold.release();
+      assert.equal((await finished).status(), 200);
+      await renderedFrames(page);
+      assert.equal(await page.locator("#drawer").isVisible(), true);
+
+      await page.locator("#drawer-close").click();
+      await page.locator('[data-appointment="selected-day"]').first().waitFor();
+      assert.equal(
+        await page.locator("#calendar-load-state").isVisible(),
+        false,
+      );
+      assert.equal(await pixelsPerMinute(page), 2);
+    },
+  );
+  await scenario(
     "pending calendar refresh cannot discard selected draft; date change cancels without write",
     phone,
     async ({ page, f, open }) => {
