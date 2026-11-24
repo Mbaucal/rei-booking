@@ -1227,16 +1227,39 @@ function renderCalendar() {
     version = state.version,
     session = sessionEpoch,
     view = calendarViewEpoch;
-  const current = () =>
+  const sameCalendar = () =>
     !!state.user &&
     state.page === "calendar" &&
     state.date === date &&
     state.version === version &&
-    sessionEpoch === session &&
-    calendarViewEpoch === view;
+    sessionEpoch === session;
+  const current = () => sameCalendar() && calendarViewEpoch === view;
   const eligible = (a) =>
     !isImportedAppointment(a) && ["booked", "confirmed"].includes(a.status);
   if (operator()) {
+    const refreshAfterMove = async (response, { kind, id }) => {
+      if (!sameCalendar() || calendarReschedule?.isActive()) return;
+      try {
+        const collection = kind === "block" ? "blocks" : "appointments",
+          saved = kind === "block" ? response?.block : response?.appointment,
+          previous = state[collection].find((entry) => entry.id === id);
+        if (
+          state.calendarDataDate === date &&
+          saved?.id === id &&
+          saved.date === date &&
+          previous &&
+          saved.version > previous.version
+        ) {
+          state[collection] = state[collection].map((entry) =>
+            entry.id === id ? saved : entry,
+          );
+          renderCalendar();
+        }
+        await loadCalendar();
+      } catch (error) {
+        if (sameCalendar()) toast(error.message || String(error));
+      }
+    };
     calendarReschedule = mountCalendarReschedule({
       root: scroll,
       getContext: () => ({
@@ -1250,16 +1273,21 @@ function renderCalendar() {
         blocks: state.blocks,
       }),
       isCurrent: () => current() && operator(),
-      onSave: (candidate, original, { kind }) =>
-        api(
+      onSave: async (candidate, original, { kind }) => {
+        const response = await api(
           (kind === "block" ? "/calendar-blocks/" : "/appointments/") +
             encodeURIComponent(candidate.id),
           {
             method: "PUT",
             body: candidate,
           },
-        ),
-      onRefresh: () => loadCalendar(),
+        );
+        // A resource-view change can replace the controller during the write.
+        if (!current())
+          void refreshAfterMove(response, { kind, id: candidate.id });
+        return response;
+      },
+      onRefresh: refreshAfterMove,
       onError: (error) => {
         if (current()) toast(error.message || String(error));
       },

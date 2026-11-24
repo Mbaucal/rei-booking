@@ -274,6 +274,8 @@ export function mountCalendarReschedule({
     draft = null,
     gesture = null,
     longPress = null,
+    moveFrame = null,
+    pendingMoves = [],
     suppressUntil = 0,
     saving = false,
     pendingCommit = false;
@@ -294,8 +296,8 @@ export function mountCalendarReschedule({
       (entry) => entry.id === id,
     );
   const columns = () => [...root.querySelectorAll("[data-resource]")];
-  const byResource = (column) =>
-    getContext().resources.find(
+  const byResource = (column, resources) =>
+    resources.find(
       (r) => r.id === column.dataset.resource && r.kind === column.dataset.kind,
     );
   const selectedCard = (target) =>
@@ -311,8 +313,14 @@ export function mountCalendarReschedule({
     if (longPress !== null) win.clearTimeout(longPress);
     longPress = null;
   };
+  function stopMoveFrame() {
+    if (moveFrame !== null) win.cancelAnimationFrame(moveFrame);
+    moveFrame = null;
+  }
   function releaseGesture() {
     stopTimer();
+    stopMoveFrame();
+    pendingMoves.length = 0;
     const previous = gesture;
     gesture = null;
     if (previous && root.hasPointerCapture?.(previous.id))
@@ -377,6 +385,7 @@ export function mountCalendarReschedule({
   }
   function shift(delta) {
     if (!draft || saving || !current()) return;
+    flushMoves();
     const focusedPreview = draft.previews.find((el) =>
       el.contains(doc.activeElement),
     );
@@ -410,7 +419,7 @@ export function mountCalendarReschedule({
     restoreLayout();
     const context = getContext();
     for (const column of columns()) {
-      const r = byResource(column);
+      const r = byResource(column, context.resources);
       if (!r) continue;
       const items = calendarMoveLayout(r, a, context, draft.kind);
       // Moving an entry can merge or split a visual collision group.
@@ -575,12 +584,12 @@ export function mountCalendarReschedule({
     );
     save.classList.add("primary");
     bar.append(time, resource, error, cancelButton, save);
-    const writeState = { started: false };
+    const writeState = { started: false, response: null };
     const saver = createCalendarMoveSaver({
       kind,
       onSave: async (...args) => {
         writeState.started = true;
-        await onSave(...args);
+        writeState.response = await onSave(...args);
       },
       isCurrent: () => current() && generation === token && !!draft,
       confirmTherapistChange: confirmMove,
@@ -623,6 +632,7 @@ export function mountCalendarReschedule({
   }
   async function commit() {
     if (!draft || saving || pendingCommit || !current()) return;
+    flushMoves();
     const selected = draft;
     pendingCommit = true;
     selected.error.hidden = true;
@@ -637,7 +647,7 @@ export function mountCalendarReschedule({
       if (draft !== selected) {
         // Blur cancels the visible draft, not a request already received by the
         // server. Refresh only the same still-current calendar after it settles.
-        if (selected.writeState.started) await refreshAfterSave();
+        if (selected.writeState.started) await refreshAfterSave(selected);
         return;
       }
       if (result === "cancelled" || result === "busy") {
@@ -646,7 +656,7 @@ export function mountCalendarReschedule({
       }
       if (result === "stale") return;
       cancel();
-      if (result === "saved") await refreshAfterSave();
+      if (result === "saved") await refreshAfterSave(selected);
     } catch (error) {
       if (!current() || draft !== selected) return;
       selected.error.textContent =
@@ -658,43 +668,73 @@ export function mountCalendarReschedule({
       pendingCommit = false;
     }
   }
-  async function refreshAfterSave() {
+  async function refreshAfterSave(selected) {
     if (!current()) return;
     try {
-      await onRefresh();
+      await onRefresh(selected.writeState.response, {
+        kind: selected.kind,
+        id: selected.original.id,
+      });
     } catch (error) {
       if (current()) onError(error);
     }
   }
-  function updateAt(event) {
-    if (!draft || !gesture || !current()) return false;
+  function candidateAt({ clientX, clientY }, previous, context) {
     const column = doc
-      .elementFromPoint(event.clientX, event.clientY)
+      .elementFromPoint(clientX, clientY)
       ?.closest("[data-resource]");
-    if (!column || !root.contains(column)) return false;
-    const resource = byResource(column);
-    if (!resource) return false;
-    draft.candidate =
-      draft.kind === "block"
-        ? calendarMovedBlock(
-            draft.original,
-            resource,
-            column.getBoundingClientRect(),
-            { x: event.clientX, y: event.clientY },
-            gesture.offset,
-          )
-        : calendarMovedAppointment(
-            draft.original,
-            draft.candidate,
-            resource,
-            column.getBoundingClientRect(),
-            { x: event.clientX, y: event.clientY },
-            gesture.offset,
-            getContext(),
-          );
-    draft.error.hidden = true;
-    redraw();
-    return true;
+    if (!column || !root.contains(column)) return null;
+    const resource = byResource(column, context.resources);
+    if (!resource) return null;
+    const position = { x: clientX, y: clientY },
+      bounds = column.getBoundingClientRect();
+    return draft.kind === "block"
+      ? calendarMovedBlock(
+          draft.original,
+          resource,
+          bounds,
+          position,
+          gesture.offset,
+        )
+      : calendarMovedAppointment(
+          draft.original,
+          previous,
+          resource,
+          bounds,
+          position,
+          gesture.offset,
+          context,
+        );
+  }
+  function flushMoves(releasePoint) {
+    stopMoveFrame();
+    const points = pendingMoves.splice(0);
+    if (releasePoint) points.push(releasePoint);
+    if (!points.length || !draft || !gesture || !current()) return false;
+
+    const context = getContext();
+    let candidate = draft.candidate,
+      last = null;
+    // A room and a therapist can both be selected during one frame. Preserve
+    // the path's resource choices without painting intermediate positions.
+    for (const point of points) {
+      last = candidateAt(point, candidate, context);
+      if (last) candidate = last;
+    }
+    if (!sameCalendarPosition(draft.candidate, candidate, draft.kind)) {
+      draft.candidate = candidate;
+      draft.error.hidden = true;
+      redraw();
+    }
+    return last !== null;
+  }
+  function queueMove({ clientX, clientY }) {
+    pendingMoves.push({ clientX, clientY });
+    if (moveFrame !== null) return;
+    moveFrame = win.requestAnimationFrame(() => {
+      moveFrame = null;
+      flushMoves();
+    });
   }
   listen(root, "pointerdown", (event) => {
     if (
@@ -790,14 +830,15 @@ export function mountCalendarReschedule({
       }
       gesture.moved = true;
       if (event.cancelable) event.preventDefault();
-      updateAt(event);
+      queueMove(event);
     },
     { passive: false },
   );
   listen(doc, "pointerup", (event) => {
     if (!gesture || gesture.id !== event.pointerId) return;
     const ended = gesture;
-    const droppedInside = ended.moved && draft && current() && updateAt(event);
+    // The drop can arrive before the frame for the last move has run.
+    const droppedInside = ended.moved && flushMoves(event);
     releaseGesture();
     if (ended.moved || ended.selectedOnly) suppressClick();
     if (ended.moved && draft && !draft.touch && current()) {
@@ -808,10 +849,9 @@ export function mountCalendarReschedule({
             draft.candidate,
             draft.requiresConfirmation,
           );
-        if (draft.requiresConfirmation) {
-          redraw();
+        if (draft.requiresConfirmation)
           draft.save.focus({ preventScroll: true });
-        } else void commit();
+        else void commit();
       } else cancel();
     }
   });
