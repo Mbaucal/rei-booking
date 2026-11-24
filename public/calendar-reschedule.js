@@ -584,12 +584,12 @@ export function mountCalendarReschedule({
     );
     save.classList.add("primary");
     bar.append(time, resource, error, cancelButton, save);
-    const writeState = { started: false };
+    const writeState = { started: false, response: null };
     const saver = createCalendarMoveSaver({
       kind,
       onSave: async (...args) => {
         writeState.started = true;
-        await onSave(...args);
+        writeState.response = await onSave(...args);
       },
       isCurrent: () => current() && generation === token && !!draft,
       confirmTherapistChange: confirmMove,
@@ -647,7 +647,7 @@ export function mountCalendarReschedule({
       if (draft !== selected) {
         // Blur cancels the visible draft, not a request already received by the
         // server. Refresh only the same still-current calendar after it settles.
-        if (selected.writeState.started) await refreshAfterSave();
+        if (selected.writeState.started) await refreshAfterSave(selected);
         return;
       }
       if (result === "cancelled" || result === "busy") {
@@ -656,7 +656,7 @@ export function mountCalendarReschedule({
       }
       if (result === "stale") return;
       cancel();
-      if (result === "saved") await refreshAfterSave();
+      if (result === "saved") await refreshAfterSave(selected);
     } catch (error) {
       if (!current() || draft !== selected) return;
       selected.error.textContent =
@@ -668,10 +668,13 @@ export function mountCalendarReschedule({
       pendingCommit = false;
     }
   }
-  async function refreshAfterSave() {
+  async function refreshAfterSave(selected) {
     if (!current()) return;
     try {
-      await onRefresh();
+      await onRefresh(selected.writeState.response, {
+        kind: selected.kind,
+        id: selected.original.id,
+      });
     } catch (error) {
       if (current()) onError(error);
     }

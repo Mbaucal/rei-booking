@@ -4621,6 +4621,113 @@ try {
       assert.equal(f.writes.length, 1);
     },
   );
+  for (const device of [desktop, phone])
+    await scenario(
+      "a saved move stays visible during a delayed or failed calendar refresh",
+      device,
+      async ({ page, f, open }) => {
+        denseSchedule(f);
+        await open();
+        await denseView(page);
+        const event = page.locator('[data-appointment="dense-target"]'),
+          movedTime = "18:55–20:25",
+          visibleTime = event.locator(".event-time:visible");
+        if (device === phone) {
+          await longPress(page, event);
+          await shiftTouchDraft(page);
+        } else {
+          const point = await bodyPoint(event);
+          await page.mouse.move(point.x, point.y);
+          await page.mouse.down();
+          await page.mouse.move(point.x, point.y - 10, { steps: 3 });
+        }
+        await page
+          .locator("#calendar-reschedule-time")
+          .filter({ hasText: movedTime })
+          .waitFor();
+        const hold = deferred();
+        f.delayed.set(date, hold);
+        try {
+          const requested = page.waitForRequest((request) => {
+            const url = new URL(request.url());
+            return (
+              request.method() === "GET" &&
+              url.pathname === "/api/appointments" &&
+              url.searchParams.get("from") === date
+            );
+          });
+          if (device === phone)
+            await page.locator("#calendar-reschedule-save").click();
+          else await page.mouse.up();
+          const refresh = await requested;
+          await renderedFrames(page);
+          assert.equal(f.writes.length, 1);
+          assert.deepEqual(await visibleTime.allTextContents(), [movedTime]);
+
+          f.failDates.add(date);
+          const failed = page.waitForResponse(
+            (response) => response.request() === refresh,
+          );
+          hold.release();
+          assert.equal((await failed).status(), 503);
+          await renderedFrames(page);
+          assert.deepEqual(await visibleTime.allTextContents(), [movedTime]);
+          assert.equal(f.writes.length, 1);
+        } finally {
+          f.failDates.delete(date);
+          f.delayed.delete(date);
+          hold.release();
+        }
+      },
+    );
+  await scenario(
+    "a pending move is reflected after switching resource views on the same day",
+    desktop,
+    async ({ page, f, open }) => {
+      denseSchedule(f);
+      await open();
+      await denseView(page);
+      const event = page.locator('[data-appointment="dense-target"]');
+      await event.click();
+      await page.locator("#appointment-summary-reschedule").click();
+      await shiftKeyboardDraft(page, "ArrowUp");
+      const holdWrite = deferred(),
+        holdRefresh = deferred();
+      f.writeWait = holdWrite;
+      try {
+        const started = page.waitForRequest((r) => r.method() === "PUT");
+        await page.locator("#calendar-reschedule-save").click();
+        await started;
+        await selectMode(page, "therapists");
+        await event
+          .locator(".event-time")
+          .filter({ hasText: "19:00–20:30" })
+          .waitFor();
+
+        f.delayed.set(date, holdRefresh);
+        const refreshed = page.waitForRequest(
+          (r) =>
+            r.method() === "GET" &&
+            new URL(r.url()).pathname === "/api/appointments",
+        );
+        holdWrite.release();
+        await refreshed;
+        await event
+          .locator(".event-time")
+          .filter({ hasText: "18:55–20:25" })
+          .waitFor();
+        assert.equal(
+          await page.locator('[data-mode="therapists"].active').count(),
+          1,
+        );
+        assert.equal(f.writes.length, 1);
+      } finally {
+        f.delayed.delete(date);
+        holdWrite.release();
+        holdRefresh.release();
+      }
+    },
+  );
   await scenario(
     "All resources mirrors unified-room moves and preserves a declined then accepted therapist request",
     desktop,
