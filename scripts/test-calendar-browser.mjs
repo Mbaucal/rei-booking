@@ -3622,6 +3622,194 @@ try {
     },
   );
   await scenario(
+    "drag preview batches pointer bursts and saves the exact release point",
+    desktop,
+    async ({ page, f, open }) => {
+      f.appointments = [booking("batched-drag", "tA", "r1", 0)];
+      await open();
+      await selectMode(page, "rooms");
+      const saved = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().endsWith("/api/appointments/batched-drag"),
+      );
+      const trace = await page
+        .locator('[data-appointment="batched-drag"]')
+        .evaluate(async (card) => {
+          const root = card.closest("#calendar-scroll"),
+            box = card.getBoundingClientRect(),
+            x = box.left + box.width / 2,
+            y = box.top + 24;
+          // Dispatch within one browser task to put every sample before the next frame.
+          const pointer = (type, offset) =>
+            (type === "pointerdown" ? card : document).dispatchEvent(
+              new PointerEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                pointerId: 101,
+                pointerType: "mouse",
+                isPrimary: true,
+                button: 0,
+                buttons: type === "pointerup" ? 0 : 1,
+                clientX: x,
+                clientY: y + offset,
+              }),
+            );
+          const nextFrame = () =>
+            new Promise((done) =>
+              requestAnimationFrame(() => requestAnimationFrame(done)),
+            );
+          const preview = () =>
+            root.querySelector(".calendar-reschedule-preview");
+          pointer("pointerdown", 0);
+          pointer("pointermove", 10);
+          await nextFrame();
+
+          let paints = 0;
+          const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations)
+              for (const node of mutation.addedNodes)
+                if (node.classList?.contains("calendar-reschedule-preview"))
+                  paints++;
+          });
+          observer.observe(root, { childList: true, subtree: true });
+          for (const offset of [20, 30, 40]) pointer("pointermove", offset);
+          await nextFrame();
+          const burstPaints = paints,
+            afterBurst = document.querySelector(
+              "#calendar-reschedule-time",
+            ).textContent,
+            currentPreview = preview();
+
+          for (const offset of [39, 41, 40]) pointer("pointermove", offset);
+          await nextFrame();
+          const sameSlotPreserved = currentPreview === preview();
+          const sameSlotPaints = paints - burstPaints;
+          observer.disconnect();
+
+          pointer("pointermove", 50);
+          pointer("pointerup", 60);
+          return { burstPaints, sameSlotPaints, sameSlotPreserved, afterBurst };
+        });
+      assert.equal((await saved).status(), 200);
+      assert.deepEqual(trace, {
+        burstPaints: 1,
+        sameSlotPaints: 0,
+        sameSlotPreserved: true,
+        afterBurst: "10:20–11:20 · 60 min",
+      });
+      assert.equal(f.writes.length, 1);
+      assert.equal(
+        f.writes[0].body.start,
+        630,
+        "Pointerup takes precedence over queued movement",
+      );
+    },
+  );
+  await scenario(
+    "a drag frame preserves both room and therapist changes before release",
+    desktop,
+    async ({ page, f, open }) => {
+      f.appointments = [booking("combined-drag", "tA", "r1", 0)];
+      await open();
+      await selectMode(page, "all");
+      const saved = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().endsWith("/api/appointments/combined-drag"),
+      );
+      await page
+        .locator('[data-resource="tA"] [data-appointment="combined-drag"]')
+        .evaluate((card) => {
+          const box = card.getBoundingClientRect(),
+            centre = (element) => {
+              const rect = element.getBoundingClientRect();
+              return rect.left + rect.width / 2;
+            },
+            roomX = centre(document.querySelector('[data-resource="r2"]')),
+            therapistX = centre(document.querySelector('[data-resource="tC"]'));
+          const send = (type, x, offset) =>
+            (type === "pointerdown" ? card : document).dispatchEvent(
+              new PointerEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                pointerId: 103,
+                pointerType: "mouse",
+                isPrimary: true,
+                button: 0,
+                buttons: type === "pointerup" ? 0 : 1,
+                clientX: x,
+                clientY: box.top + 24 + offset,
+              }),
+            );
+          send("pointerdown", centre(card), 0);
+          send("pointermove", roomX, 10);
+          send("pointermove", therapistX, 20);
+          send("pointerup", therapistX, 30);
+        });
+      assert.equal((await saved).status(), 200);
+      assert.equal(f.writes.length, 1);
+      const [{ body }] = f.writes;
+      assert.equal(body.roomId, "r2");
+      assert.equal(body.therapistId, "tC");
+      assert.equal(body.start, 615);
+    },
+  );
+  await scenario(
+    "pointer cancellation clears an active block move before queued frames",
+    desktop,
+    async ({ page, f, open }) => {
+      f.blocks = [calendarBlock("cancelled-block-drag", { start: 660 })];
+      await open();
+      await selectMode(page, "rooms");
+      const selected = page.locator(
+        '[data-calendar-block="cancelled-block-drag"]',
+      );
+      const started = await selected.evaluate((card) => {
+        const box = card.getBoundingClientRect(),
+          options = {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 102,
+            pointerType: "mouse",
+            isPrimary: true,
+            button: 0,
+            buttons: 1,
+            clientX: box.left + box.width / 2,
+            clientY: box.top + 24,
+          };
+        card.dispatchEvent(new PointerEvent("pointerdown", options));
+        document.dispatchEvent(
+          new PointerEvent("pointermove", {
+            ...options,
+            clientY: options.clientY + 25,
+          }),
+        );
+        const draftStarted = !!document.querySelector(
+          ".calendar-reschedule-preview",
+        );
+        document.dispatchEvent(
+          new PointerEvent("pointercancel", { ...options, buttons: 0 }),
+        );
+        return draftStarted;
+      });
+      assert.equal(started, true);
+      await renderedFrames(page);
+      assert.equal(
+        await page
+          .locator("#calendar-reschedule-bar, .calendar-reschedule-preview")
+          .count(),
+        0,
+      );
+      assert.equal(await selected.isVisible(), true);
+      assert.match(
+        await selected.locator(".block-time").textContent(),
+        /11:00–11:45/,
+      );
+      assert.equal(f.blockWrites.length, 0);
+    },
+  );
+  await scenario(
     "therapist calendar remains read-only without slot actions",
     desktop,
     async ({ page, f, open }) => {
