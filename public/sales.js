@@ -479,19 +479,40 @@ ${v.kind === "amount" ? field("amount", "Gift value (RSD)", v.priceCents ? v.pri
     const data = await api("/sales/vouchers/" + id);
     if (!stillDrawer(n)) return;
     const v = data.voucher;
+    const adjustments = v.closure
+      ? ""
+      : (v.usedCents === 0
+          ? button("correct-voucher", "Correct details") +
+            button("void-voucher", "Void erroneous voucher")
+          : "") +
+        (v.remainingCents > 0 ? button("refund-voucher", "Record refund") : "");
+    const actions =
+      adjustments +
+      (v.replacesId ? button("open-original", "View original voucher") : "");
     drawer(
       v.serviceName,
       v.code,
-      `<p class="hint">${labelStatus(v.status)} · ${e(stamp(v.issuedAt))}</p><iframe class="voucher-preview" id="voucher-preview" title="Issued voucher preview" sandbox></iframe>
-<div class="sales-actions"><a class="btn" target="_blank" rel="noopener" href="/api/sales/vouchers/${e(id)}/print">Print / Save as PDF</a>${button("open-voucher-sale", "View sale")}${["issued", "partially_redeemed"].includes(v.status) ? button("use-this-voucher", "Use voucher", true) : ""}</div><p>Remaining: ${v.closure ? "Unavailable" : v.kind === "treatment" ? (v.remainingCents > 0 ? "1 matching treatment" : "Used") : money(v.remainingCents)}</p><div id="voucher-use-history">${redemptionHistoryHTML(ctx, data.redemptions)}</div>
-${v.closure ? `<section class="sale-panel"><h3>${e(labelStatus(v.status))}</h3><p>${e(v.closure.reason)}</p><p class="hint">${e(stamp(v.closure.createdAt))} · ${e(v.closure.createdBy)}</p>${v.closure.kind === "refund" ? `<p>Refund recorded: ${money(v.closure.amountCents)} · ${e(v.closure.paymentMethod.replaceAll("_", " "))} ${e(v.closure.paymentReference)}</p>` : ""}${v.closure.replacementId ? button("open-replacement", "Open corrected voucher") : ""}</section>` : `<div class="sales-actions">${v.usedCents === 0 ? button("correct-voucher", "Correct details") + button("void-voucher", "Void erroneous voucher") : ""}${v.remainingCents > 0 ? button("refund-voucher", "Record refund") : ""}</div>`}
-${v.replacesId ? button("open-original", "View original voucher") : ""}
-<h3>Email this gift</h3><p class="hint">From: info@reithailandmassage.com</p>
+      `<div class="voucher-detail">
+<div class="voucher-detail-overview">
+<p class="hint">${labelStatus(v.status)} · ${e(stamp(v.issuedAt))}</p>
+<iframe class="voucher-preview" id="voucher-preview" title="Issued voucher preview" sandbox></iframe>
+<div class="sales-actions"><a class="btn" target="_blank" rel="noopener" href="/api/sales/vouchers/${e(id)}/print">Print / Save as PDF</a>${button("open-voucher-sale", "View sale")}${["issued", "partially_redeemed"].includes(v.status) ? button("use-this-voucher", "Use voucher", true) : ""}</div>
+<p>Remaining: ${v.closure ? "Unavailable" : v.kind === "treatment" ? (v.remainingCents > 0 ? "1 matching treatment" : "Used") : money(v.remainingCents)}</p>
+</div>
+<div id="voucher-use-history" class="voucher-detail-section">${redemptionHistoryHTML(ctx, data.redemptions)}</div>
+${v.closure ? `<section class="sale-panel voucher-detail-section"><h3>${e(labelStatus(v.status))}</h3><p>${e(v.closure.reason)}</p><p class="hint">${e(stamp(v.closure.createdAt))} · ${e(v.closure.createdBy)}</p>${v.closure.kind === "refund" ? `<p>Refund recorded: ${money(v.closure.amountCents)} · ${e(v.closure.paymentMethod.replaceAll("_", " "))} ${e(v.closure.paymentReference)}</p>` : ""}${v.closure.replacementId ? `<div class="sales-actions">${button("open-replacement", "Open corrected voucher")}</div>` : ""}</section>` : ""}
+${actions ? `<div class="sales-actions">${actions}</div>` : ""}
+<section class="voucher-detail-section" aria-labelledby="voucher-email-heading">
+<h3 id="voucher-email-heading">Email this gift</h3><p class="hint">From: info@reithailandmassage.com</p>
 ${settings.emailReady ? "" : '<p class="hint">Email sending awaits sender verification and setup. You can prepare a preview now.</p>'}
 <form id="voucher-email-form" class="sales-form">${field("recipientEmail", "Recipient email", "", "email", 'required maxlength="254" autocomplete="off"')}${data.sale.buyerEmail ? button("use-buyer-email", "Use buyer’s email: " + e(data.sale.buyerEmail)) : ""}
 ${field("subject", "Subject", "A gift for you from Rei Thailand Massage", "text", 'required maxlength="160"')}
 <button class="btn primary" type="submit" ${v.status !== "issued" ? "disabled" : ""}>Review email</button></form>
-<h3>Delivery history</h3><div id="delivery-history">${data.deliveries.length ? data.deliveries.map((d) => `<article class="delivery-row"><strong>${e(d.recipient)}</strong><span>${e(labelStatus(d.status))}</span><small>${e(stamp(d.updatedAt))}</small>${button("delivery-" + d.id, "Open email")}</article>`).join("") : '<p class="hint">No emails prepared or sent.</p>'}</div>${errorHTML}`,
+</section>
+<section class="voucher-detail-section" aria-labelledby="voucher-delivery-heading">
+<h3 id="voucher-delivery-heading">Delivery history</h3>
+<div id="delivery-history">${data.deliveries.length ? data.deliveries.map((d) => `<article class="delivery-row"><strong>${e(d.recipient)}</strong><span>${e(labelStatus(d.status))}</span><small>${e(stamp(d.updatedAt))}</small>${button("delivery-" + d.id, "Open email")}</article>`).join("") : '<p class="hint">No emails prepared or sent.</p>'}</div>
+</section>${errorHTML}</div>`,
     );
     previewFrame(data.preview.html);
     if ($("correct-voucher"))

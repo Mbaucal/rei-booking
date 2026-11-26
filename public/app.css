@@ -1522,6 +1522,30 @@ tr:last-child td {
   background: #faf6ef;
   margin: 16px 0;
 }
+.voucher-detail,
+.voucher-detail-overview,
+.voucher-detail-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.voucher-detail {
+  gap: 20px;
+}
+.voucher-detail-overview {
+  gap: 12px;
+}
+.voucher-detail-section {
+  gap: 8px;
+}
+.voucher-detail .sales-actions {
+  gap: 12px;
+}
+.voucher-detail :where(.hint),
+.voucher-detail .voucher-preview,
+.voucher-detail #voucher-use-history .history,
+.voucher-detail #voucher-email-form {
+  margin: 0;
+}
 .email-envelope {
   font-size: 13px;
   background: #f2eee4;
